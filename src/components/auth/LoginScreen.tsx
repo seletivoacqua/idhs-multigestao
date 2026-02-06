@@ -37,18 +37,18 @@ export function LoginScreen() {
 
   if (!selectedModule) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-white from-slate-50 to-slate-100 flex items-center justify-center p-4">
         <div className="max-w-4xl w-full">
           <div className="text-center mb-12">
             <img src={logoImg} alt="IDHS" className="h-24 mx-auto mb-6" />
-            <h1 className="text-4xl font-bold text-slate-800 mb-3">Sistema IDHS</h1>
-            <p className="text-slate-600 text-lg">Selecione o módulo para acessar</p>
+            <h1 className="text-4xl font-bold text-slate-800 mb-3">IDHS Multigestão</h1>
+            
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setSelectedModule('financeiro')}
-              className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-blue-500"
+              className="bg-gradient-to-br  rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-blue-500"
             >
               <div className="flex flex-col items-center space-y-4">
                 <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center">
@@ -63,7 +63,7 @@ export function LoginScreen() {
 
             <button
               onClick={() => setSelectedModule('academico')}
-              className="bg-white rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-green-500"
+              className="bg-gradient-to-br rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-green-500"
             >
               <div className="flex flex-col items-center space-y-4">
                 <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
