@@ -41,7 +41,7 @@ export function LoginScreen() {
         <div className="max-w-4xl w-full">
           <div className="text-center mb-12">
             <img src={logoImg} alt="IDHS" className="h-24 mx-auto mb-6" />
-            <h1 className="text-4xl font-bold text-slate-800 mb-3">IDHS Multigestão</h1>
+            <h1 className="text-4xl font-bold text-slate-600 mb-3">IDHS Multigestão</h1>
             
           </div>
 
