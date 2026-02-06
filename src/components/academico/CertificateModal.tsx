@@ -520,7 +520,7 @@ export function CertificateModal({
                   />
                   {!isDraggingSignature && (
                     <div className="text-xs text-center text-slate-500 mt-1 bg-white bg-opacity-80 px-2 py-1 rounded">
-                      Arraste para posicionar
+                     
                     </div>
                   )}
                 </div>
