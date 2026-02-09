@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { LogOut, Building2, Users, BookOpen, GraduationCap, BarChart3 } from 'lucide-react';
+import { LogOut, Building2, Users, BookOpen, GraduationCap, BarChart3, Calendar } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UnitsTab } from './UnitsTab';
 import { StudentsTab } from './StudentsTab';
 import { CoursesTab } from './CoursesTab';
+import { CyclesTab } from './CyclesTab';
 import { ClassesTab } from './ClassesTab';
 import { ReportsTab } from './ReportsTab';
 import logoImg from '../../assets/image.png';
 
-type Tab = 'units' | 'students' | 'courses' | 'classes' | 'reports';
+type Tab = 'units' | 'students' | 'courses' | 'cycles' | 'classes' | 'reports';
 
 export function AcademicoDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('units');
@@ -80,6 +81,17 @@ export function AcademicoDashboard() {
                 <span>Cursos</span>
               </button>
               <button
+                onClick={() => setActiveTab('cycles')}
+                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                  activeTab === 'cycles'
+                    ? 'bg-green-600 text-white'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Calendar className="w-5 h-5" />
+                <span>Ciclos</span>
+              </button>
+              <button
                 onClick={() => setActiveTab('classes')}
                 className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
                   activeTab === 'classes'
@@ -108,6 +120,7 @@ export function AcademicoDashboard() {
             {activeTab === 'units' && <UnitsTab />}
             {activeTab === 'students' && <StudentsTab />}
             {activeTab === 'courses' && <CoursesTab />}
+            {activeTab === 'cycles' && <CyclesTab />}
             {activeTab === 'classes' && <ClassesTab />}
             {activeTab === 'reports' && <ReportsTab />}
           </div>
