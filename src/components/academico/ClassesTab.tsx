@@ -140,7 +140,6 @@ export function ClassesTab() {
     if (formData.modality === 'VIDEOCONFERENCIA') {
       if (formData.days_of_week.length > 0) {
         classData.day_of_week = formData.days_of_week.join(', ');
-        classData.days_of_week = formData.days_of_week;
       } else {
         classData.day_of_week = formData.day_of_week;
       }
