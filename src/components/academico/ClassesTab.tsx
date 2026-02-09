@@ -144,11 +144,16 @@ export function ClassesTab() {
         classData.day_of_week = formData.day_of_week;
       }
       classData.class_time = formData.class_time;
-      classData.total_classes = parseInt(formData.total_classes);
+      const totalClasses = parseInt(formData.total_classes);
+      if (isNaN(totalClasses) || totalClasses <= 0) {
+        alert('Por favor, informe um número válido de aulas (maior que 0)');
+        return;
+      }
+      classData.total_classes = totalClasses;
     } else {
       classData.day_of_week = '';
       classData.class_time = '';
-      classData.total_classes = 0;
+      classData.total_classes = 1;
     }
 
     const { error } = await supabase.from('classes').insert([classData]);
