@@ -451,7 +451,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
       user_id: user.id,
       cycle_id: cycle.id,
       course_id: formData.course_id,
-      name: formData.name,
+      name: formData.name.trim(),
       modality: formData.modality,
       status: 'active',
     };
@@ -459,23 +459,27 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     if (formData.modality === 'VIDEOCONFERENCIA') {
       if (formData.days_of_week.length > 0) {
         classData.day_of_week = formData.days_of_week.join(', ');
-        classData.days_of_week = formData.days_of_week;
       } else {
         classData.day_of_week = formData.day_of_week;
       }
       classData.class_time = formData.class_time;
-      classData.total_classes = parseInt(formData.total_classes);
+      const totalClasses = parseInt(formData.total_classes);
+      if (isNaN(totalClasses) || totalClasses <= 0) {
+        alert('Por favor, informe um número válido de aulas (maior que 0)');
+        return;
+      }
+      classData.total_classes = totalClasses;
     } else {
       classData.day_of_week = '';
       classData.class_time = '';
-      classData.total_classes = 0;
+      classData.total_classes = 1;
     }
 
     const { error } = await supabase.from('classes').insert([classData]);
 
     if (error) {
       console.error('Error adding class:', error);
-      alert('Erro ao adicionar turma');
+      alert(`Erro ao adicionar turma: ${error.message}`);
       return;
     }
 

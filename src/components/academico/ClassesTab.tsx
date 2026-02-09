@@ -186,7 +186,7 @@ export function ClassesTab() {
 
     const classData: any = {
       user_id: user.id,
-      cycle_id: formData.cycle_id,
+      cycle_id: formData.cycle_id || null,
       course_id: formData.course_id,
       name: formData.name.trim(),
       modality: formData.modality,
