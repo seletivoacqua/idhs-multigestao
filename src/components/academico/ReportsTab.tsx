@@ -20,6 +20,7 @@ interface Class {
 
 interface ReportData {
   studentName: string;
+  unitName: string;
   courseName: string;
   className: string;
   classesTotal?: number;
@@ -146,7 +147,7 @@ export function ReportsTab() {
     for (const cls of classes || []) {
       const { data: classStudents } = await supabase
         .from('class_students')
-        .select('*, students(*)')
+        .select('*, students(full_name, unit_id, units(name))')
         .eq('class_id', cls.id);
 
       if (!classStudents) continue;
@@ -158,6 +159,18 @@ export function ReportsTab() {
 
         if (filters.studentName && !cs.students.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
           continue;
+        }
+
+        // Obter nome da unidade
+        let unitName = 'Não informado';
+        if (cs.students.unit_id) {
+          const unit = units.find(u => u.id === cs.students.unit_id);
+          if (unit) {
+            unitName = unit.name;
+          } else if (cs.students.units) {
+            // Se já veio com join
+            unitName = cs.students.units.name || 'Não informado';
+          }
         }
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
@@ -183,6 +196,7 @@ export function ReportsTab() {
 
           allReportData.push({
             studentName: cs.students.full_name,
+            unitName: unitName,
             courseName: cls.courses.name,
             className: cls.name,
             classesTotal: cls.total_classes,
@@ -216,6 +230,7 @@ export function ReportsTab() {
 
           allReportData.push({
             studentName: cs.students.full_name,
+            unitName: unitName,
             courseName: cls.courses.name,
             className: cls.name,
             lastAccesses: accesses.map((d) =>
@@ -240,7 +255,7 @@ export function ReportsTab() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Nome do Aluno', 'Turma', 'Curso', 'Status'];
+    const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso', 'Status'];
 
     if (reportData[0]?.classesTotal !== undefined) {
       headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
@@ -249,7 +264,7 @@ export function ReportsTab() {
     }
 
     const rows = reportData.map((row) => {
-      const base = [row.studentName, row.className, row.courseName, row.status];
+      const base = [row.unitName, row.studentName, row.className, row.courseName, row.status];
 
       if (row.classesTotal !== undefined) {
         base.push(
@@ -449,6 +464,9 @@ export function ReportsTab() {
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                  Unidade
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
                   Nome do Aluno
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
@@ -482,6 +500,7 @@ export function ReportsTab() {
             <tbody className="divide-y divide-slate-200">
               {reportData.map((row, index) => (
                 <tr key={index} className="hover:bg-slate-50">
+                  <td className="px-6 py-4 text-sm text-slate-700">{row.unitName}</td>
                   <td className="px-6 py-4 text-sm text-slate-800">{row.studentName}</td>
                   <td className="px-6 py-4 text-sm text-slate-700">{row.className}</td>
                   <td className="px-6 py-4 text-sm text-slate-700">{row.courseName}</td>
@@ -513,7 +532,7 @@ export function ReportsTab() {
               ))}
               {reportData.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
