@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Filter, Download } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Filter, Download, FileSpreadsheet, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 interface Unit {
   id: string;
@@ -45,6 +48,7 @@ export function ReportsTab() {
     studentName: '',
   });
   const { user } = useAuth();
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -254,38 +258,116 @@ export function ReportsTab() {
     });
   };
 
-  const exportToCSV = () => {
-    const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso', 'Status'];
+  const exportToXLSX = () => {
+    const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso'];
 
     if (reportData[0]?.classesTotal !== undefined) {
-      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
+      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)', 'Situação');
     } else {
-      headers.push('Últimos Acessos');
+      headers.push('Últimos Acessos', 'Situação');
     }
 
     const rows = reportData.map((row) => {
-      const base = [row.unitName, row.studentName, row.className, row.courseName, row.status];
+      const base = [row.unitName, row.studentName, row.className, row.courseName];
 
       if (row.classesTotal !== undefined) {
         base.push(
           row.classesTotal?.toString() || '',
           row.classesAttended?.toString() || '',
-          row.attendancePercentage?.toFixed(1) + '%' || ''
+          row.attendancePercentage?.toFixed(1) || '',
+          row.status
         );
       } else {
-        base.push(row.lastAccesses?.join(', ') || '');
+        base.push(row.lastAccesses?.join(', ') || '', row.status);
       }
 
       return base;
     });
 
-    const csv = [headers, ...rows].map((row) => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `relatorio_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+    const colWidths = headers.map((_, idx) => {
+      const maxLength = Math.max(
+        headers[idx].length,
+        ...rows.map(row => (row[idx]?.toString() || '').length)
+      );
+      return { wch: Math.min(maxLength + 2, 40) };
+    });
+    worksheet['!cols'] = colWidths;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Relatório');
+
+    XLSX.writeFile(workbook, `relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const exportToPDF = async () => {
+    if (!reportRef.current) return;
+
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
+    });
+
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+
+    const headerHeight = 40;
+    const title = 'Relatório de Frequência';
+    const date = new Date().toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric'
+    });
+
+    pdf.setFontSize(18);
+    pdf.text(title, pageWidth / 2, 15, { align: 'center' });
+
+    pdf.setFontSize(10);
+    pdf.text(`Gerado em: ${date}`, pageWidth / 2, 22, { align: 'center' });
+
+    pdf.setFontSize(9);
+    let yPos = 30;
+    if (filters.cycleId) {
+      const cycle = cycles.find(c => c.id === filters.cycleId);
+      pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
+      yPos += 5;
+    }
+    if (filters.classId) {
+      const cls = classes.find(c => c.id === filters.classId);
+      pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
+      yPos += 5;
+    }
+    pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
+
+    const tableElement = reportRef.current.querySelector('table');
+    if (tableElement) {
+      const canvas = await html2canvas(tableElement, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const imgWidth = pageWidth - 20;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = headerHeight;
+
+      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+      heightLeft -= (pageHeight - position - 10);
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight + 10;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+        heightLeft -= (pageHeight - 10);
+      }
+    }
+
+    pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const presentPercentage = stats.totalStudents > 0
@@ -296,17 +378,27 @@ export function ReportsTab() {
     : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" ref={reportRef}>
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold text-slate-800">Relatórios</h2>
-        <button
-          onClick={exportToCSV}
-          disabled={reportData.length === 0}
-          className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Download className="w-5 h-5" />
-          <span>Exportar CSV</span>
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={exportToXLSX}
+            disabled={reportData.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FileSpreadsheet className="w-5 h-5" />
+            <span>Exportar XLSX</span>
+          </button>
+          <button
+            onClick={exportToPDF}
+            disabled={reportData.length === 0}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <FileText className="w-5 h-5" />
+            <span>Gerar PDF</span>
+          </button>
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6">

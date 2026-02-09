@@ -87,7 +87,7 @@ const capitalizarPrimeiraLetra = (texto: string): string => {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 };
 
-export function CertificateModal({
+export function CertificateModalEAD({
   studentName,
   courseName,
   courseModules,
