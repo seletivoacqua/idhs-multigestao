@@ -280,275 +280,275 @@ export function ClassesTab() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-slate-800">Turmas</h2>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+   <div className="space-y-6 flex flex-col h-[90vh]">
+  <div className="flex justify-between items-center">
+    <h2 className="text-xl font-semibold text-slate-800">Turmas</h2>
+    <button
+      onClick={() => setShowModal(true)}
+      className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+    >
+      <Plus className="w-5 h-5" />
+      <span>Nova Turma</span>
+    </button>
+  </div>
+
+  <div className="flex-1 overflow-y-auto">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {classes.map((cls) => (
+        <div
+          key={cls.id}
+          className="bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md transition-shadow"
         >
-          <Plus className="w-5 h-5" />
-          <span>Nova Turma</span>
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {classes.map((cls) => (
-          <div
-            key={cls.id}
-            className="bg-white border border-slate-200 rounded-lg p-5 hover:shadow-md transition-shadow"
-          >
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <GraduationCap className="w-6 h-6 text-green-600" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-slate-800">{cls.name}</h3>
-                  <p className="text-sm text-slate-600">{cls.courses?.name}</p>
-                </div>
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <GraduationCap className="w-6 h-6 text-green-600" />
               </div>
-              <span
-                className={`px-2 py-1 rounded-full text-xs font-medium ${
-                  cls.status === 'active'
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-slate-100 text-slate-600'
-                }`}
-              >
-                {cls.status === 'active' ? 'Ativa' : 'Encerrada'}
-              </span>
+              <div>
+                <h3 className="font-semibold text-slate-800">{cls.name}</h3>
+                <p className="text-sm text-slate-600">{cls.courses?.name}</p>
+              </div>
             </div>
+            <span
+              className={`px-2 py-1 rounded-full text-xs font-medium ${
+                cls.status === 'active'
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-slate-100 text-slate-600'
+              }`}
+            >
+              {cls.status === 'active' ? 'Ativa' : 'Encerrada'}
+            </span>
+          </div>
 
-            <div className="space-y-2 text-sm text-slate-600 mb-4">
-              {cls.cycles?.name && (
+          <div className="space-y-2 text-sm text-slate-600 mb-4">
+            {cls.cycles?.name && (
+              <div className="flex items-center space-x-2">
+                <Calendar className="w-4 h-4" />
+                <span>Ciclo: {cls.cycles.name}</span>
+              </div>
+            )}
+            {cls.modality === 'VIDEOCONFERENCIA' && (
+              <>
                 <div className="flex items-center space-x-2">
                   <Calendar className="w-4 h-4" />
-                  <span>Ciclo: {cls.cycles.name}</span>
+                  <span>
+                    {cls.day_of_week} às {cls.class_time}
+                  </span>
                 </div>
-              )}
-              {cls.modality === 'VIDEOCONFERENCIA' && (
-                <>
-                  <div className="flex items-center space-x-2">
-                    <Calendar className="w-4 h-4" />
-                    <span>
-                      {cls.day_of_week} às {cls.class_time}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <CheckSquare className="w-4 h-4" />
-                    <span>{cls.total_classes} aulas no ciclo</span>
-                  </div>
-                </>
-              )}
-              <div className="flex items-center space-x-2">
-                <Users className="w-4 h-4" />
-                <span>{cls._count?.students || 0} alunos matriculados</span>
-              </div>
-              <span
-                className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
-                  cls.modality === 'EAD'
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}
-              >
-                {cls.modality === 'EAD' ? 'EAD 24h' : 'Videoconferência'}
-              </span>
+                <div className="flex items-center space-x-2">
+                  <CheckSquare className="w-4 h-4" />
+                  <span>{cls.total_classes} aulas no ciclo</span>
+                </div>
+              </>
+            )}
+            <div className="flex items-center space-x-2">
+              <Users className="w-4 h-4" />
+              <span>{cls._count?.students || 0} alunos matriculados</span>
             </div>
-
-            <button
-              onClick={() => setSelectedClass(cls)}
-              className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+            <span
+              className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                cls.modality === 'EAD'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}
             >
-              Gerenciar Turma
-            </button>
+              {cls.modality === 'EAD' ? 'EAD 24h' : 'Videoconferência'}
+            </span>
           </div>
-        ))}
-        {classes.length === 0 && (
-          <div className="col-span-full text-center py-12 text-slate-500">
-            <GraduationCap className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-            <p>Nenhuma turma cadastrada</p>
-          </div>
-        )}
-      </div>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
-            <div className="p-6">
-              <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Ciclo <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.cycle_id}
-                    onChange={(e) => handleFieldChange('cycle_id', e.target.value)}
-                    required
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
-                      errors.cycle_id ? 'border-red-500' : 'border-slate-300'
-                    }`}
-                  >
-                    <option value="">Selecione um ciclo</option>
-                    {cycles.map((cycle) => (
-                      <option key={cycle.id} value={cycle.id}>
-                        {cycle.name}
-                      </option>
-                    ))}
-                  </select>
-                  {errors.cycle_id && (
-                    <p className="mt-1 text-sm text-red-600">{errors.cycle_id}</p>
-                  )}
-                  {cycles.length === 0 && (
-                    <p className="mt-1 text-sm text-amber-600">
-                      Nenhum ciclo ativo encontrado. Crie um ciclo primeiro.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Curso <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={formData.course_id}
-                    onChange={(e) => handleCourseChange(e.target.value)}
-                    required
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
-                      errors.course_id ? 'border-red-500' : 'border-slate-300'
-                    }`}
-                  >
-                    <option value="">Selecione um curso</option>
-                    {courses.map((course) => (
-                      <option key={course.id} value={course.id}>
-                        {course.name} - {course.modality}
-                      </option>
-                    ))}
-                  </select>
-                  {errors.course_id && (
-                    <p className="mt-1 text-sm text-red-600">{errors.course_id}</p>
-                  )}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Nome da Turma <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => handleFieldChange('name', e.target.value)}
-                    required
-                    placeholder="Ex: Turma A - 2024"
-                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
-                      errors.name ? 'border-red-500' : 'border-slate-300'
-                    }`}
-                  />
-                  {errors.name && (
-                    <p className="mt-1 text-sm text-red-600">{errors.name}</p>
-                  )}
-                </div>
-
-                {formData.modality === 'VIDEOCONFERENCIA' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Dias da Semana (selecione múltiplos se necessário)
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'].map((day) => (
-                          <label key={day} className="flex items-center space-x-2 p-2 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
-                            <input
-                              type="checkbox"
-                              checked={formData.days_of_week.includes(day)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setFormData({ ...formData, days_of_week: [...formData.days_of_week, day] });
-                                } else {
-                                  setFormData({ ...formData, days_of_week: formData.days_of_week.filter(d => d !== day) });
-                                }
-                              }}
-                              className="rounded text-green-600"
-                            />
-                            <span className="text-sm">{day}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Horário <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="time"
-                        value={formData.class_time}
-                        onChange={(e) => handleFieldChange('class_time', e.target.value)}
-                        required
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
-                          errors.class_time ? 'border-red-500' : 'border-slate-300'
-                        }`}
-                      />
-                      {errors.class_time && (
-                        <p className="mt-1 text-sm text-red-600">{errors.class_time}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">
-                        Total de Aulas no Ciclo <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="number"
-                        value={formData.total_classes}
-                        onChange={(e) => handleFieldChange('total_classes', e.target.value)}
-                        required
-                        min="1"
-                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
-                          errors.total_classes ? 'border-red-500' : 'border-slate-300'
-                        }`}
-                      />
-                      {errors.total_classes && (
-                        <p className="mt-1 text-sm text-red-600">{errors.total_classes}</p>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                <div className="flex space-x-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={cycles.length === 0 || courses.length === 0}
-                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Criar Turma
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
+          <button
+            onClick={() => setSelectedClass(cls)}
+            className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+          >
+            Gerenciar Turma
+          </button>
+        </div>
+      ))}
+      {classes.length === 0 && (
+        <div className="col-span-full text-center py-12 text-slate-500">
+          <GraduationCap className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+          <p>Nenhuma turma cadastrada</p>
         </div>
       )}
-
-      {selectedClass && (
-        <ClassManagementModal
-          classData={selectedClass}
-          onClose={() => {
-            setSelectedClass(null);
-            loadClasses();
-          }}
-        />
-      )}
     </div>
-  );
-}
+  </div>
+
+  {showModal && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+        <div className="p-6">
+          <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Ciclo <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={formData.cycle_id}
+                onChange={(e) => handleFieldChange('cycle_id', e.target.value)}
+                required
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                  errors.cycle_id ? 'border-red-500' : 'border-slate-300'
+                }`}
+              >
+                <option value="">Selecione um ciclo</option>
+                {cycles.map((cycle) => (
+                  <option key={cycle.id} value={cycle.id}>
+                    {cycle.name}
+                  </option>
+                ))}
+              </select>
+              {errors.cycle_id && (
+                <p className="mt-1 text-sm text-red-600">{errors.cycle_id}</p>
+              )}
+              {cycles.length === 0 && (
+                <p className="mt-1 text-sm text-amber-600">
+                  Nenhum ciclo ativo encontrado. Crie um ciclo primeiro.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Curso <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={formData.course_id}
+                onChange={(e) => handleCourseChange(e.target.value)}
+                required
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                  errors.course_id ? 'border-red-500' : 'border-slate-300'
+                }`}
+              >
+                <option value="">Selecione um curso</option>
+                {courses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.name} - {course.modality}
+                  </option>
+                ))}
+              </select>
+              {errors.course_id && (
+                <p className="mt-1 text-sm text-red-600">{errors.course_id}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Nome da Turma <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => handleFieldChange('name', e.target.value)}
+                required
+                placeholder="Ex: Turma A - 2024"
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                  errors.name ? 'border-red-500' : 'border-slate-300'
+                }`}
+              />
+              {errors.name && (
+                <p className="mt-1 text-sm text-red-600">{errors.name}</p>
+              )}
+            </div>
+
+            {formData.modality === 'VIDEOCONFERENCIA' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Dias da Semana (selecione múltiplos se necessário)
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'].map((day) => (
+                      <label key={day} className="flex items-center space-x-2 p-2 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          checked={formData.days_of_week.includes(day)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFormData({ ...formData, days_of_week: [...formData.days_of_week, day] });
+                            } else {
+                              setFormData({ ...formData, days_of_week: formData.days_of_week.filter(d => d !== day) });
+                            }
+                          }}
+                          className="rounded text-green-600"
+                        />
+                        <span className="text-sm">{day}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Horário <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="time"
+                    value={formData.class_time}
+                    onChange={(e) => handleFieldChange('class_time', e.target.value)}
+                    required
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.class_time ? 'border-red-500' : 'border-slate-300'
+                    }`}
+                  />
+                  {errors.class_time && (
+                    <p className="mt-1 text-sm text-red-600">{errors.class_time}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Total de Aulas no Ciclo <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.total_classes}
+                    onChange={(e) => handleFieldChange('total_classes', e.target.value)}
+                    required
+                    min="1"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.total_classes ? 'border-red-500' : 'border-slate-300'
+                    }`}
+                  />
+                  {errors.total_classes && (
+                    <p className="mt-1 text-sm text-red-600">{errors.total_classes}</p>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div className="flex space-x-3 pt-4">
+              <button
+                type="button"
+                onClick={resetForm}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={cycles.length === 0 || courses.length === 0}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Criar Turma
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {selectedClass && (
+    <ClassManagementModal
+      classData={selectedClass}
+      onClose={() => {
+        setSelectedClass(null);
+        loadClasses();
+      }}
+    />
+  )}
+</div>
 
 interface ClassManagementModalProps {
   classData: Class;
