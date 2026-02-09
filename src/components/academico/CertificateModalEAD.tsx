@@ -5,7 +5,7 @@ import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
 import { supabase } from '../../lib/supabase';
 
-interface CertificateModalEADProps {
+interface CertificateModalProps {
   studentName: string;
   courseName: string;
   courseModules: string[];
@@ -15,7 +15,79 @@ interface CertificateModalEADProps {
   onClose: () => void;
 }
 
-export function CertificateModalEAD({
+// Função para converter números para extenso em português
+const numeroParaExtenso = (numero: number): string => {
+  if (numero < 0) return 'número inválido';
+  if (numero > 999) return 'muitas';
+  
+  if (numero === 0) return 'zero';
+  if (numero === 100) return 'cem';
+  
+  const unidades = [
+    '', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
+    'dez', 'onze', 'doze', 'treze', 'catorze', 'quinze', 'dezesseis', 
+    'dezessete', 'dezoito', 'dezenove'
+  ];
+  
+  const dezenas = [
+    '', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 
+    'setenta', 'oitenta', 'noventa'
+  ];
+  
+  const centenas = [
+    '', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos',
+    'seiscentos', 'setecentos', 'oitocentos', 'novecentos'
+  ];
+  
+  let extenso = '';
+  let resto = numero;
+  
+  // Centenas
+  if (resto >= 100) {
+    const centena = Math.floor(resto / 100);
+    extenso = centenas[centena];
+    resto = resto % 100;
+    
+    if (resto > 0) {
+      extenso += ' e ';
+    }
+  }
+  
+  // Dezenas e unidades
+  if (resto > 0) {
+    if (resto < 20) {
+      extenso += unidades[resto];
+    } else {
+      const dezena = Math.floor(resto / 10);
+      const unidade = resto % 10;
+      extenso += dezenas[dezena];
+      
+      if (unidade > 0) {
+        extenso += ' e ' + unidades[unidade];
+      }
+    }
+  }
+  
+  return extenso;
+};
+
+// Função para obter o texto completo da carga horária
+const obterCargaHorariaExtenso = (cargaHoraria: number): string => {
+  if (cargaHoraria <= 0) return 'carga horária não especificada';
+  
+  const numeroExtenso = numeroParaExtenso(cargaHoraria);
+  const horaTexto = cargaHoraria === 1 ? 'hora' : 'horas';
+  
+  return `${numeroExtenso} ${horaTexto}`;
+};
+
+// Função para capitalizar primeira letra
+const capitalizarPrimeiraLetra = (texto: string): string => {
+  if (!texto) return texto;
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+};
+
+export function CertificateModal({
   studentName,
   courseName,
   courseModules,
@@ -23,7 +95,7 @@ export function CertificateModalEAD({
   startDate,
   endDate,
   onClose,
-}: CertificateModalEADProps) {
+}: CertificateModalProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [showBack, setShowBack] = useState(false);
   const [editableData, setEditableData] = useState({
@@ -207,7 +279,7 @@ export function CertificateModalEAD({
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
     }
 
-    pdf.save(`Certificado_EAD_${editableData.studentName.replace(/\s+/g, '_')}.pdf`);
+    pdf.save(`Certificado_${editableData.studentName.replace(/\s+/g, '_')}.pdf`);
   };
 
   const handleSaveEdit = () => {
@@ -219,18 +291,34 @@ export function CertificateModalEAD({
     return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   };
 
+  const validarCargaHoraria = (valor: string): string => {
+    // Remove tudo que não é número
+    const apenasNumeros = valor.replace(/\D/g, '');
+    
+    // Limita a 3 dígitos (máximo 999 horas)
+    const limitado = apenasNumeros.slice(0, 3);
+    
+    // Não permite zero à esquerda, exceto para o próprio zero
+    const numero = parseInt(limitado) || 0;
+    
+    return numero.toString();
+  };
+
   const today = new Date().toLocaleDateString('pt-BR', {
     day: '2-digit',
     month: 'long',
     year: 'numeric'
   });
 
+  const workloadNumber = parseInt(editableData.workload) || 0;
+  const cargaHorariaExtenso = capitalizarPrimeiraLetra(obterCargaHorariaExtenso(workloadNumber));
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[70] p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-y-auto">
         <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
           <div>
-            <h3 className="text-2xl font-bold text-slate-800">Certificado de Conclusão - EAD 24h</h3>
+            <h3 className="text-2xl font-bold text-slate-800">Certificado de Conclusão</h3>
             <p className="text-slate-600 mt-1">{editableData.studentName}</p>
           </div>
           <div className="flex items-center space-x-3">
@@ -465,8 +553,7 @@ export function CertificateModalEAD({
                         ) : (
                           formatDate(editableData.endDate)
                         )}
-                        , pela plataforma{' '}
-                        <span className="font-bold">EAD 24h</span>, promovido pelo{' '}
+                        , pela plataforma online 24 horas, promovido pelo{' '}
                         <span className="font-bold">Instituto do Desenvolvimento Humano e Social - IDHS</span>, com
                         carga horária de{' '}
                         {isEditing ? (
@@ -474,14 +561,17 @@ export function CertificateModalEAD({
                             type="text"
                             value={editableData.workload}
                             onChange={(e) =>
-                              setEditableData({ ...editableData, workload: e.target.value })
+                              setEditableData({ 
+                                ...editableData, 
+                                workload: validarCargaHoraria(e.target.value)
+                              })
                             }
-                            className="w-16 border-b border-slate-300 focus:border-green-500 focus:outline-none px-2 text-center"
+                            className="w-20 border-b border-slate-300 focus:border-green-500 focus:outline-none px-2 text-center"
                           />
                         ) : (
                           editableData.workload
                         )}{' '}
-                        (trinta e duas) horas.
+                        ({cargaHorariaExtenso}) horas.
                       </p>
                     </div>
                   </div>
@@ -519,6 +609,11 @@ export function CertificateModalEAD({
                     className="h-16 w-auto object-contain pointer-events-none select-none"
                     draggable={false}
                   />
+                  {!isDraggingSignature && (
+                    <div className="text-xs text-center text-slate-500 mt-1 bg-white bg-opacity-80 px-2 py-1 rounded">
+                      Arraste para posicionar
+                    </div>
+                  )}
                 </div>
               )}
             </div>
