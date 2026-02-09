@@ -10,16 +10,24 @@ interface Course {
   modality: string;
 }
 
+interface Cycle {
+  id: string;
+  name: string;
+}
+
 interface Class {
   id: string;
   course_id: string;
+  cycle_id: string;
   name: string;
   day_of_week: string;
+  days_of_week?: string[];
   class_time: string;
   total_classes: number;
   modality: 'EAD' | 'VIDEOCONFERENCIA';
   status: 'active' | 'closed';
   courses?: { name: string; modality: string };
+  cycles?: { name: string };
   _count?: { students: number };
 }
 
@@ -31,14 +39,17 @@ interface Student {
 export function ClassesTab() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
+  const [cycles, setCycles] = useState<Cycle[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [selectedClass, setSelectedClass] = useState<Class | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
+    cycle_id: '',
     course_id: '',
     name: '',
     day_of_week: 'Segunda-feira',
+    days_of_week: [] as string[],
     class_time: '',
     total_classes: '',
     modality: 'VIDEOCONFERENCIA' as 'EAD' | 'VIDEOCONFERENCIA',
@@ -46,6 +57,7 @@ export function ClassesTab() {
 
   useEffect(() => {
     loadCourses();
+    loadCycles();
     loadClasses();
   }, []);
 
@@ -66,12 +78,30 @@ export function ClassesTab() {
     setCourses(data || []);
   };
 
+  const loadCycles = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('cycles')
+      .select('id, name')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading cycles:', error);
+      return;
+    }
+
+    setCycles(data || []);
+  };
+
   const loadClasses = async () => {
     if (!user) return;
 
     const { data, error } = await supabase
       .from('classes')
-      .select('*, courses(name, modality)')
+      .select('*, courses(name, modality), cycles(name)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -98,18 +128,31 @@ export function ClassesTab() {
     e.preventDefault();
     if (!user) return;
 
-    const { error } = await supabase.from('classes').insert([
-      {
-        user_id: user.id,
-        course_id: formData.course_id,
-        name: formData.name,
-        day_of_week: formData.day_of_week,
-        class_time: formData.class_time,
-        total_classes: parseInt(formData.total_classes),
-        modality: formData.modality,
-        status: 'active',
-      },
-    ]);
+    const classData: any = {
+      user_id: user.id,
+      cycle_id: formData.cycle_id,
+      course_id: formData.course_id,
+      name: formData.name,
+      modality: formData.modality,
+      status: 'active',
+    };
+
+    if (formData.modality === 'VIDEOCONFERENCIA') {
+      if (formData.days_of_week.length > 0) {
+        classData.day_of_week = formData.days_of_week.join(', ');
+        classData.days_of_week = formData.days_of_week;
+      } else {
+        classData.day_of_week = formData.day_of_week;
+      }
+      classData.class_time = formData.class_time;
+      classData.total_classes = parseInt(formData.total_classes);
+    } else {
+      classData.day_of_week = '';
+      classData.class_time = '';
+      classData.total_classes = 0;
+    }
+
+    const { error } = await supabase.from('classes').insert([classData]);
 
     if (error) {
       console.error('Error adding class:', error);
@@ -124,9 +167,11 @@ export function ClassesTab() {
   const resetForm = () => {
     setShowModal(false);
     setFormData({
+      cycle_id: '',
       course_id: '',
       name: '',
       day_of_week: 'Segunda-feira',
+      days_of_week: [],
       class_time: '',
       total_classes: '',
       modality: 'VIDEOCONFERENCIA',
@@ -183,19 +228,29 @@ export function ClassesTab() {
             </div>
 
             <div className="space-y-2 text-sm text-slate-600 mb-4">
-              <div className="flex items-center space-x-2">
-                <Calendar className="w-4 h-4" />
-                <span>
-                  {cls.day_of_week} às {cls.class_time}
-                </span>
-              </div>
+              {cls.cycles?.name && (
+                <div className="flex items-center space-x-2">
+                  <Calendar className="w-4 h-4" />
+                  <span>Ciclo: {cls.cycles.name}</span>
+                </div>
+              )}
+              {cls.modality === 'VIDEOCONFERENCIA' && (
+                <>
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="w-4 h-4" />
+                    <span>
+                      {cls.day_of_week} às {cls.class_time}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <CheckSquare className="w-4 h-4" />
+                    <span>{cls.total_classes} aulas no ciclo</span>
+                  </div>
+                </>
+              )}
               <div className="flex items-center space-x-2">
                 <Users className="w-4 h-4" />
                 <span>{cls._count?.students || 0} alunos matriculados</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <CheckSquare className="w-4 h-4" />
-                <span>{cls.total_classes} aulas no ciclo</span>
               </div>
               <span
                 className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
@@ -231,6 +286,23 @@ export function ClassesTab() {
               <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
+                  <select
+                    value={formData.cycle_id}
+                    onChange={(e) => setFormData({ ...formData, cycle_id: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  >
+                    <option value="">Selecione um ciclo</option>
+                    {cycles.map((cycle) => (
+                      <option key={cycle.id} value={cycle.id}>
+                        {cycle.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Curso</label>
                   <select
                     value={formData.course_id}
@@ -259,47 +331,57 @@ export function ClassesTab() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Dia da Semana</label>
-                    <select
-                      value={formData.day_of_week}
-                      onChange={(e) => setFormData({ ...formData, day_of_week: e.target.value })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    >
-                      <option>Segunda-feira</option>
-                      <option>Terça-feira</option>
-                      <option>Quarta-feira</option>
-                      <option>Quinta-feira</option>
-                      <option>Sexta-feira</option>
-                      <option>Sábado</option>
-                      <option>Domingo</option>
-                    </select>
-                  </div>
+                {formData.modality === 'VIDEOCONFERENCIA' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Dias da Semana (selecione múltiplos se necessário)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'].map((day) => (
+                          <label key={day} className="flex items-center space-x-2 p-2 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                            <input
+                              type="checkbox"
+                              checked={formData.days_of_week.includes(day)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setFormData({ ...formData, days_of_week: [...formData.days_of_week, day] });
+                                } else {
+                                  setFormData({ ...formData, days_of_week: formData.days_of_week.filter(d => d !== day) });
+                                }
+                              }}
+                              className="rounded text-green-600"
+                            />
+                            <span className="text-sm">{day}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Horário</label>
-                    <input
-                      type="time"
-                      value={formData.class_time}
-                      onChange={(e) => setFormData({ ...formData, class_time: e.target.value })}
-                      required
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Horário</label>
+                      <input
+                        type="time"
+                        value={formData.class_time}
+                        onChange={(e) => setFormData({ ...formData, class_time: e.target.value })}
+                        required
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Total de Aulas no Ciclo</label>
-                  <input
-                    type="number"
-                    value={formData.total_classes}
-                    onChange={(e) => setFormData({ ...formData, total_classes: e.target.value })}
-                    required
-                    min="1"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  />
-                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Total de Aulas no Ciclo</label>
+                      <input
+                        type="number"
+                        value={formData.total_classes}
+                        onChange={(e) => setFormData({ ...formData, total_classes: e.target.value })}
+                        required
+                        min="1"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                      />
+                    </div>
+                  </>
+                )}
 
                 <div className="flex space-x-3 pt-4">
                   <button
