@@ -3,6 +3,7 @@ import { Plus, Calendar, Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye,
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { CertificateModal } from './CertificateModal';
+import { CertificateModalEAD } from './CertificateModalEAD';
 
 interface Cycle {
   id: string;
@@ -38,6 +39,23 @@ interface Class {
 interface Student {
   id: string;
   full_name: string;
+}
+
+function validateEADAccess(access_date_1: string | null, access_date_2: string | null, access_date_3: string | null): boolean {
+  const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
+
+  if (dates.length < 3) {
+    return false;
+  }
+
+  const months = dates.map(date => {
+    const d = new Date(date! + 'T00:00:00');
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  const uniqueMonths = new Set(months);
+
+  return uniqueMonths.size === 3;
 }
 
 export function CyclesTab() {
@@ -799,16 +817,16 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             .eq('student_id', cs.student_id)
             .maybeSingle();
 
-          const accessCount = [
+          const isPresent = validateEADAccess(
             accessData?.access_date_1,
             accessData?.access_date_2,
-            accessData?.access_date_3,
-          ].filter(Boolean).length;
+            accessData?.access_date_3
+          );
 
           return {
             ...cs,
             accessData,
-            isPresent: accessCount > 0,
+            isPresent,
           };
         })
       );
@@ -1311,7 +1329,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                       : 'bg-red-100 text-red-800'
                                   }`}
                                 >
-                                  {student.isPresent ? 'Acessou' : 'Não acessou'}
+                                  {student.isPresent ? 'Aprovado (3 acessos em meses distintos)' : 'Reprovado'}
                                 </span>
                               )}
                             </td>
@@ -1335,7 +1353,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                     ].filter(Boolean).length} de 3 acessos
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    Acessos registrados
+                                    {student.isPresent ? 'Acessos em meses distintos' : 'Necessário 3 acessos em meses diferentes'}
                                   </span>
                                 </div>
                               )}
@@ -1387,15 +1405,29 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       </div>
 
       {showCertificate && certificateData && (
-        <CertificateModal
-          studentName={certificateData.studentName}
-          courseName={certificateData.courseName}
-          courseModules={certificateData.courseModules}
-          workload={certificateData.workload}
-          startDate={certificateData.startDate}
-          endDate={certificateData.endDate}
-          onClose={handleCloseCertificate}
-        />
+        <>
+          {classData.modality === 'EAD' ? (
+            <CertificateModalEAD
+              studentName={certificateData.studentName}
+              courseName={certificateData.courseName}
+              courseModules={certificateData.courseModules}
+              workload={certificateData.workload}
+              startDate={certificateData.startDate}
+              endDate={certificateData.endDate}
+              onClose={handleCloseCertificate}
+            />
+          ) : (
+            <CertificateModal
+              studentName={certificateData.studentName}
+              courseName={certificateData.courseName}
+              courseModules={certificateData.courseModules}
+              workload={certificateData.workload}
+              startDate={certificateData.startDate}
+              endDate={certificateData.endDate}
+              onClose={handleCloseCertificate}
+            />
+          )}
+        </>
       )}
     </div>
   );
@@ -1866,6 +1898,13 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         >
           Salvar Todos
         </button>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+        <p className="text-sm text-amber-800">
+          <strong>Atenção:</strong> Para aprovação no curso EAD, o aluno deve realizar <strong>3 acessos em meses diferentes</strong>.
+          Se 2 ou 3 acessos forem registrados no mesmo mês, o aluno será considerado reprovado.
+        </p>
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-hidden">
