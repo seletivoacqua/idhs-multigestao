@@ -8,9 +8,20 @@ interface Unit {
   name: string;
 }
 
+interface Cycle {
+  id: string;
+  name: string;
+}
+
+interface Class {
+  id: string;
+  name: string;
+}
+
 interface ReportData {
   studentName: string;
   courseName: string;
+  className: string;
   classesTotal?: number;
   classesAttended?: number;
   attendancePercentage?: number;
@@ -20,12 +31,17 @@ interface ReportData {
 
 export function ReportsTab() {
   const [units, setUnits] = useState<Unit[]>([]);
+  const [cycles, setCycles] = useState<Cycle[]>([]);
+  const [classes, setClasses] = useState<Class[]>([]);
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
+    cycleId: '',
+    classId: '',
     unitId: '',
     modality: 'all',
+    studentName: '',
   });
   const { user } = useAuth();
 
@@ -37,6 +53,8 @@ export function ReportsTab() {
 
   useEffect(() => {
     loadUnits();
+    loadCycles();
+    loadClasses();
   }, []);
 
   useEffect(() => {
@@ -62,6 +80,40 @@ export function ReportsTab() {
     setUnits(data || []);
   };
 
+  const loadCycles = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('cycles')
+      .select('id, name')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading cycles:', error);
+      return;
+    }
+
+    setCycles(data || []);
+  };
+
+  const loadClasses = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('user_id', user.id)
+      .order('name');
+
+    if (error) {
+      console.error('Error loading classes:', error);
+      return;
+    }
+
+    setClasses(data || []);
+  };
+
   const generateReport = async () => {
     if (!user) return;
 
@@ -69,6 +121,14 @@ export function ReportsTab() {
       .from('classes')
       .select('*, courses(name, modality)')
       .eq('user_id', user.id);
+
+    if (filters.cycleId) {
+      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+    }
+
+    if (filters.classId) {
+      classesQuery = classesQuery.eq('id', filters.classId);
+    }
 
     if (filters.modality !== 'all') {
       classesQuery = classesQuery.eq('modality', filters.modality);
@@ -96,13 +156,27 @@ export function ReportsTab() {
           continue;
         }
 
+        if (filters.studentName && !cs.students.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
+          continue;
+        }
+
         if (cls.modality === 'VIDEOCONFERENCIA') {
-          const { data: attendanceData } = await supabase
+          let attendanceQuery = supabase
             .from('attendance')
             .select('*')
             .eq('class_id', cls.id)
             .eq('student_id', cs.student_id)
             .eq('present', true);
+
+          if (filters.startDate) {
+            attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
+          }
+
+          if (filters.endDate) {
+            attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
+          }
+
+          const { data: attendanceData } = await attendanceQuery;
 
           const attendedCount = attendanceData?.length || 0;
           const percentage = (attendedCount / cls.total_classes) * 100;
@@ -110,6 +184,7 @@ export function ReportsTab() {
           allReportData.push({
             studentName: cs.students.full_name,
             courseName: cls.courses.name,
+            className: cls.name,
             classesTotal: cls.total_classes,
             classesAttended: attendedCount,
             attendancePercentage: percentage,
@@ -123,15 +198,26 @@ export function ReportsTab() {
             .eq('student_id', cs.student_id)
             .maybeSingle();
 
-          const accesses = [
+          let accesses = [
             accessData?.access_date_1,
             accessData?.access_date_2,
             accessData?.access_date_3,
           ].filter(Boolean);
 
+          if (filters.startDate || filters.endDate) {
+            accesses = accesses.filter((d) => {
+              if (!d) return false;
+              const accessDate = new Date(d);
+              if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
+              if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
+              return true;
+            });
+          }
+
           allReportData.push({
             studentName: cs.students.full_name,
             courseName: cls.courses.name,
+            className: cls.name,
             lastAccesses: accesses.map((d) =>
               d ? new Date(d).toLocaleDateString('pt-BR') : ''
             ),
@@ -154,7 +240,7 @@ export function ReportsTab() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Nome do Aluno', 'Curso', 'Status'];
+    const headers = ['Nome do Aluno', 'Turma', 'Curso', 'Status'];
 
     if (reportData[0]?.classesTotal !== undefined) {
       headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
@@ -163,7 +249,7 @@ export function ReportsTab() {
     }
 
     const rows = reportData.map((row) => {
-      const base = [row.studentName, row.courseName, row.status];
+      const base = [row.studentName, row.className, row.courseName, row.status];
 
       if (row.classesTotal !== undefined) {
         base.push(
@@ -214,7 +300,55 @@ export function ReportsTab() {
           <h3 className="font-semibold text-slate-800">Filtros</h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
+            <select
+              value={filters.cycleId}
+              onChange={(e) => setFilters({ ...filters, cycleId: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="">Todos os ciclos</option>
+              {cycles.map((cycle) => (
+                <option key={cycle.id} value={cycle.id}>
+                  {cycle.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Turma</label>
+            <select
+              value={filters.classId}
+              onChange={(e) => setFilters({ ...filters, classId: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="">Todas as turmas</option>
+              {classes.map((cls) => (
+                <option key={cls.id} value={cls.id}>
+                  {cls.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+            <select
+              value={filters.unitId}
+              onChange={(e) => setFilters({ ...filters, unitId: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="">Todas</option>
+              {units.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
             <input
@@ -236,22 +370,6 @@ export function ReportsTab() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
-            <select
-              value={filters.unitId}
-              onChange={(e) => setFilters({ ...filters, unitId: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            >
-              <option value="">Todas</option>
-              {units.map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
             <select
               value={filters.modality}
@@ -262,6 +380,17 @@ export function ReportsTab() {
               <option value="VIDEOCONFERENCIA">Videoconferência</option>
               <option value="EAD">EAD 24h</option>
             </select>
+          </div>
+
+          <div className="md:col-span-3">
+            <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Nome do Aluno</label>
+            <input
+              type="text"
+              placeholder="Digite o nome do aluno..."
+              value={filters.studentName}
+              onChange={(e) => setFilters({ ...filters, studentName: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
           </div>
         </div>
       </div>
@@ -323,6 +452,9 @@ export function ReportsTab() {
                   Nome do Aluno
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                  Turma
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
                   Curso
                 </th>
                 {reportData[0]?.classesTotal !== undefined ? (
@@ -351,6 +483,7 @@ export function ReportsTab() {
               {reportData.map((row, index) => (
                 <tr key={index} className="hover:bg-slate-50">
                   <td className="px-6 py-4 text-sm text-slate-800">{row.studentName}</td>
+                  <td className="px-6 py-4 text-sm text-slate-700">{row.className}</td>
                   <td className="px-6 py-4 text-sm text-slate-700">{row.courseName}</td>
                   {row.classesTotal !== undefined ? (
                     <>
