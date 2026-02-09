@@ -55,6 +55,14 @@ export function ClassesTab() {
     modality: 'VIDEOCONFERENCIA' as 'EAD' | 'VIDEOCONFERENCIA',
   });
 
+  const [errors, setErrors] = useState({
+    cycle_id: '',
+    course_id: '',
+    name: '',
+    class_time: '',
+    total_classes: '',
+  });
+
   useEffect(() => {
     loadCourses();
     loadCycles();
@@ -124,15 +132,63 @@ export function ClassesTab() {
     setClasses(classesWithCount);
   };
 
+  const validateForm = () => {
+    const newErrors = {
+      cycle_id: '',
+      course_id: '',
+      name: '',
+      class_time: '',
+      total_classes: '',
+    };
+
+    let isValid = true;
+
+    if (!formData.cycle_id) {
+      newErrors.cycle_id = 'Por favor, selecione um ciclo';
+      isValid = false;
+    }
+
+    if (!formData.course_id) {
+      newErrors.course_id = 'Por favor, selecione um curso';
+      isValid = false;
+    }
+
+    if (!formData.name.trim()) {
+      newErrors.name = 'Por favor, informe o nome da turma';
+      isValid = false;
+    }
+
+    if (formData.modality === 'VIDEOCONFERENCIA') {
+      if (!formData.class_time) {
+        newErrors.class_time = 'Por favor, informe o horário da aula';
+        isValid = false;
+      }
+
+      const totalClasses = parseInt(formData.total_classes);
+      if (isNaN(totalClasses) || totalClasses <= 0) {
+        newErrors.total_classes = 'Por favor, informe um número válido de aulas (maior que 0)';
+        isValid = false;
+      }
+    }
+
+    setErrors(newErrors);
+    return isValid;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    // Validação do formulário
+    if (!validateForm()) {
+      return;
+    }
 
     const classData: any = {
       user_id: user.id,
       cycle_id: formData.cycle_id,
       course_id: formData.course_id,
-      name: formData.name,
+      name: formData.name.trim(),
       modality: formData.modality,
       status: 'active',
     };
@@ -144,28 +200,29 @@ export function ClassesTab() {
         classData.day_of_week = formData.day_of_week;
       }
       classData.class_time = formData.class_time;
-      const totalClasses = parseInt(formData.total_classes);
-      if (isNaN(totalClasses) || totalClasses <= 0) {
-        alert('Por favor, informe um número válido de aulas (maior que 0)');
-        return;
-      }
-      classData.total_classes = totalClasses;
+      classData.total_classes = parseInt(formData.total_classes);
     } else {
       classData.day_of_week = '';
       classData.class_time = '';
       classData.total_classes = 1;
     }
 
-    const { error } = await supabase.from('classes').insert([classData]);
+    try {
+      const { error } = await supabase.from('classes').insert([classData]);
 
-    if (error) {
+      if (error) {
+        console.error('Error adding class:', error);
+        alert(`Erro ao adicionar turma: ${error.message}`);
+        return;
+      }
+
+      resetForm();
+      loadClasses();
+      alert('Turma criada com sucesso!');
+    } catch (error) {
       console.error('Error adding class:', error);
       alert('Erro ao adicionar turma');
-      return;
     }
-
-    resetForm();
-    loadClasses();
   };
 
   const resetForm = () => {
@@ -180,6 +237,13 @@ export function ClassesTab() {
       total_classes: '',
       modality: 'VIDEOCONFERENCIA',
     });
+    setErrors({
+      cycle_id: '',
+      course_id: '',
+      name: '',
+      class_time: '',
+      total_classes: '',
+    });
   };
 
   const handleCourseChange = (courseId: string) => {
@@ -189,6 +253,12 @@ export function ClassesTab() {
       course_id: courseId,
       modality: (course?.modality || 'VIDEOCONFERENCIA') as 'EAD' | 'VIDEOCONFERENCIA',
     });
+    setErrors({ ...errors, course_id: '' });
+  };
+
+  const handleFieldChange = (field: keyof typeof formData, value: string) => {
+    setFormData({ ...formData, [field]: value });
+    setErrors({ ...errors, [field]: '' });
   };
 
   return (
@@ -290,12 +360,16 @@ export function ClassesTab() {
               <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Ciclo <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={formData.cycle_id}
-                    onChange={(e) => setFormData({ ...formData, cycle_id: e.target.value })}
+                    onChange={(e) => handleFieldChange('cycle_id', e.target.value)}
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.cycle_id ? 'border-red-500' : 'border-slate-300'
+                    }`}
                   >
                     <option value="">Selecione um ciclo</option>
                     {cycles.map((cycle) => (
@@ -304,15 +378,27 @@ export function ClassesTab() {
                       </option>
                     ))}
                   </select>
+                  {errors.cycle_id && (
+                    <p className="mt-1 text-sm text-red-600">{errors.cycle_id}</p>
+                  )}
+                  {cycles.length === 0 && (
+                    <p className="mt-1 text-sm text-amber-600">
+                      Nenhum ciclo ativo encontrado. Crie um ciclo primeiro.
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Curso</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Curso <span className="text-red-500">*</span>
+                  </label>
                   <select
                     value={formData.course_id}
                     onChange={(e) => handleCourseChange(e.target.value)}
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.course_id ? 'border-red-500' : 'border-slate-300'
+                    }`}
                   >
                     <option value="">Selecione um curso</option>
                     {courses.map((course) => (
@@ -321,18 +407,28 @@ export function ClassesTab() {
                       </option>
                     ))}
                   </select>
+                  {errors.course_id && (
+                    <p className="mt-1 text-sm text-red-600">{errors.course_id}</p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Nome da Turma</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Nome da Turma <span className="text-red-500">*</span>
+                  </label>
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => handleFieldChange('name', e.target.value)}
                     required
                     placeholder="Ex: Turma A - 2024"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                      errors.name ? 'border-red-500' : 'border-slate-300'
+                    }`}
                   />
+                  {errors.name && (
+                    <p className="mt-1 text-sm text-red-600">{errors.name}</p>
+                  )}
                 </div>
 
                 {formData.modality === 'VIDEOCONFERENCIA' && (
@@ -363,26 +459,40 @@ export function ClassesTab() {
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Horário</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Horário <span className="text-red-500">*</span>
+                      </label>
                       <input
                         type="time"
                         value={formData.class_time}
-                        onChange={(e) => setFormData({ ...formData, class_time: e.target.value })}
+                        onChange={(e) => handleFieldChange('class_time', e.target.value)}
                         required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                          errors.class_time ? 'border-red-500' : 'border-slate-300'
+                        }`}
                       />
+                      {errors.class_time && (
+                        <p className="mt-1 text-sm text-red-600">{errors.class_time}</p>
+                      )}
                     </div>
 
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Total de Aulas no Ciclo</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">
+                        Total de Aulas no Ciclo <span className="text-red-500">*</span>
+                      </label>
                       <input
                         type="number"
                         value={formData.total_classes}
-                        onChange={(e) => setFormData({ ...formData, total_classes: e.target.value })}
+                        onChange={(e) => handleFieldChange('total_classes', e.target.value)}
                         required
                         min="1"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent ${
+                          errors.total_classes ? 'border-red-500' : 'border-slate-300'
+                        }`}
                       />
+                      {errors.total_classes && (
+                        <p className="mt-1 text-sm text-red-600">{errors.total_classes}</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -397,7 +507,8 @@ export function ClassesTab() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    disabled={cycles.length === 0 || courses.length === 0}
+                    className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Criar Turma
                   </button>
@@ -522,7 +633,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   };
 
   const handleEnrollStudent = async () => {
-    if (!selectedStudent) return;
+    if (!selectedStudent) {
+      alert('Por favor, selecione um aluno para matricular');
+      return;
+    }
 
     const { error } = await supabase.from('class_students').insert([
       {
@@ -702,7 +816,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      {/* MODAL PRINCIPAL - AUMENTADO */}
       <div className="bg-white rounded-xl shadow-xl w-[95vw] max-w-[1400px] p-6 my-8 max-h-[85vh] overflow-y-auto">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -770,7 +883,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
           </nav>
         </div>
 
-        {/* CONTEÚDO DAS ABAS COM MAIOR ALTURA */}
         <div className="min-h-[500px]">
           {tab === 'students' && (
             <div className="space-y-6">
