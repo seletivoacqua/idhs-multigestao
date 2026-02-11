@@ -598,24 +598,24 @@ export function ReportsTab() {
             <tbody className="divide-y divide-slate-200">
               {reportData.map((row, index) => (
                 <tr key={index} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 text-sm text-slate-700">{row.unitName}</td>
-                  <td className="px-6 py-4 text-sm text-slate-800">{row.studentName}</td>
-                  <td className="px-6 py-4 text-sm text-slate-700">{row.className}</td>
-                  <td className="px-6 py-4 text-sm text-slate-700">{row.courseName}</td>
+                  <td className="px-6 py-2 text-sm text-slate-700">{row.unitName}</td>
+                  <td className="px-6 py-2 text-sm text-slate-800">{row.studentName}</td>
+                  <td className="px-6 py-2 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-6 py-2 text-sm text-slate-700">{row.courseName}</td>
                   {row.classesTotal !== undefined ? (
                     <>
-                      <td className="px-6 py-4 text-sm text-slate-700">{row.classesTotal}</td>
-                      <td className="px-6 py-4 text-sm text-slate-700">{row.classesAttended}</td>
-                      <td className="px-6 py-4 text-sm text-slate-700 font-medium">
+                      <td className="px-6 py-2 text-sm text-slate-700">{row.classesTotal}</td>
+                      <td className="px-6 py-2 text-sm text-slate-700">{row.classesAttended}</td>
+                      <td className="px-6 py-2 text-sm text-slate-700 font-medium">
                         {row.attendancePercentage?.toFixed(1)}%
                       </td>
                     </>
                   ) : (
-                    <td className="px-6 py-4 text-sm text-slate-700">
+                    <td className="px-6 py-2 text-sm text-slate-700">
                       {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
                     </td>
                   )}
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-2">
                     <span
                       className={`px-2 py-1 rounded-full text-xs font-medium ${
                         row.status === 'Frequente'
