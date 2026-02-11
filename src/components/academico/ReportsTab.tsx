@@ -302,79 +302,149 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  const exportToPDF = async () => {
-    if (!reportRef.current) return;
+ const exportToPDF = async () => {
+  if (!reportRef.current) return;
 
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4',
-    });
+  const pdf = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
 
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const pageWidth = pdf.internal.pageSize.getWidth();
 
-    const headerHeight = 45;
-    const title = 'Relatório de Frequência';
-    const date = new Date().toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: 'long',
-      year: 'numeric'
-    });
+  const headerHeight = 45;
+  const title = 'Relatório de Frequência';
+  const date = new Date().toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  });
 
-    const logoWidth = 20;
-    const logoHeight = 15;
-    const logoX = (pageWidth - logoWidth) / 2;
-    pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+  const logoWidth = 20;
+  const logoHeight = 15;
+  const logoX = (pageWidth - logoWidth) / 2;
+  pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
 
-    pdf.setFontSize(18);
-    pdf.text(title, pageWidth / 2, 25, { align: 'center' });
+  pdf.setFontSize(18);
+  pdf.text(title, pageWidth / 2, 25, { align: 'center' });
 
-    pdf.setFontSize(10);
-    pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
+  pdf.setFontSize(10);
+  pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
 
-    pdf.setFontSize(9);
-    let yPos = 38;
-    if (filters.cycleId) {
-      const cycle = cycles.find(c => c.id === filters.cycleId);
-      pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
-      yPos += 5;
-    }
-    if (filters.classId) {
-      const cls = classes.find(c => c.id === filters.classId);
-      pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
-      yPos += 5;
-    }
-    pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
+  pdf.setFontSize(9);
+  let yPos = 38;
+  if (filters.cycleId) {
+    const cycle = cycles.find(c => c.id === filters.cycleId);
+    pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
+    yPos += 5;
+  }
+  if (filters.classId) {
+    const cls = classes.find(c => c.id === filters.classId);
+    pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
+    yPos += 5;
+  }
+  pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
 
-    const tableElement = reportRef.current.querySelector('table');
-    if (tableElement) {
-      const canvas = await html2canvas(tableElement, {
+  const tableElement = reportRef.current.querySelector('table');
+  if (tableElement) {
+    // Clona a tabela para não modificar a original
+    const tableClone = tableElement.cloneNode(true) as HTMLElement;
+    
+    // Aplica estilos para garantir que a tabela seja renderizada corretamente
+    tableClone.style.width = '100%';
+    tableClone.style.fontSize = '10px';
+    
+    // Cria um container temporário
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.top = '0';
+    tempDiv.style.width = `${pageWidth * 3.78}px`; // Converte mm para px (aprox)
+    tempDiv.appendChild(tableClone);
+    document.body.appendChild(tempDiv);
+
+    try {
+      const canvas = await html2canvas(tableClone, {
         scale: 2,
         useCORS: true,
         logging: false,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
       });
 
       const imgData = canvas.toDataURL('image/png');
       const imgWidth = pageWidth - 20;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-      let heightLeft = imgHeight;
-      let position = headerHeight;
+      // Altura disponível para conteúdo (considerando margens)
+      const availableHeight = pageHeight - headerHeight - 10;
+      
+      // Se a imagem é maior que a página, dividir em partes
+      if (imgHeight > availableHeight) {
+        // Calcular quantas páginas serão necessárias
+        const numberOfPages = Math.ceil(imgHeight / availableHeight);
+        
+        for (let i = 0; i < numberOfPages; i++) {
+          // Adicionar nova página se não for a primeira
+          if (i > 0) {
+            pdf.addPage();
+          }
 
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= (pageHeight - position - 10);
-
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight + 10;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-        heightLeft -= (pageHeight - 10);
+          // Adicionar cabeçalho em cada página
+          pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+          pdf.setFontSize(18);
+          pdf.text(title, pageWidth / 2, 25, { align: 'center' });
+          pdf.setFontSize(10);
+          pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
+          pdf.setFontSize(9);
+          
+          // Reposicionar informações de filtros
+          let filterYPos = 38;
+          if (filters.cycleId) {
+            const cycle = cycles.find(c => c.id === filters.cycleId);
+            pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, filterYPos);
+            filterYPos += 5;
+          }
+          if (filters.classId) {
+            const cls = classes.find(c => c.id === filters.classId);
+            pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, filterYPos);
+            filterYPos += 5;
+          }
+          pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, filterYPos);
+          
+          // Calcular a posição Y para esta parte da tabela
+          const startY = headerHeight;
+          
+          // Recortar a imagem para mostrar apenas a parte correspondente a esta página
+          const sourceY = i * (canvas.height / numberOfPages);
+          const sourceHeight = canvas.height / numberOfPages;
+          
+          // Criar um novo canvas apenas com a parte da página atual
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sourceHeight;
+          const ctx = pageCanvas.getContext('2d');
+          ctx?.drawImage(canvas, 0, sourceY, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
+          
+          const pageImgData = pageCanvas.toDataURL('image/png');
+          const pageImgHeight = (sourceHeight * imgWidth) / canvas.width;
+          
+          pdf.addImage(pageImgData, 'PNG', 10, startY, imgWidth, pageImgHeight);
+        }
+      } else {
+        // Se a tabela cabe em uma página
+        pdf.addImage(imgData, 'PNG', 10, headerHeight, imgWidth, imgHeight);
       }
+    } finally {
+      // Remover o elemento temporário
+      document.body.removeChild(tempDiv);
     }
+  }
 
-    pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
+  pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+};
 
   const presentPercentage = stats.totalStudents > 0
     ? (stats.presentCount / stats.totalStudents) * 100
