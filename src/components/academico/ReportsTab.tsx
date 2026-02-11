@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Filter, Download, FileSpreadsheet, FileText } from 'lucide-react';
+import { Filter, FileSpreadsheet, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
@@ -142,7 +142,7 @@ export function ReportsTab() {
     const { data: classes, error: classesError } = await classesQuery;
 
     if (classesError) {
-      console.error('Error loading classes:', error);
+      console.error('Error loading classes:', classesError);
       return;
     }
 

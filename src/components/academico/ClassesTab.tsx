@@ -549,6 +549,8 @@ export function ClassesTab() {
     />
   )}
 </div>
+  );
+}
 
 interface ClassManagementModalProps {
   classData: Class;

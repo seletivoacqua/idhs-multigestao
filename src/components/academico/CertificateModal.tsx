@@ -220,7 +220,6 @@ export function CertificateModal({
     if (!signatureUrl || !frontRef.current) return;
 
     setIsDraggingSignature(true);
-    const rect = frontRef.current.getBoundingClientRect();
     const signatureElement = e.currentTarget as HTMLElement;
     const signatureRect = signatureElement.getBoundingClientRect();
 
