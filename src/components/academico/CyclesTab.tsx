@@ -764,10 +764,13 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [tab, setTab] = useState<'students' | 'attendance' | 'close'>('students');
   const [students, setStudents] = useState<any[]>([]);
   const [availableStudents, setAvailableStudents] = useState<Student[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [showCertificate, setShowCertificate] = useState(false);
   const [certificateData, setCertificateData] = useState<any>(null);
+  const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
+  const [enrollmentType, setEnrollmentType] = useState<'regular' | 'exceptional'>('regular');
+  const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
+  const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const { user } = useAuth();
 
   useEffect(() => {
@@ -796,12 +799,41 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             .eq('student_id', cs.student_id)
             .eq('present', true);
 
-          const percentage = ((presentCount || 0) / classData.total_classes) * 100;
+          let totalClasses = classData.total_classes;
+          let adjustedPresentCount = presentCount || 0;
+
+          if (cs.enrollment_type === 'exceptional' && cs.enrollment_date) {
+            const { data: attendanceData } = await supabase
+              .from('attendance')
+              .select('class_date')
+              .eq('class_id', classData.id)
+              .order('class_date');
+
+            if (attendanceData) {
+              const classesAfterEnrollment = attendanceData.filter(
+                (att) => att.class_date >= cs.enrollment_date
+              );
+              totalClasses = classesAfterEnrollment.length;
+
+              const { count: adjustedCount } = await supabase
+                .from('attendance')
+                .select('*', { count: 'exact', head: true })
+                .eq('class_id', classData.id)
+                .eq('student_id', cs.student_id)
+                .eq('present', true)
+                .gte('class_date', cs.enrollment_date);
+
+              adjustedPresentCount = adjustedCount || 0;
+            }
+          }
+
+          const percentage = totalClasses > 0 ? (adjustedPresentCount / totalClasses) * 100 : 0;
 
           return {
             ...cs,
-            attendanceCount: presentCount || 0,
+            attendanceCount: adjustedPresentCount,
             attendancePercentage: percentage,
+            totalClasses,
           };
         })
       );
@@ -855,34 +887,58 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setAvailableStudents(available);
   };
 
-  const handleEnrollStudent = async () => {
-    if (!selectedStudent) return;
+  const handleOpenEnrollment = (type: 'regular' | 'exceptional') => {
+    setEnrollmentType(type);
+    setSelectedStudents(new Set());
+    setEnrollmentSearch('');
+    setShowEnrollmentModal(true);
+  };
 
-    const { error } = await supabase.from('class_students').insert([
-      {
-        class_id: classData.id,
-        student_id: selectedStudent,
-      },
-    ]);
+  const handleToggleStudent = (studentId: string) => {
+    const newSelected = new Set(selectedStudents);
+    if (newSelected.has(studentId)) {
+      newSelected.delete(studentId);
+    } else {
+      newSelected.add(studentId);
+    }
+    setSelectedStudents(newSelected);
+  };
+
+  const handleEnrollStudents = async () => {
+    if (selectedStudents.size === 0) {
+      alert('Por favor, selecione pelo menos um aluno para matricular');
+      return;
+    }
+
+    const enrollmentDate = new Date().toISOString().split('T')[0];
+    const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
+      class_id: classData.id,
+      student_id: studentId,
+      enrollment_type: enrollmentType,
+      enrollment_date: enrollmentDate,
+    }));
+
+    const { error } = await supabase.from('class_students').insert(studentsToEnroll);
 
     if (error) {
-      console.error('Error enrolling student:', error);
-      alert('Erro ao matricular aluno');
+      console.error('Error enrolling students:', error);
+      alert('Erro ao matricular alunos');
       return;
     }
 
     if (classData.modality === 'EAD') {
-      await supabase.from('ead_access').insert([
-        {
-          class_id: classData.id,
-          student_id: selectedStudent,
-        },
-      ]);
+      const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
+        class_id: classData.id,
+        student_id: studentId,
+      }));
+      await supabase.from('ead_access').insert(eadAccessRecords);
     }
 
-    setSelectedStudent('');
+    setShowEnrollmentModal(false);
+    setSelectedStudents(new Set());
     loadClassStudents();
     loadAvailableStudents();
+    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso!`);
   };
 
   const handleRemoveStudent = async (studentId: string) => {
@@ -1109,24 +1165,19 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
           {tab === 'students' && (
             <div className="space-y-6">
               <div className="flex gap-4">
-                <select
-                  value={selectedStudent}
-                  onChange={(e) => setSelectedStudent(e.target.value)}
-                  className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
-                >
-                  <option value="">Selecione um aluno para matricular</option>
-                  {availableStudents.map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.full_name}
-                    </option>
-                  ))}
-                </select>
                 <button
-                  onClick={handleEnrollStudent}
-                  disabled={!selectedStudent}
-                  className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  onClick={() => handleOpenEnrollment('regular')}
+                  className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center space-x-2"
                 >
-                  Matricular Aluno
+                  <Users className="w-5 h-5" />
+                  <span>Matrícula Regular</span>
+                </button>
+                <button
+                  onClick={() => handleOpenEnrollment('exceptional')}
+                  className="flex-1 px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium flex items-center justify-center space-x-2"
+                >
+                  <Users className="w-5 h-5" />
+                  <span>Matrícula Excepcional</span>
                 </button>
               </div>
 
@@ -1151,6 +1202,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                           CPF
+                        </th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                          Tipo Matrícula
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                           Status
@@ -1179,6 +1233,20 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             {student.students.cpf || '-'}
                           </td>
                           <td className="px-6 py-4">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                              student.enrollment_type === 'exceptional'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
+                            </span>
+                            {student.enrollment_type === 'exceptional' && student.enrollment_date && (
+                              <div className="text-xs text-slate-500 mt-1">
+                                Desde {new Date(student.enrollment_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
                             <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
                               Matriculado
                             </span>
@@ -1195,7 +1263,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                       ))}
                       {students.length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                          <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                             <div className="flex flex-col items-center">
                               <User className="w-12 h-12 text-slate-300 mb-3" />
                               <p className="text-lg">Nenhum aluno matriculado nesta turma</p>
@@ -1212,7 +1280,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                         );
                       }).length === 0 && (
                         <tr>
-                          <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                          <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                             <div className="flex flex-col items-center">
                               <Search className="w-12 h-12 text-slate-300 mb-3" />
                               <p className="text-lg">Nenhum aluno encontrado com esse termo</p>
@@ -1337,10 +1405,12 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                               {classData.modality === 'VIDEOCONFERENCIA' ? (
                                 <div className="flex flex-col">
                                   <span className="font-medium">
-                                    {student.attendanceCount} de {classData.total_classes} aulas
+                                    {student.attendanceCount} de {student.totalClasses || classData.total_classes} aulas
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    Presenças registradas
+                                    {student.enrollment_type === 'exceptional'
+                                      ? `Matrícula excepcional (desde ${new Date(student.enrollment_date + 'T00:00:00').toLocaleDateString('pt-BR')})`
+                                      : 'Presenças registradas'}
                                   </span>
                                 </div>
                               ) : (
@@ -1428,6 +1498,105 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             />
           )}
         </>
+      )}
+
+      {showEnrollmentModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-800">
+                    {enrollmentType === 'regular' ? 'Matrícula Regular' : 'Matrícula Excepcional'}
+                  </h3>
+                  <p className="text-slate-600 mt-1">
+                    {enrollmentType === 'regular'
+                      ? 'O aluno seguirá o fluxo normal de frequência desde o início do ciclo'
+                      : 'A frequência será calculada apenas a partir da data de matrícula'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowEnrollmentModal(false)}
+                  className="text-slate-400 hover:text-slate-600 text-3xl p-1"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar aluno por nome..."
+                    value={enrollmentSearch}
+                    onChange={(e) => setEnrollmentSearch(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4 p-3 bg-slate-50 rounded-lg">
+                <p className="text-sm text-slate-600">
+                  {selectedStudents.size} aluno(s) selecionado(s)
+                </p>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
+                <div className="divide-y divide-slate-200">
+                  {availableStudents
+                    .filter(student => {
+                      if (!enrollmentSearch) return true;
+                      return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+                    })
+                    .map(student => (
+                      <label
+                        key={student.id}
+                        className="flex items-center p-4 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedStudents.has(student.id)}
+                          onChange={() => handleToggleStudent(student.id)}
+                          className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
+                        />
+                        <span className="text-slate-800">{student.full_name}</span>
+                      </label>
+                    ))}
+                  {availableStudents.filter(student => {
+                    if (!enrollmentSearch) return true;
+                    return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+                  }).length === 0 && (
+                    <div className="p-8 text-center text-slate-500">
+                      <User className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                      <p>Nenhum aluno disponível para matrícula</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => setShowEnrollmentModal(false)}
+                  className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleEnrollStudents}
+                  disabled={selectedStudents.size === 0}
+                  className={`flex-1 px-4 py-3 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                    enrollmentType === 'regular'
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                  }`}
+                >
+                  Matricular {selectedStudents.size > 0 ? `(${selectedStudents.size})` : ''}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
