@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import logoImg from '../../assets/image.png';
 
 interface Unit {
   id: string;
@@ -313,7 +314,7 @@ export function ReportsTab() {
     const pageHeight = pdf.internal.pageSize.getHeight();
     const pageWidth = pdf.internal.pageSize.getWidth();
 
-    const headerHeight = 40;
+    const headerHeight = 45;
     const title = 'Relatório de Frequência';
     const date = new Date().toLocaleDateString('pt-BR', {
       day: '2-digit',
@@ -321,14 +322,19 @@ export function ReportsTab() {
       year: 'numeric'
     });
 
+    const logoWidth = 20;
+    const logoHeight = 15;
+    const logoX = (pageWidth - logoWidth) / 2;
+    pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+
     pdf.setFontSize(18);
-    pdf.text(title, pageWidth / 2, 15, { align: 'center' });
+    pdf.text(title, pageWidth / 2, 25, { align: 'center' });
 
     pdf.setFontSize(10);
-    pdf.text(`Gerado em: ${date}`, pageWidth / 2, 22, { align: 'center' });
+    pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
 
     pdf.setFontSize(9);
-    let yPos = 30;
+    let yPos = 38;
     if (filters.cycleId) {
       const cycle = cycles.find(c => c.id === filters.cycleId);
       pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
