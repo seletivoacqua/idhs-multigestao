@@ -8,5 +8,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
+if (typeof window !== 'undefined') {
+  (window as any).supabase = supabase;
+  console.log('Supabase anexado ao window');
+}
 export type UserModule = 'financeiro' | 'academico';
