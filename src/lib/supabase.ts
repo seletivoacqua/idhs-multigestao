@@ -8,9 +8,5 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-// 👇 adicione isso TEMPORARIAMENTE
-if (import.meta.env.DEV) {
-  // @ts-ignore
-  window.supabase = supabase;
-}
+
 export type UserModule = 'financeiro' | 'academico';
