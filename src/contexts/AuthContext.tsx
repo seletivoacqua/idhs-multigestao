@@ -91,7 +91,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fullName = data.user.user_metadata?.full_name || 'Usuário';
 
       const { error: insertError } = await supabase.from(tableName).insert({
-        id: data.user.id,
         email: data.user.email,
         full_name: fullName,
       });
@@ -131,7 +130,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : 'users_academico';
 
     const { error: insertError } = await supabase.from(tableName).insert({
-      id: data.user.id,
       email: data.user.email,
       full_name: fullName,
     });
