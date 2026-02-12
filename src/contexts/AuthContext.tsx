@@ -28,17 +28,44 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// =====================================
+// Helper: aguarda sessão estar ativa
+// =====================================
+const waitForSession = async () => {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session) return session;
+
+  return new Promise((resolve) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        subscription.unsubscribe();
+        resolve(session);
+      }
+    });
+  });
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [module, setModule] = useState<UserModule | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // =====================================
+  // Bootstrap da sessão
+  // =====================================
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
+
       const storedModule = localStorage.getItem(
         'userModule'
       ) as UserModule | null;
+
       setModule(storedModule);
       setLoading(false);
     });
@@ -57,9 +84,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // =========================
-  // SIGN IN (login correto)
-  // =========================
+  // =====================================
+  // SIGN IN
+  // =====================================
   const signIn = async (
     email: string,
     password: string,
@@ -72,6 +99,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (error) throw error;
     if (!data.user) throw new Error('Usuário não autenticado');
+
+    // 🔥 garante role authenticated
+    await waitForSession();
 
     const tableName =
       selectedModule === 'financeiro'
@@ -86,14 +116,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (selectError) throw selectError;
 
-    // 🔹 cria perfil do módulo se não existir
+    // cria perfil do módulo se não existir
     if (!profile) {
-      const fullName = data.user.user_metadata?.full_name || 'Usuário';
+      const fullName =
+        data.user.user_metadata?.full_name || 'Usuário';
 
-      const { error: insertError } = await supabase.from(tableName).insert({
-        email: data.user.email,
-        full_name: fullName,
-      });
+      const { error: insertError } = await supabase
+        .from(tableName)
+        .insert({
+          id: data.user.id,
+          email: data.user.email,
+          full_name: fullName,
+        });
 
       if (insertError) throw insertError;
     }
@@ -102,9 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('userModule', selectedModule);
   };
 
-  // =========================
+  // =====================================
   // SIGN UP
-  // =========================
+  // =====================================
   const signUp = async (
     email: string,
     password: string,
@@ -124,15 +158,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     if (!data.user) throw new Error('Falha ao criar usuário');
 
+    // 🔥 CRÍTICO
+    await waitForSession();
+
     const tableName =
       selectedModule === 'financeiro'
         ? 'users_financeiro'
         : 'users_academico';
 
-    const { error: insertError } = await supabase.from(tableName).insert({
-      email: data.user.email,
-      full_name: fullName,
-    });
+    const { error: insertError } = await supabase
+      .from(tableName)
+      .insert({
+        id: data.user.id,
+        email: data.user.email,
+        full_name: fullName,
+      });
 
     if (insertError) throw insertError;
 
@@ -140,9 +180,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('userModule', selectedModule);
   };
 
-  // =========================
+  // =====================================
   // SIGN OUT
-  // =========================
+  // =====================================
   const signOut = async () => {
     await supabase.auth.signOut();
     setModule(null);
@@ -168,7 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error(
+      'useAuth must be used within an AuthProvider'
+    );
   }
   return context;
 }
