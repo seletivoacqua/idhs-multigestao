@@ -436,7 +436,6 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     const { data, error } = await supabase
       .from('classes')
       .select('*, courses(name, modality)')
-      .eq('user_id', user.id)
       .eq('cycle_id', cycle.id)
       .order('created_at', { ascending: false });
 
@@ -871,8 +870,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     const { data, error } = await supabase
       .from('students')
       .select('id, full_name')
-      .eq('user_id', user.id)
-      .order('full_name');
+       .order('full_name');
 
     if (error) {
       console.error('Error loading students:', error);
