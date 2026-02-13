@@ -420,8 +420,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     const { data, error } = await supabase
       .from('courses')
       .select('id, name, modality')
-      .eq('user_id', user.id)
-      .order('name');
+       .order('name');
 
     if (error) {
       console.error('Error loading courses:', error);
