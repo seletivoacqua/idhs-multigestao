@@ -75,7 +75,6 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('units')
       .select('id, name')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
