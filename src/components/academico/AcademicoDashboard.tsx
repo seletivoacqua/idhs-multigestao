@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, Building2, Users, BookOpen, BarChart3, Calendar } from 'lucide-react';
+import { LogOut, Building2, Users, BookOpen, BarChart3, Calendar, User } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UnitsTab } from './UnitsTab';
 import { StudentsTab } from './StudentsTab';
@@ -12,7 +12,7 @@ type Tab = 'units' | 'students' | 'courses' | 'cycles' | 'reports';
 
 export function AcademicoDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('units');
-  const { signOut } = useAuth();
+  const { signOut, userName } = useAuth();
 
   const handleSignOut = async () => {
     try {
@@ -31,13 +31,21 @@ export function AcademicoDashboard() {
               <img src={logoImg} alt="IDHS" className="h-12" />
               <h1 className="text-2xl font-bold text-slate-800">Módulo Acadêmico</h1>
             </div>
-            <button
-              onClick={handleSignOut}
-              className="flex items-center space-x-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              <LogOut className="w-5 h-5" />
-              <span>Sair</span>
-            </button>
+            <div className="flex items-center space-x-4">
+              {userName && (
+                <div className="flex items-center space-x-2 px-4 py-2 bg-slate-100 rounded-lg">
+                  <User className="w-5 h-5 text-slate-600" />
+                  <span className="text-slate-700 font-medium">{userName}</span>
+                </div>
+              )}
+              <button
+                onClick={handleSignOut}
+                className="flex items-center space-x-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <LogOut className="w-5 h-5" />
+                <span>Sair</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>

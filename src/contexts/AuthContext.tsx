@@ -10,6 +10,7 @@ import { User } from '@supabase/supabase-js';
 
 interface AuthContextType {
   user: User | null;
+  userName: string | null;
   module: UserModule | null;
   loading: boolean;
   signIn: (
@@ -53,14 +54,43 @@ const waitForUserAndSession = async () => {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [userName, setUserName] = useState<string | null>(null);
   const [module, setModule] = useState<UserModule | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // =====================================
+  // Helper: buscar nome do usuário
+  // =====================================
+  const fetchUserName = async (userId: string, userModule: UserModule) => {
+    try {
+      const tableName =
+        userModule === 'financeiro'
+          ? 'users_financeiro'
+          : 'users_academico';
+
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('full_name')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Erro ao buscar nome do usuário:', error);
+        return null;
+      }
+
+      return data?.full_name || null;
+    } catch (error) {
+      console.error('Erro ao buscar nome do usuário:', error);
+      return null;
+    }
+  };
 
   // =====================================
   // Bootstrap da sessão
   // =====================================
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
 
       const storedModule = localStorage.getItem(
@@ -68,6 +98,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) as UserModule | null;
 
       setModule(storedModule);
+
+      if (session?.user && storedModule) {
+        const name = await fetchUserName(session.user.id, storedModule);
+        setUserName(name);
+      }
+
       setLoading(false);
     });
 
@@ -78,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!session) {
         setModule(null);
+        setUserName(null);
         localStorage.removeItem('userModule');
       }
     });
@@ -156,6 +193,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setModule(selectedModule);
       localStorage.setItem('userModule', selectedModule);
+
+      const name = await fetchUserName(data.user.id, selectedModule);
+      setUserName(name);
     } catch (error) {
       console.error('Erro no signIn:', error);
       throw error;
@@ -231,6 +271,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setModule(selectedModule);
       localStorage.setItem('userModule', selectedModule);
+      setUserName(fullName);
     } catch (error) {
       console.error('Erro no signUp:', error);
       throw error;
@@ -243,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut();
     setModule(null);
+    setUserName(null);
     localStorage.removeItem('userModule');
   };
 
@@ -250,6 +292,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
+        userName,
         module,
         loading,
         signIn,

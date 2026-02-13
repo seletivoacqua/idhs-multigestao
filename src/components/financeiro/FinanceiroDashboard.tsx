@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, TrendingUp, FileText, Building } from 'lucide-react';
+import { LogOut, TrendingUp, FileText, Building, User } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { FluxoCaixaTab } from './FluxoCaixaTab';
 import { ControlePagamentoTab } from './ControlePagamentoTab';
@@ -10,7 +10,7 @@ type Tab = 'fluxo' | 'pagamento' | 'institucional';
 
 export function FinanceiroDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('fluxo');
-  const { signOut } = useAuth();
+  const { signOut, userName } = useAuth();
 
   const handleSignOut = async () => {
     try {
@@ -29,13 +29,21 @@ export function FinanceiroDashboard() {
               <img src={logoImg} alt="IDHS" className="h-12" />
               <h1 className="text-2xl font-bold text-slate-800">Módulo Financeiro</h1>
             </div>
-            <button
-              onClick={handleSignOut}
-              className="flex items-center space-x-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              <LogOut className="w-5 h-5" />
-              <span>Sair</span>
-            </button>
+            <div className="flex items-center space-x-4">
+              {userName && (
+                <div className="flex items-center space-x-2 px-4 py-2 bg-slate-100 rounded-lg">
+                  <User className="w-5 h-5 text-slate-600" />
+                  <span className="text-slate-700 font-medium">{userName}</span>
+                </div>
+              )}
+              <button
+                onClick={handleSignOut}
+                className="flex items-center space-x-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <LogOut className="w-5 h-5" />
+                <span>Sair</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
