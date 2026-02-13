@@ -45,7 +45,6 @@ export function CoursesTab() {
     const { data: coursesData, error: coursesError } = await supabase
       .from('courses')
       .select('*')
-      .eq('user_id', user.id)
       .order('name');
 
     if (coursesError) {
