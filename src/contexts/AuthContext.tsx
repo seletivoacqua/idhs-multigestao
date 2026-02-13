@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useCallback,
   ReactNode,
 } from 'react';
 import { User } from '@supabase/supabase-js';
@@ -61,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // =====================================
   // Helper: buscar nome do usuário
   // =====================================
-  const fetchUserName = async (userId: string, userModule: UserModule) => {
+  const fetchUserName = useCallback(async (userId: string, userModule: UserModule) => {
     try {
       const tableName =
         userModule === 'financeiro'
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Erro ao buscar nome do usuário:', error);
       return null;
     }
-  };
+  }, []);
 
   // =====================================
   // Bootstrap da sessão
@@ -109,18 +110,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null);
 
       if (!session) {
         setModule(null);
         setUserName(null);
         localStorage.removeItem('userModule');
+      } else {
+        const storedModule = localStorage.getItem('userModule') as UserModule | null;
+        if (storedModule && session.user) {
+          const name = await fetchUserName(session.user.id, storedModule);
+          setUserName(name);
+        }
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [fetchUserName]);
 
   // =====================================
   // SIGN IN - CORRIGIDO
