@@ -91,7 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Bootstrap da sessão
   // =====================================
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    let mounted = true;
+
+    const initializeAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!mounted) return;
+
       setUser(session?.user ?? null);
 
       const storedModule = localStorage.getItem(
@@ -102,32 +108,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (session?.user && storedModule) {
         const name = await fetchUserName(session.user.id, storedModule);
-        setUserName(name);
-      }
-
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
-
-      if (!session) {
-        setModule(null);
-        setUserName(null);
-        localStorage.removeItem('userModule');
-      } else {
-        const storedModule = localStorage.getItem('userModule') as UserModule | null;
-        if (storedModule && session.user) {
-          const name = await fetchUserName(session.user.id, storedModule);
+        if (mounted) {
           setUserName(name);
         }
       }
+
+      if (mounted) {
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      (async () => {
+        if (!mounted) return;
+
+        setUser(session?.user ?? null);
+
+        if (!session) {
+          setModule(null);
+          setUserName(null);
+          localStorage.removeItem('userModule');
+        } else {
+          const storedModule = localStorage.getItem('userModule') as UserModule | null;
+          if (storedModule && session.user) {
+            const name = await fetchUserName(session.user.id, storedModule);
+            if (mounted) {
+              setUserName(name);
+            }
+          }
+        }
+      })();
     });
 
-    return () => subscription.unsubscribe();
-  }, [fetchUserName]);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // =====================================
   // SIGN IN - CORRIGIDO
