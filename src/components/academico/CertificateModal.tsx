@@ -129,7 +129,6 @@ export function CertificateModal({
     const { data, error } = await supabase
       .from('signatures')
       .select('*')
-      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (!error && data) {
