@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { ControlePagamentoReport } from './ControlePagamentoReport';
 
 interface Invoice {
   id: string;
@@ -18,13 +19,19 @@ interface Invoice {
   payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO';
   payment_date?: string;
   paid_value?: number;
+  document_url?: string;
+  document_name?: string;
+  document_type_file?: string;
   created_at: string;
 }
 
 export function ControlePagamentoTab() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -44,7 +51,40 @@ export function ControlePagamentoTab() {
 
   useEffect(() => {
     loadInvoices();
+    updateOverdueInvoices();
   }, []);
+
+  const updateOverdueInvoices = async () => {
+    if (!user) return;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const { data: overdueInvoices } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('payment_status', 'EM ABERTO')
+      .is('deleted_at', null);
+
+    if (overdueInvoices) {
+      for (const invoice of overdueInvoices) {
+        const dueDate = new Date(invoice.due_date);
+        dueDate.setHours(0, 0, 0, 0);
+
+        const oneDayAfterDue = new Date(dueDate);
+        oneDayAfterDue.setDate(oneDayAfterDue.getDate() + 1);
+
+        if (today >= oneDayAfterDue) {
+          await supabase
+            .from('invoices')
+            .update({ payment_status: 'ATRASADO' })
+            .eq('id', invoice.id);
+        }
+      }
+      loadInvoices();
+    }
+  };
 
   const loadInvoices = async () => {
     if (!user) return;
@@ -64,9 +104,45 @@ export function ControlePagamentoTab() {
     setInvoices(data || []);
   };
 
+  const uploadDocument = async (invoiceId: string): Promise<string | null> => {
+    if (!selectedFile || !user) return null;
+
+    setUploadingFile(true);
+
+    try {
+      const fileExt = selectedFile.name.split('.').pop();
+      const fileName = `${invoiceId}.${fileExt}`;
+      const filePath = `${user.id}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('invoice-documents')
+        .upload(filePath, selectedFile, { upsert: true });
+
+      if (uploadError) {
+        console.error('Error uploading file:', uploadError);
+        alert('Erro ao fazer upload do documento');
+        return null;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('invoice-documents')
+        .getPublicUrl(filePath);
+
+      return urlData.publicUrl;
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      alert('Erro ao fazer upload do documento');
+      return null;
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+
+    let invoiceId = editingInvoice?.id;
 
     if (editingInvoice) {
       const { error } = await supabase
@@ -98,7 +174,7 @@ export function ControlePagamentoTab() {
         p_user_id: user.id,
       });
 
-      const { error } = await supabase.from('invoices').insert([
+      const { data: newInvoice, error } = await supabase.from('invoices').insert([
         {
           user_id: user.id,
           item_number: itemNumberData || 1,
@@ -115,12 +191,31 @@ export function ControlePagamentoTab() {
           payment_date: formData.payment_date || null,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
         },
-      ]);
+      ]).select();
 
       if (error) {
         console.error('Error adding invoice:', error);
         alert('Erro ao adicionar nota fiscal');
         return;
+      }
+
+      if (newInvoice && newInvoice.length > 0) {
+        invoiceId = newInvoice[0].id;
+      }
+    }
+
+    if (selectedFile && invoiceId) {
+      const documentUrl = await uploadDocument(invoiceId);
+
+      if (documentUrl) {
+        await supabase
+          .from('invoices')
+          .update({
+            document_url: documentUrl,
+            document_name: selectedFile.name,
+            document_type: selectedFile.type,
+          })
+          .eq('id', invoiceId);
       }
     }
 
@@ -131,6 +226,7 @@ export function ControlePagamentoTab() {
   const resetForm = () => {
     setShowAddModal(false);
     setEditingInvoice(null);
+    setSelectedFile(null);
     setFormData({
       unit_name: '',
       cnpj_cpf: '',
@@ -164,6 +260,10 @@ export function ControlePagamentoTab() {
       paid_value: invoice.paid_value?.toString() || '',
     });
     setShowAddModal(true);
+  };
+
+  const viewDocument = (documentUrl: string) => {
+    window.open(documentUrl, '_blank');
   };
 
   const getStatusIcon = (status: string) => {
@@ -204,13 +304,22 @@ export function ControlePagamentoTab() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          <span>Nova Nota Fiscal</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <FileText className="w-5 h-5" />
+            <span>Relatório</span>
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            <span>Nova Nota Fiscal</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -259,6 +368,7 @@ export function ControlePagamentoTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Vencimento</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Documento</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
               </tr>
             </thead>
@@ -292,6 +402,19 @@ export function ControlePagamentoTab() {
                     </div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
+                    {invoice.document_url ? (
+                      <button
+                        onClick={() => viewDocument(invoice.document_url!)}
+                        className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>Ver</span>
+                      </button>
+                    ) : (
+                      <span className="text-slate-400 text-sm">-</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <button
                       onClick={() => handleEdit(invoice)}
                       className="text-blue-600 hover:text-blue-800 text-sm font-medium"
@@ -303,7 +426,7 @@ export function ControlePagamentoTab() {
               ))}
               {invoices.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
                     Nenhuma nota fiscal cadastrada
                   </td>
                 </tr>
@@ -463,6 +586,25 @@ export function ControlePagamentoTab() {
                 )}
               </div>
 
+              <div className="pt-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Anexar Documento</label>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                  />
+                  {selectedFile && (
+                    <span className="text-sm text-green-600 flex items-center space-x-1">
+                      <Upload className="w-4 h-4" />
+                      <span>{selectedFile.name}</span>
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Formatos aceitos: Imagens (JPG, PNG) e PDF</p>
+              </div>
+
               <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
@@ -481,6 +623,10 @@ export function ControlePagamentoTab() {
             </form>
           </div>
         </div>
+      )}
+
+      {showReportModal && (
+        <ControlePagamentoReport onClose={() => setShowReportModal(false)} />
       )}
     </div>
   );

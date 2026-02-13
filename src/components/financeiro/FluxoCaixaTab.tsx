@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, TrendingUp, TrendingDown, Calendar, Filter, Settings } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Calendar, Filter, Settings, FileText } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { FluxoCaixaReport } from './FluxoCaixaReport';
 
 interface Transaction {
   id: string;
@@ -9,8 +10,12 @@ interface Transaction {
   amount: number;
   method: string;
   category?: string;
+  subcategoria?: string;
   description: string;
   transaction_date: string;
+  fonte_pagadora?: string;
+  com_nota?: boolean;
+  so_recibo?: boolean;
 }
 
 interface FixedExpense {
@@ -27,6 +32,7 @@ export function FluxoCaixaTab() {
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showFixedExpensesModal, setShowFixedExpensesModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [filterMonth, setFilterMonth] = useState<string>(
     new Date().toISOString().substring(0, 7)
   );
@@ -37,8 +43,12 @@ export function FluxoCaixaTab() {
     amount: '',
     method: 'pix',
     category: '',
+    subcategoria: '',
     description: '',
     transaction_date: new Date().toISOString().split('T')[0],
+    fonte_pagadora: 'Instituto Acqua',
+    com_nota: false,
+    so_recibo: false,
   });
 
   const [fixedExpenseForm, setFixedExpenseForm] = useState({
@@ -106,8 +116,12 @@ export function FluxoCaixaTab() {
         amount: parseFloat(formData.amount),
         method: formData.method,
         category: formData.type === 'expense' ? formData.category : null,
+        subcategoria: formData.type === 'expense' && formData.category === 'despesas_fixas' ? formData.subcategoria : null,
         description: formData.description,
         transaction_date: formData.transaction_date,
+        fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
+        com_nota: formData.type === 'expense' ? formData.com_nota : false,
+        so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
       },
     ]);
 
@@ -123,8 +137,12 @@ export function FluxoCaixaTab() {
       amount: '',
       method: 'pix',
       category: '',
+      subcategoria: '',
       description: '',
       transaction_date: new Date().toISOString().split('T')[0],
+      fonte_pagadora: 'Instituto Acqua',
+      com_nota: false,
+      so_recibo: false,
     });
     loadTransactions();
   };
@@ -203,13 +221,22 @@ export function FluxoCaixaTab() {
             <span>Despesas Fixas</span>
           </button>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          <span>Nova Transação</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <FileText className="w-5 h-5" />
+            <span>Relatório</span>
+          </button>
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            <span>Nova Transação</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -450,20 +477,84 @@ export function FluxoCaixaTab() {
                 </select>
               </div>
 
-              {formData.type === 'expense' && (
+              {formData.type === 'income' && (
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    required
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Fonte Pagadora</label>
+                  <input
+                    type="text"
+                    value={formData.fonte_pagadora}
+                    onChange={(e) => setFormData({ ...formData, fonte_pagadora: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">Selecione...</option>
-                    <option value="despesas_fixas">Despesas Fixas</option>
-                    <option value="despesas_variaveis">Despesas Variáveis</option>
-                  </select>
+                  />
                 </div>
+              )}
+
+              {formData.type === 'expense' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
+                    <select
+                      value={formData.category}
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value, subcategoria: '' })}
+                      required
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="">Selecione...</option>
+                      <option value="despesas_fixas">Despesas Fixas</option>
+                      <option value="despesas_variaveis">Despesas Variáveis</option>
+                    </select>
+                  </div>
+
+                  {formData.category === 'despesas_fixas' && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Subcategoria</label>
+                      <select
+                        value={formData.subcategoria}
+                        onChange={(e) => setFormData({ ...formData, subcategoria: e.target.value })}
+                        required
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="">Selecione...</option>
+                        <option value="CLARO FIXO">CLARO FIXO</option>
+                        <option value="CLARO MÓVEL">CLARO MÓVEL</option>
+                        <option value="VIVO FIXO">VIVO FIXO</option>
+                        <option value="VIVO MÓVEL">VIVO MÓVEL</option>
+                        <option value="EQUATORIAL">EQUATORIAL</option>
+                        <option value="FGTS">FGTS</option>
+                        <option value="INSS">INSS</option>
+                        <option value="FOLHA DE PAGAMENTO">FOLHA DE PAGAMENTO</option>
+                        <option value="UNDB">UNDB</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="col-span-2 space-y-3">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="com_nota"
+                        checked={formData.com_nota}
+                        onChange={(e) => setFormData({ ...formData, com_nota: e.target.checked, so_recibo: e.target.checked ? false : formData.so_recibo })}
+                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                      />
+                      <label htmlFor="com_nota" className="ml-2 text-sm font-medium text-slate-700">
+                        Com nota fiscal
+                      </label>
+                    </div>
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id="so_recibo"
+                        checked={formData.so_recibo}
+                        onChange={(e) => setFormData({ ...formData, so_recibo: e.target.checked, com_nota: e.target.checked ? false : formData.com_nota })}
+                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                      />
+                      <label htmlFor="so_recibo" className="ml-2 text-sm font-medium text-slate-700">
+                        Só recibo
+                      </label>
+                    </div>
+                  </div>
+                </>
               )}
 
               <div>
@@ -506,6 +597,10 @@ export function FluxoCaixaTab() {
             </form>
           </div>
         </div>
+      )}
+
+      {showReportModal && (
+        <FluxoCaixaReport onClose={() => setShowReportModal(false)} />
       )}
     </div>
   );
