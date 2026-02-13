@@ -33,6 +33,7 @@ export function FluxoCaixaTab() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showFixedExpensesModal, setShowFixedExpensesModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [filterMonth, setFilterMonth] = useState<string>(
     new Date().toISOString().substring(0, 7)
   );
@@ -109,29 +110,59 @@ export function FluxoCaixaTab() {
     e.preventDefault();
     if (!user) return;
 
-    const { error } = await supabase.from('cash_flow_transactions').insert([
-      {
-        user_id: user.id,
-        type: formData.type,
-        amount: parseFloat(formData.amount),
-        method: formData.method,
-        category: formData.type === 'expense' ? formData.category : null,
-        subcategoria: formData.type === 'expense' && formData.category === 'despesas_fixas' ? formData.subcategoria : null,
-        description: formData.description,
-        transaction_date: formData.transaction_date,
-        fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
-        com_nota: formData.type === 'expense' ? formData.com_nota : false,
-        so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
-      },
-    ]);
+    if (editingTransaction) {
+      const { error } = await supabase
+        .from('cash_flow_transactions')
+        .update({
+          type: formData.type,
+          amount: parseFloat(formData.amount),
+          method: formData.method,
+          category: formData.type === 'expense' ? formData.category : null,
+          subcategoria: formData.type === 'expense' && formData.category === 'despesas_fixas' ? formData.subcategoria : null,
+          description: formData.description,
+          transaction_date: formData.transaction_date,
+          fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
+          com_nota: formData.type === 'expense' ? formData.com_nota : false,
+          so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
+        })
+        .eq('id', editingTransaction.id);
 
-    if (error) {
-      console.error('Error adding transaction:', error);
-      alert('Erro ao adicionar transação');
-      return;
+      if (error) {
+        console.error('Error updating transaction:', error);
+        alert('Erro ao atualizar transação');
+        return;
+      }
+    } else {
+      const { error } = await supabase.from('cash_flow_transactions').insert([
+        {
+          user_id: user.id,
+          type: formData.type,
+          amount: parseFloat(formData.amount),
+          method: formData.method,
+          category: formData.type === 'expense' ? formData.category : null,
+          subcategoria: formData.type === 'expense' && formData.category === 'despesas_fixas' ? formData.subcategoria : null,
+          description: formData.description,
+          transaction_date: formData.transaction_date,
+          fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
+          com_nota: formData.type === 'expense' ? formData.com_nota : false,
+          so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
+        },
+      ]);
+
+      if (error) {
+        console.error('Error adding transaction:', error);
+        alert('Erro ao adicionar transação');
+        return;
+      }
     }
 
+    resetTransactionForm();
+    loadTransactions();
+  };
+
+  const resetTransactionForm = () => {
     setShowAddModal(false);
+    setEditingTransaction(null);
     setFormData({
       type: 'income',
       amount: '',
@@ -144,7 +175,23 @@ export function FluxoCaixaTab() {
       com_nota: false,
       so_recibo: false,
     });
-    loadTransactions();
+  };
+
+  const handleEditTransaction = (transaction: Transaction) => {
+    setEditingTransaction(transaction);
+    setFormData({
+      type: transaction.type,
+      amount: transaction.amount.toString(),
+      method: transaction.method,
+      category: transaction.category || '',
+      subcategoria: transaction.subcategoria || '',
+      description: transaction.description,
+      transaction_date: transaction.transaction_date,
+      fonte_pagadora: transaction.fonte_pagadora || 'Instituto Acqua',
+      com_nota: transaction.com_nota || false,
+      so_recibo: transaction.so_recibo || false,
+    });
+    setShowAddModal(true);
   };
 
   const handleAddFixedExpense = async (e: React.FormEvent) => {
@@ -364,6 +411,7 @@ export function FluxoCaixaTab() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Método</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
@@ -395,11 +443,19 @@ export function FluxoCaixaTab() {
                   }`}>
                     R$ {Number(transaction.amount).toFixed(2)}
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <button
+                      onClick={() => handleEditTransaction(transaction)}
+                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                    >
+                      Editar
+                    </button>
+                  </td>
                 </tr>
               ))}
               {transactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
                     Nenhuma transação encontrada para este período
                   </td>
                 </tr>
@@ -412,7 +468,9 @@ export function FluxoCaixaTab() {
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Transação</h3>
+            <h3 className="text-xl font-bold text-slate-800 mb-4">
+              {editingTransaction ? 'Editar Transação' : 'Nova Transação'}
+            </h3>
             <form onSubmit={handleAddTransaction} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
@@ -582,7 +640,7 @@ export function FluxoCaixaTab() {
               <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={resetTransactionForm}
                   className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
@@ -591,7 +649,7 @@ export function FluxoCaixaTab() {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  Adicionar
+                  {editingTransaction ? 'Atualizar' : 'Adicionar'}
                 </button>
               </div>
             </form>

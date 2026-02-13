@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
+import logoImg from '../../assets/image.png';
 
 interface Invoice {
   id: string;
@@ -84,11 +85,17 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
   const exportToPDF = () => {
     const doc = new jsPDF();
 
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const logoWidth = 30;
+    const logoHeight = 15;
+    const logoX = (pageWidth - logoWidth) / 2;
+    doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+
     doc.setFontSize(18);
-    doc.text('Relatório de Controle de Pagamento', 14, 20);
+    doc.text('Relatório de Controle de Pagamento', pageWidth / 2, 25, { align: 'center' });
 
     doc.setFontSize(11);
-    doc.text(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`, 14, 30);
+    doc.text(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`, pageWidth / 2, 32, { align: 'center' });
 
     let yPos = 45;
     doc.setFontSize(9);
