@@ -31,7 +31,6 @@ export function UnitsTab() {
     const { data, error } = await supabase
       .from('units')
       .select('*')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
