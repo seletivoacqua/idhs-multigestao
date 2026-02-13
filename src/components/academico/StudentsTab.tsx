@@ -63,7 +63,6 @@ export function StudentsTab() {
     const { data, error } = await supabase
       .from('students')
       .select('*, units(name)')
-      .eq('user_id', user.id)
       .order('full_name');
 
     if (error) {
