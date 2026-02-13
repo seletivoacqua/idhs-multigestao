@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, UserModule } from '../lib/supabase';  // ✅ import único
 import {
   createContext,
   useContext,
@@ -7,7 +7,6 @@ import {
   ReactNode,
 } from 'react';
 import { User } from '@supabase/supabase-js';
-import { supabase, UserModule } from '../lib/supabase';
 
 interface AuthContextType {
   user: User | null;
@@ -30,20 +29,21 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // =====================================
-// Helper: aguarda sessão estar ativa
+// Helper: aguarda sessão e confirma usuário
 // =====================================
-const waitForSession = async () => {
+const waitForUserAndSession = async () => {
+  // Aguarda sessão
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
-  if (session) return session;
+  if (session?.user) return session;
 
   return new Promise((resolve) => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
+      if (session?.user) {
         subscription.unsubscribe();
         resolve(session);
       }
@@ -86,59 +86,84 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // =====================================
-  // SIGN IN
+  // SIGN IN - CORRIGIDO
   // =====================================
   const signIn = async (
     email: string,
     password: string,
     selectedModule: UserModule
   ) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) throw error;
-    if (!data.user) throw new Error('Usuário não autenticado');
+      if (error) throw error;
+      if (!data.user) throw new Error('Usuário não autenticado');
 
-    // 🔥 garante role authenticated
-    await waitForSession();
+      // Aguarda sessão estar completamente estabelecida
+      await waitForUserAndSession();
 
-    const tableName =
-      selectedModule === 'financeiro'
-        ? 'users_financeiro'
-        : 'users_academico';
+      const tableName =
+        selectedModule === 'financeiro'
+          ? 'users_financeiro'
+          : 'users_academico';
 
-    const { data: profile, error: selectError } = await supabase
-      .from(tableName)
-      .select('*')
-      .eq('id', data.user.id)
-      .maybeSingle();
+      // Tenta buscar o perfil com retry
+      let profile = null;
+      let retries = 3;
+      
+      while (retries > 0 && !profile) {
+        const { data: profileData, error: selectError } = await supabase
+          .from(tableName)
+          .select('*')
+          .eq('id', data.user.id)
+          .maybeSingle();
 
-    if (selectError) throw selectError;
+        if (selectError && selectError.code !== 'PGRST116') {
+          // Se for erro diferente de "nenhum resultado encontrado"
+          throw selectError;
+        }
 
-    // cria perfil do módulo se não existir
-    if (!profile) {
-      const fullName =
-        data.user.user_metadata?.full_name || 'Usuário';
+        profile = profileData;
+        
+        if (!profile) {
+          // Aguarda 1 segundo antes de tentar novamente
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          retries--;
+        }
+      }
 
-      const { error: insertError } = await supabase
-        .from(tableName)
-        .insert({
-          id: data.user.id,
-          email: data.user.email,
-          full_name: fullName,
-        });
+      // Se não encontrou perfil após retries, tenta criar
+      if (!profile) {
+        const fullName =
+          data.user.user_metadata?.full_name || email.split('@')[0];
 
-      if (insertError) throw insertError;
+        const { error: insertError } = await supabase
+          .from(tableName)
+          .insert({
+            id: data.user.id,
+            email: data.user.email,
+            full_name: fullName,
+          });
+
+        if (insertError) {
+          console.error('Erro ao criar perfil:', insertError);
+          throw insertError;
+        }
+      }
+
+      setModule(selectedModule);
+      localStorage.setItem('userModule', selectedModule);
+    } catch (error) {
+      console.error('Erro no signIn:', error);
+      throw error;
     }
-
-    setModule(selectedModule);
-    localStorage.setItem('userModule', selectedModule);
   };
 
   // =====================================
-  // SIGN UP
+  // SIGN UP - CORRIGIDO
   // =====================================
   const signUp = async (
     email: string,
@@ -146,39 +171,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fullName: string,
     selectedModule: UserModule
   ) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
         },
-      },
-    });
-
-    if (error) throw error;
-    if (!data.user) throw new Error('Falha ao criar usuário');
-
-    // 🔥 CRÍTICO
-    await waitForSession();
-
-    const tableName =
-      selectedModule === 'financeiro'
-        ? 'users_financeiro'
-        : 'users_academico';
-
-    const { error: insertError } = await supabase
-      .from(tableName)
-      .insert({
-        id: data.user.id,
-        email: data.user.email,
-        full_name: fullName,
       });
 
-    if (insertError) throw insertError;
+      if (error) throw error;
+      if (!data.user) throw new Error('Falha ao criar usuário');
 
-    setModule(selectedModule);
-    localStorage.setItem('userModule', selectedModule);
+      // Aguarda confirmação do usuário (importante para email confirmation)
+      await waitForUserAndSession();
+
+      const tableName =
+        selectedModule === 'financeiro'
+          ? 'users_financeiro'
+          : 'users_academico';
+
+      // Aguarda um pouco antes de tentar inserir
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Tenta inserir com retry
+      let insertSuccess = false;
+      let retries = 3;
+      
+      while (retries > 0 && !insertSuccess) {
+        const { error: insertError } = await supabase
+          .from(tableName)
+          .insert({
+            id: data.user.id,
+            email: data.user.email,
+            full_name: fullName,
+          });
+
+        if (!insertError) {
+          insertSuccess = true;
+          break;
+        }
+
+        if (insertError.code === '23505') {
+          // Duplicate key - já existe, pode considerar sucesso
+          insertSuccess = true;
+          break;
+        }
+
+        console.log(`Tentativa ${4-retries} falhou, retentando...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        retries--;
+      }
+
+      if (!insertSuccess) {
+        throw new Error('Falha ao criar perfil do usuário após múltiplas tentativas');
+      }
+
+      setModule(selectedModule);
+      localStorage.setItem('userModule', selectedModule);
+    } catch (error) {
+      console.error('Erro no signUp:', error);
+      throw error;
+    }
   };
 
   // =====================================
@@ -215,4 +271,3 @@ export function useAuth() {
   }
   return context;
 }
-
