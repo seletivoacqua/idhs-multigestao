@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, TrendingUp, TrendingDown, Calendar, Filter, Settings, FileText } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, Calendar, Filter, Settings, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { FluxoCaixaReport } from './FluxoCaixaReport';
@@ -14,6 +14,7 @@ interface Transaction {
   description: string;
   transaction_date: string;
   fonte_pagadora?: string;
+  fornecedor?: string;
   com_nota?: boolean;
   so_recibo?: boolean;
 }
@@ -25,6 +26,7 @@ interface FixedExpense {
   method: string;
   description: string;
   active: boolean;
+  pagamento_realizado: boolean;
 }
 
 export function FluxoCaixaTab() {
@@ -37,6 +39,7 @@ export function FluxoCaixaTab() {
   const [filterMonth, setFilterMonth] = useState<string>(
     new Date().toISOString().substring(0, 7)
   );
+  const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -48,6 +51,7 @@ export function FluxoCaixaTab() {
     description: '',
     transaction_date: new Date().toISOString().split('T')[0],
     fonte_pagadora: 'Instituto Acqua',
+    fornecedor: '',
     com_nota: false,
     so_recibo: false,
   });
@@ -122,6 +126,7 @@ export function FluxoCaixaTab() {
           description: formData.description,
           transaction_date: formData.transaction_date,
           fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
+          fornecedor: formData.type === 'expense' ? formData.fornecedor || null : null,
           com_nota: formData.type === 'expense' ? formData.com_nota : false,
           so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
         })
@@ -144,6 +149,7 @@ export function FluxoCaixaTab() {
           description: formData.description,
           transaction_date: formData.transaction_date,
           fonte_pagadora: formData.type === 'income' ? formData.fonte_pagadora : null,
+          fornecedor: formData.type === 'expense' ? formData.fornecedor || null : null,
           com_nota: formData.type === 'expense' ? formData.com_nota : false,
           so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
         },
@@ -172,6 +178,7 @@ export function FluxoCaixaTab() {
       description: '',
       transaction_date: new Date().toISOString().split('T')[0],
       fonte_pagadora: 'Instituto Acqua',
+      fornecedor: '',
       com_nota: false,
       so_recibo: false,
     });
@@ -188,10 +195,28 @@ export function FluxoCaixaTab() {
       description: transaction.description,
       transaction_date: transaction.transaction_date,
       fonte_pagadora: transaction.fonte_pagadora || 'Instituto Acqua',
+      fornecedor: transaction.fornecedor || '',
       com_nota: transaction.com_nota || false,
       so_recibo: transaction.so_recibo || false,
     });
     setShowAddModal(true);
+  };
+
+  const handleDeleteTransaction = async (id: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta transação?')) return;
+
+    const { error } = await supabase
+      .from('cash_flow_transactions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting transaction:', error);
+      alert('Erro ao excluir transação');
+      return;
+    }
+
+    loadTransactions();
   };
 
   const handleAddFixedExpense = async (e: React.FormEvent) => {
@@ -237,6 +262,20 @@ export function FluxoCaixaTab() {
     loadFixedExpenses();
   };
 
+  const toggleFixedExpensePayment = async (id: string, paid: boolean) => {
+    const { error } = await supabase
+      .from('fixed_expenses')
+      .update({ pagamento_realizado: !paid })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error updating fixed expense payment:', error);
+      return;
+    }
+
+    loadFixedExpenses();
+  };
+
   const totalIncome = transactions
     .filter((t) => t.type === 'income')
     .reduce((sum, t) => sum + Number(t.amount), 0);
@@ -246,6 +285,11 @@ export function FluxoCaixaTab() {
     .reduce((sum, t) => sum + Number(t.amount), 0);
 
   const balance = totalIncome - totalExpense;
+
+  const filteredTransactions = transactions.filter((t) => {
+    if (filterType === 'all') return true;
+    return t.type === filterType;
+  });
 
   return (
     <div className="space-y-6">
@@ -260,6 +304,15 @@ export function FluxoCaixaTab() {
               className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as 'all' | 'income' | 'expense')}
+            className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="all">Todas</option>
+            <option value="income">Entradas</option>
+            <option value="expense">Saídas</option>
+          </select>
           <button
             onClick={() => setShowFixedExpensesModal(!showFixedExpensesModal)}
             className="flex items-center space-x-2 px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
@@ -384,16 +437,27 @@ export function FluxoCaixaTab() {
                     R$ {expense.amount.toFixed(2)} - {expense.method}
                   </p>
                 </div>
-                <button
-                  onClick={() => toggleFixedExpense(expense.id, expense.active)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    expense.active
-                      ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {expense.active ? 'Ativa' : 'Inativa'}
-                </button>
+                <div className="flex items-center space-x-2">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={expense.pagamento_realizado}
+                      onChange={() => toggleFixedExpensePayment(expense.id, expense.pagamento_realizado)}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-slate-600">Pago</span>
+                  </label>
+                  <button
+                    onClick={() => toggleFixedExpense(expense.id, expense.active)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      expense.active
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {expense.active ? 'Ativa' : 'Inativa'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -415,7 +479,7 @@ export function FluxoCaixaTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {transactions.map((transaction) => (
+              {filteredTransactions.map((transaction) => (
                 <tr key={transaction.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
                     {new Date(transaction.transaction_date).toLocaleDateString('pt-BR')}
@@ -444,16 +508,24 @@ export function FluxoCaixaTab() {
                     R$ {Number(transaction.amount).toFixed(2)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <button
-                      onClick={() => handleEditTransaction(transaction)}
-                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                    >
-                      Editar
-                    </button>
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => handleEditTransaction(transaction)}
+                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTransaction(transaction.id)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
-              {transactions.length === 0 && (
+              {filteredTransactions.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
                     Nenhuma transação encontrada para este período
@@ -530,6 +602,8 @@ export function FluxoCaixaTab() {
                       <option value="boleto">Boleto</option>
                       <option value="pix">PIX</option>
                       <option value="transferencia">Transferência</option>
+                      <option value="cartao_debito">Cartão de Débito</option>
+                      <option value="cartao_credito">Cartão de Crédito</option>
                     </>
                   )}
                 </select>
@@ -549,6 +623,17 @@ export function FluxoCaixaTab() {
 
               {formData.type === 'expense' && (
                 <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Fornecedor (opcional)</label>
+                    <input
+                      type="text"
+                      value={formData.fornecedor}
+                      onChange={(e) => setFormData({ ...formData, fornecedor: e.target.value })}
+                      placeholder="Nome do fornecedor"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
                     <select

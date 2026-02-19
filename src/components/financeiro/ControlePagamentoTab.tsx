@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -32,6 +32,7 @@ export function ControlePagamentoTab() {
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -262,6 +263,23 @@ export function ControlePagamentoTab() {
     setShowAddModal(true);
   };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta nota fiscal?')) return;
+
+    const { error } = await supabase
+      .from('invoices')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting invoice:', error);
+      alert('Erro ao excluir nota fiscal');
+      return;
+    }
+
+    loadInvoices();
+  };
+
   const viewDocument = (documentUrl: string) => {
     window.open(documentUrl, '_blank');
   };
@@ -300,10 +318,27 @@ export function ControlePagamentoTab() {
     .filter((inv) => inv.payment_status === 'ATRASADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
+  const filteredInvoices = invoices.filter((inv) => {
+    if (statusFilter === 'all') return true;
+    return inv.payment_status === statusFilter;
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
+        <div className="flex items-center space-x-4">
+          <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+            className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="all">Todos os Status</option>
+            <option value="PAGO">Pago</option>
+            <option value="EM ABERTO">Em Aberto</option>
+            <option value="ATRASADO">Atrasado</option>
+          </select>
+        </div>
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setShowReportModal(true)}
@@ -366,6 +401,7 @@ export function ControlePagamentoTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">NF</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Emissão</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Vencimento</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data Pgto</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Documento</th>
@@ -373,7 +409,7 @@ export function ControlePagamentoTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {invoices.map((invoice) => (
+              {filteredInvoices.map((invoice) => (
                 <tr key={invoice.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
                     {invoice.item_number}
@@ -389,6 +425,9 @@ export function ControlePagamentoTab() {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
                     {new Date(invoice.due_date).toLocaleDateString('pt-BR')}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                    {invoice.payment_date ? new Date(invoice.payment_date).toLocaleDateString('pt-BR') : '-'}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
                     R$ {Number(invoice.net_value).toFixed(2)}
@@ -415,19 +454,27 @@ export function ControlePagamentoTab() {
                     )}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <button
-                      onClick={() => handleEdit(invoice)}
-                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                    >
-                      Editar
-                    </button>
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => handleEdit(invoice)}
+                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDelete(invoice.id)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
-              {invoices.length === 0 && (
+              {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
-                    Nenhuma nota fiscal cadastrada
+                  <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
+                    Nenhuma nota fiscal encontrada
                   </td>
                 </tr>
               )}
