@@ -769,12 +769,31 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [enrollmentType, setEnrollmentType] = useState<'regular' | 'exceptional'>('regular');
   const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
+  const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const { user } = useAuth();
 
   useEffect(() => {
+    loadCycleData();
     loadClassStudents();
     loadAvailableStudents();
   }, []);
+
+  const loadCycleData = async () => {
+    const { data, error } = await supabase
+      .from('cycles')
+      .select('start_date')
+      .eq('id', classData.cycle_id)
+      .single();
+
+    if (error) {
+      console.error('Error loading cycle data:', error);
+      return;
+    }
+
+    if (data) {
+      setCycleStartDate(data.start_date);
+    }
+  };
 
   const loadClassStudents = async () => {
     const { data, error } = await supabase
@@ -792,58 +811,49 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         (data || []).map(async (cs) => {
           let totalClasses = classData.total_classes;
           let adjustedPresentCount = 0;
-          let firstAttendanceDate = null;
+          let isProportionalCalculation = false;
 
-          // For exceptional enrollment, calculate proportionally based on first attendance
-          if (cs.enrollment_type === 'exceptional') {
-            // Get the first attendance date for this student (when present = true)
-            const { data: firstAttendance } = await supabase
+          // Check if student enrolled after cycle start date
+          const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
+          const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
+
+          if (isEnrolledAfterCycleStart) {
+            isProportionalCalculation = true;
+
+            // Get all unique class dates from attendance records for this class
+            const { data: allClassDates } = await supabase
               .from('attendance')
               .select('class_date')
               .eq('class_id', classData.id)
-              .eq('student_id', cs.student_id)
-              .eq('present', true)
-              .order('class_date', { ascending: true })
-              .limit(1);
+              .order('class_date');
 
-            if (firstAttendance && firstAttendance.length > 0) {
-              firstAttendanceDate = firstAttendance[0].class_date;
+            if (allClassDates && allClassDates.length > 0) {
+              // Get unique class dates
+              const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
 
-              // Get all attendance records for the class to count total classes after first attendance
-              const { data: allClassDates } = await supabase
-                .from('attendance')
-                .select('class_date')
-                .eq('class_id', classData.id)
-                .order('class_date');
+              // Count classes that occurred on or after enrollment date
+              const classesAfterEnrollment = uniqueClassDates.filter(
+                (date) => date >= enrollmentDate
+              );
+              totalClasses = classesAfterEnrollment.length || classData.total_classes;
 
-              if (allClassDates) {
-                // Get unique class dates (to avoid counting duplicates if multiple students)
-                const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
-
-                // Count classes that occurred on or after first attendance date
-                const classesAfterFirstAttendance = uniqueClassDates.filter(
-                  (date) => date >= firstAttendanceDate
-                );
-                totalClasses = classesAfterFirstAttendance.length || classData.total_classes;
-              }
-
-              // Count present days for this student after first attendance
-              const { count: presentAfterFirst } = await supabase
+              // Count present days for this student on or after enrollment date
+              const { count: presentAfterEnrollment } = await supabase
                 .from('attendance')
                 .select('*', { count: 'exact', head: true })
                 .eq('class_id', classData.id)
                 .eq('student_id', cs.student_id)
                 .eq('present', true)
-                .gte('class_date', firstAttendanceDate);
+                .gte('class_date', enrollmentDate);
 
-              adjustedPresentCount = presentAfterFirst || 0;
+              adjustedPresentCount = presentAfterEnrollment || 0;
             } else {
-              // No attendance yet, use 0
+              // No attendance records yet
               adjustedPresentCount = 0;
               totalClasses = classData.total_classes;
             }
           } else {
-            // Regular enrollment - count all attendance
+            // Regular enrollment - enrolled before or on cycle start date
             const { count: presentCount } = await supabase
               .from('attendance')
               .select('*', { count: 'exact', head: true })
@@ -861,7 +871,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             attendanceCount: adjustedPresentCount,
             attendancePercentage: percentage,
             totalClasses,
-            firstAttendanceDate,
+            isProportionalCalculation,
           };
         })
       );
@@ -1267,9 +1277,14 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             }`}>
                               {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
                             </span>
-                            {student.enrollment_type === 'exceptional' && student.enrollment_date && (
+                            {student.enrollment_date && (
                               <div className="text-xs text-slate-500 mt-1">
-                                Desde {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                                Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                              </div>
+                            )}
+                            {student.isProportionalCalculation && (
+                              <div className="text-xs text-amber-600 mt-1 font-medium">
+                                Cálculo proporcional aplicado
                               </div>
                             )}
                           </td>
@@ -1454,10 +1469,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                     {student.attendanceCount} de {student.totalClasses || classData.total_classes} aulas
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    {student.enrollment_type === 'exceptional' && student.firstAttendanceDate
-                                      ? `Cálculo proporcional (a partir de ${new Date(student.firstAttendanceDate + 'T00:00:00').toLocaleDateString('pt-BR')})`
-                                      : student.enrollment_type === 'exceptional'
-                                      ? 'Matrícula excepcional (aguardando primeira presença)'
+                                    {student.isProportionalCalculation && student.enrollment_date
+                                      ? `Matrícula após início do ciclo - cálculo proporcional (desde ${new Date(student.enrollment_date).toLocaleDateString('pt-BR')})`
                                       : 'Presenças registradas'}
                                   </span>
                                 </div>
@@ -1835,10 +1848,29 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
   const [editingRecord, setEditingRecord] = useState<string | null>(null);
   const [editData, setEditData] = useState<{ classNumber: number; classDate: string; present: boolean } | null>(null);
+  const [cycleStartDate, setCycleStartDate] = useState<string>('');
 
   useEffect(() => {
+    loadCycleData();
     loadAttendanceRecords();
   }, []);
+
+  const loadCycleData = async () => {
+    const { data, error } = await supabase
+      .from('cycles')
+      .select('start_date')
+      .eq('id', classData.cycle_id)
+      .single();
+
+    if (error) {
+      console.error('Error loading cycle data:', error);
+      return;
+    }
+
+    if (data) {
+      setCycleStartDate(data.start_date);
+    }
+  };
 
   const loadAttendanceRecords = async () => {
     const { data, error } = await supabase
@@ -1912,25 +1944,29 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     alert('Frequência excluída com sucesso!');
   };
 
-  const presentCount = attendanceRecords.filter(r => r.present).length;
-
-  // Calculate percentage based on enrollment type
+  // Calculate percentage based on enrollment date vs cycle start date
   let totalClassesForStudent = classData.total_classes;
   let percentage = 0;
+  let presentCount = 0;
+  let isProportionalCalculation = false;
 
-  if (student.enrollment_type === 'exceptional' && attendanceRecords.length > 0) {
-    // Find first attendance date where student was present
-    const firstPresentRecord = attendanceRecords
-      .filter(r => r.present)
-      .sort((a, b) => a.class_date.localeCompare(b.class_date))[0];
+  const enrollmentDate = student.enrollment_date ? student.enrollment_date.split('T')[0] : null;
+  const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
 
-    if (firstPresentRecord) {
-      // Count total classes that occurred on or after first attendance
-      const classesAfterFirst = attendanceRecords.filter(
-        r => r.class_date >= firstPresentRecord.class_date
-      );
-      totalClassesForStudent = classesAfterFirst.length || classData.total_classes;
-    }
+  if (isEnrolledAfterCycleStart && attendanceRecords.length > 0) {
+    isProportionalCalculation = true;
+
+    // Count only classes that occurred on or after enrollment date
+    const classesAfterEnrollment = attendanceRecords.filter(
+      r => r.class_date >= enrollmentDate
+    );
+    totalClassesForStudent = classesAfterEnrollment.length || classData.total_classes;
+
+    // Count present records on or after enrollment date
+    presentCount = attendanceRecords.filter(r => r.present && r.class_date >= enrollmentDate).length;
+  } else {
+    // Regular calculation - all attendance records
+    presentCount = attendanceRecords.filter(r => r.present).length;
   }
 
   percentage = totalClassesForStudent > 0 ? (presentCount / totalClassesForStudent) * 100 : 0;
@@ -1946,8 +1982,10 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
               <div className="flex items-center space-x-4 mt-3">
                 <span className="text-sm text-slate-600">
                   Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {totalClassesForStudent}
-                  {student.enrollment_type === 'exceptional' && (
-                    <span className="ml-2 text-xs text-amber-600">(Matrícula Excepcional)</span>
+                  {isProportionalCalculation && enrollmentDate && (
+                    <span className="ml-2 text-xs text-amber-600">
+                      (Matrícula após início do ciclo - {new Date(enrollmentDate + 'T00:00:00').toLocaleDateString('pt-BR')})
+                    </span>
                   )}
                 </span>
                 <span className={`text-sm font-bold ${percentage >= 60 ? 'text-green-600' : 'text-red-600'}`}>
