@@ -91,8 +91,7 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('cycles')
       .select('id, name')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error loading cycles:', error);
