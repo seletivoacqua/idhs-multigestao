@@ -21,6 +21,7 @@ interface Invoice {
   payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO';
   payment_date?: string;
   paid_value?: number;
+  estado?: string;
 }
 
 interface ControlePagamentoReportProps {
@@ -37,6 +38,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
     invoiceNumber: '',
     unitName: '',
     status: 'all',
+    estado: 'all',
   });
 
   const handleGenerateReport = async () => {
@@ -63,6 +65,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
 
       if (filters.status !== 'all') {
         query = query.eq('payment_status', filters.status);
+      }
+
+      if (filters.estado !== 'all') {
+        query = query.eq('estado', filters.estado);
       }
 
       const { data, error } = await query;
@@ -288,6 +294,19 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
                 <option value="PAGO">PAGO</option>
                 <option value="EM ABERTO">EM ABERTO</option>
                 <option value="ATRASADO">ATRASADO</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
+              <select
+                value={filters.estado}
+                onChange={(e) => setFilters({ ...filters, estado: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Todos</option>
+                <option value="MA">MA</option>
+                <option value="PA">PA</option>
               </select>
             </div>
           </div>

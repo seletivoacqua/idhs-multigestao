@@ -762,6 +762,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [students, setStudents] = useState<any[]>([]);
   const [availableStudents, setAvailableStudents] = useState<Student[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [showCertificate, setShowCertificate] = useState(false);
   const [certificateData, setCertificateData] = useState<any>(null);
   const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
@@ -789,39 +790,68 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     if (classData.modality === 'VIDEOCONFERENCIA') {
       const studentsWithAttendance = await Promise.all(
         (data || []).map(async (cs) => {
-          const { count: presentCount } = await supabase
-            .from('attendance')
-            .select('*', { count: 'exact', head: true })
-            .eq('class_id', classData.id)
-            .eq('student_id', cs.student_id)
-            .eq('present', true);
-
           let totalClasses = classData.total_classes;
-          let adjustedPresentCount = presentCount || 0;
+          let adjustedPresentCount = 0;
+          let firstAttendanceDate = null;
 
-          if (cs.enrollment_type === 'exceptional' && cs.enrollment_date) {
-            const { data: attendanceData } = await supabase
+          // For exceptional enrollment, calculate proportionally based on first attendance
+          if (cs.enrollment_type === 'exceptional') {
+            // Get the first attendance date for this student (when present = true)
+            const { data: firstAttendance } = await supabase
               .from('attendance')
               .select('class_date')
               .eq('class_id', classData.id)
-              .order('class_date');
+              .eq('student_id', cs.student_id)
+              .eq('present', true)
+              .order('class_date', { ascending: true })
+              .limit(1);
 
-            if (attendanceData) {
-              const classesAfterEnrollment = attendanceData.filter(
-                (att) => att.class_date >= cs.enrollment_date
-              );
-              totalClasses = classesAfterEnrollment.length;
+            if (firstAttendance && firstAttendance.length > 0) {
+              firstAttendanceDate = firstAttendance[0].class_date;
 
-              const { count: adjustedCount } = await supabase
+              // Get all attendance records for the class to count total classes after first attendance
+              const { data: allClassDates } = await supabase
+                .from('attendance')
+                .select('class_date')
+                .eq('class_id', classData.id)
+                .order('class_date');
+
+              if (allClassDates) {
+                // Get unique class dates (to avoid counting duplicates if multiple students)
+                const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
+
+                // Count classes that occurred on or after first attendance date
+                const classesAfterFirstAttendance = uniqueClassDates.filter(
+                  (date) => date >= firstAttendanceDate
+                );
+                totalClasses = classesAfterFirstAttendance.length || classData.total_classes;
+              }
+
+              // Count present days for this student after first attendance
+              const { count: presentAfterFirst } = await supabase
                 .from('attendance')
                 .select('*', { count: 'exact', head: true })
                 .eq('class_id', classData.id)
                 .eq('student_id', cs.student_id)
                 .eq('present', true)
-                .gte('class_date', cs.enrollment_date);
+                .gte('class_date', firstAttendanceDate);
 
-              adjustedPresentCount = adjustedCount || 0;
+              adjustedPresentCount = presentAfterFirst || 0;
+            } else {
+              // No attendance yet, use 0
+              adjustedPresentCount = 0;
+              totalClasses = classData.total_classes;
             }
+          } else {
+            // Regular enrollment - count all attendance
+            const { count: presentCount } = await supabase
+              .from('attendance')
+              .select('*', { count: 'exact', head: true })
+              .eq('class_id', classData.id)
+              .eq('student_id', cs.student_id)
+              .eq('present', true);
+
+            adjustedPresentCount = presentCount || 0;
           }
 
           const percentage = totalClasses > 0 ? (adjustedPresentCount / totalClasses) * 100 : 0;
@@ -831,6 +861,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             attendanceCount: adjustedPresentCount,
             attendancePercentage: percentage,
             totalClasses,
+            firstAttendanceDate,
           };
         })
       );
@@ -906,7 +937,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       return;
     }
 
-    const enrollmentDate = new Date().toISOString().split('T')[0];
+    const enrollmentDate = new Date().toISOString();
     const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
       class_id: classData.id,
       student_id: studentId,
@@ -1238,7 +1269,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             </span>
                             {student.enrollment_type === 'exceptional' && student.enrollment_date && (
                               <div className="text-xs text-slate-500 mt-1">
-                                Desde {new Date(student.enrollment_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                                Desde {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
                               </div>
                             )}
                           </td>
@@ -1331,6 +1362,19 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                 </div>
               </div>
 
+              <div className="mb-4">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar aluno por nome..."
+                    value={studentSearchTerm}
+                    onChange={(e) => setStudentSearchTerm(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
+                  />
+                </div>
+              </div>
+
               <div className="border border-slate-200 rounded-lg overflow-hidden">
                 <div className="max-h-[400px] overflow-y-auto">
                   <table className="w-full min-w-full">
@@ -1351,7 +1395,13 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {students.map((student) => {
+                      {students
+                        .filter((student) => {
+                          if (!studentSearchTerm) return true;
+                          const search = studentSearchTerm.toLowerCase();
+                          return student.students.full_name.toLowerCase().includes(search);
+                        })
+                        .map((student) => {
                         const canCertify =
                           classData.modality === 'VIDEOCONFERENCIA'
                             ? student.attendancePercentage >= 60
@@ -1404,8 +1454,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                     {student.attendanceCount} de {student.totalClasses || classData.total_classes} aulas
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    {student.enrollment_type === 'exceptional'
-                                      ? `Matrícula excepcional (desde ${new Date(student.enrollment_date + 'T00:00:00').toLocaleDateString('pt-BR')})`
+                                    {student.enrollment_type === 'exceptional' && student.firstAttendanceDate
+                                      ? `Cálculo proporcional (a partir de ${new Date(student.firstAttendanceDate + 'T00:00:00').toLocaleDateString('pt-BR')})`
+                                      : student.enrollment_type === 'exceptional'
+                                      ? 'Matrícula excepcional (aguardando primeira presença)'
                                       : 'Presenças registradas'}
                                   </span>
                                 </div>
@@ -1604,9 +1656,16 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
   const [attendance, setAttendance] = useState<Record<string, boolean>>({});
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
 
   const handleSaveAttendance = async () => {
     if (!confirm('Salvar frequência para esta aula?')) return;
+
+    // Validate that the date is not empty
+    if (!classDate) {
+      alert('Por favor, selecione uma data para a aula');
+      return;
+    }
 
     for (const student of students) {
       const present = attendance[student.student_id] || false;
@@ -1635,6 +1694,12 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
     setShowDetailsModal(true);
   };
 
+  const filteredStudents = students.filter((student: any) => {
+    if (!studentSearchTerm) return true;
+    const search = studentSearchTerm.toLowerCase();
+    return student.students.full_name.toLowerCase().includes(search);
+  });
+
   return (
     <>
       <div className="grid grid-cols-3 gap-6 mb-6">
@@ -1653,7 +1718,7 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
-            Data da Aula
+            Data da Aula <span className="text-xs text-slate-500">(permite datas retroativas)</span>
           </label>
           <input
             type="date"
@@ -1669,6 +1734,19 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
           >
             Salvar Frequência
           </button>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar aluno por nome..."
+            value={studentSearchTerm}
+            onChange={(e) => setStudentSearchTerm(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
+          />
         </div>
       </div>
 
@@ -1692,7 +1770,7 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {students.map((student: any) => (
+              {filteredStudents.map((student: any) => (
                 <tr key={student.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 text-sm text-slate-800">
                     {student.students.full_name}
@@ -1835,7 +1913,27 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   };
 
   const presentCount = attendanceRecords.filter(r => r.present).length;
-  const percentage = (presentCount / classData.total_classes) * 100;
+
+  // Calculate percentage based on enrollment type
+  let totalClassesForStudent = classData.total_classes;
+  let percentage = 0;
+
+  if (student.enrollment_type === 'exceptional' && attendanceRecords.length > 0) {
+    // Find first attendance date where student was present
+    const firstPresentRecord = attendanceRecords
+      .filter(r => r.present)
+      .sort((a, b) => a.class_date.localeCompare(b.class_date))[0];
+
+    if (firstPresentRecord) {
+      // Count total classes that occurred on or after first attendance
+      const classesAfterFirst = attendanceRecords.filter(
+        r => r.class_date >= firstPresentRecord.class_date
+      );
+      totalClassesForStudent = classesAfterFirst.length || classData.total_classes;
+    }
+  }
+
+  percentage = totalClassesForStudent > 0 ? (presentCount / totalClassesForStudent) * 100 : 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
@@ -1847,7 +1945,10 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
               <p className="text-lg text-slate-600 mt-1">{student.students.full_name}</p>
               <div className="flex items-center space-x-4 mt-3">
                 <span className="text-sm text-slate-600">
-                  Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {classData.total_classes}
+                  Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {totalClassesForStudent}
+                  {student.enrollment_type === 'exceptional' && (
+                    <span className="ml-2 text-xs text-amber-600">(Matrícula Excepcional)</span>
+                  )}
                 </span>
                 <span className={`text-sm font-bold ${percentage >= 60 ? 'text-green-600' : 'text-red-600'}`}>
                   {percentage.toFixed(1)}%
@@ -1988,6 +2089,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
+  const [studentSearchTerm, setStudentSearchTerm] = useState('');
 
   useEffect(() => {
     const initial: Record<string, any> = {};
@@ -2053,6 +2155,12 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     onUpdate();
   };
 
+  const filteredStudents = students.filter((student: any) => {
+    if (!studentSearchTerm) return true;
+    const search = studentSearchTerm.toLowerCase();
+    return student.students.full_name.toLowerCase().includes(search);
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center mb-4">
@@ -2070,6 +2178,19 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
           <strong>Atenção:</strong> Para aprovação no curso EAD, o aluno deve realizar <strong>3 acessos em meses diferentes</strong>.
           Se 2 ou 3 acessos forem registrados no mesmo mês, o aluno será considerado reprovado.
         </p>
+      </div>
+
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar aluno por nome..."
+            value={studentSearchTerm}
+            onChange={(e) => setStudentSearchTerm(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
+          />
+        </div>
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -2095,7 +2216,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {students.map((student: any) => (
+              {filteredStudents.map((student: any) => (
                 <tr key={student.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 text-sm text-slate-800">
                     {student.students.full_name}
@@ -2114,6 +2235,17 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                             },
                           })
                         }
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          const pastedText = e.clipboardData.getData('text');
+                          setAccessData({
+                            ...accessData,
+                            [student.student_id]: {
+                              ...accessData[student.student_id],
+                              [`access_date_${num}`]: pastedText,
+                            },
+                          });
+                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                       />
                     </td>

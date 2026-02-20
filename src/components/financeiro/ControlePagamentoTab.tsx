@@ -22,6 +22,7 @@ interface Invoice {
   document_url?: string;
   document_name?: string;
   document_type_file?: string;
+  estado?: string;
   created_at: string;
 }
 
@@ -48,6 +49,7 @@ export function ControlePagamentoTab() {
     payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'ATRASADO',
     payment_date: '',
     paid_value: '',
+    estado: 'MA',
   });
 
   useEffect(() => {
@@ -161,6 +163,7 @@ export function ControlePagamentoTab() {
           payment_status: formData.payment_status,
           payment_date: formData.payment_date || null,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          estado: formData.estado,
           updated_at: new Date().toISOString(),
         })
         .eq('id', editingInvoice.id);
@@ -191,6 +194,7 @@ export function ControlePagamentoTab() {
           payment_status: formData.payment_status,
           payment_date: formData.payment_date || null,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          estado: formData.estado,
         },
       ]).select();
 
@@ -241,6 +245,7 @@ export function ControlePagamentoTab() {
       payment_status: 'EM ABERTO',
       payment_date: '',
       paid_value: '',
+      estado: 'MA',
     });
   };
 
@@ -259,6 +264,7 @@ export function ControlePagamentoTab() {
       payment_status: invoice.payment_status,
       payment_date: invoice.payment_date || '',
       paid_value: invoice.paid_value?.toString() || '',
+      estado: invoice.estado || 'MA',
     });
     setShowAddModal(true);
   };
@@ -396,6 +402,7 @@ export function ControlePagamentoTab() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Item</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Unidade</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Estado</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">CNPJ/CPF</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Exercício</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">NF</th>
@@ -415,6 +422,7 @@ export function ControlePagamentoTab() {
                     {invoice.item_number}
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-700">{invoice.unit_name}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.estado || '-'}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.cnpj_cpf}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
                     {String(invoice.exercise_month).padStart(2, '0')}/{invoice.exercise_year}
@@ -511,6 +519,19 @@ export function ControlePagamentoTab() {
                     required
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
+                  <select
+                    value={formData.estado}
+                    onChange={(e) => setFormData({ ...formData, estado: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="MA">MA</option>
+                    <option value="PA">PA</option>
+                  </select>
                 </div>
 
                 <div>

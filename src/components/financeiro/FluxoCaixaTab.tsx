@@ -40,6 +40,9 @@ export function FluxoCaixaTab() {
     new Date().toISOString().substring(0, 7)
   );
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
+  const [initialBalance, setInitialBalance] = useState<number>(0);
+  const [editingInitialBalance, setEditingInitialBalance] = useState(false);
+  const [initialBalanceInput, setInitialBalanceInput] = useState('0');
   const { user } = useAuth();
 
   const [formData, setFormData] = useState({
@@ -66,7 +69,60 @@ export function FluxoCaixaTab() {
   useEffect(() => {
     loadTransactions();
     loadFixedExpenses();
+    loadInitialBalance();
   }, [filterMonth]);
+
+  const loadInitialBalance = async () => {
+    if (!user) return;
+
+    const [year, month] = filterMonth.split('-').map(Number);
+
+    const { data, error } = await supabase
+      .from('initial_balances')
+      .select('balance')
+      .eq('user_id', user.id)
+      .eq('year', year)
+      .eq('month', month)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error loading initial balance:', error);
+      return;
+    }
+
+    const balance = data?.balance || 0;
+    setInitialBalance(Number(balance));
+    setInitialBalanceInput(balance.toString());
+  };
+
+  const saveInitialBalance = async () => {
+    if (!user) return;
+
+    const [year, month] = filterMonth.split('-').map(Number);
+    const balanceValue = parseFloat(initialBalanceInput) || 0;
+
+    const { error } = await supabase
+      .from('initial_balances')
+      .upsert({
+        user_id: user.id,
+        year,
+        month,
+        balance: balanceValue,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'user_id,year,month'
+      });
+
+    if (error) {
+      console.error('Error saving initial balance:', error);
+      alert('Erro ao salvar saldo inicial');
+      return;
+    }
+
+    setInitialBalance(balanceValue);
+    setEditingInitialBalance(false);
+    alert('Saldo inicial salvo com sucesso!');
+  };
 
   const loadTransactions = async () => {
     if (!user) return;
@@ -284,7 +340,7 @@ export function FluxoCaixaTab() {
     .filter((t) => t.type === 'expense')
     .reduce((sum, t) => sum + Number(t.amount), 0);
 
-  const balance = totalIncome - totalExpense;
+  const balance = initialBalance + totalIncome - totalExpense;
 
   const filteredTransactions = transactions.filter((t) => {
     if (filterType === 'all') return true;
@@ -339,7 +395,53 @@ export function FluxoCaixaTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm text-slate-600 font-medium">Saldo Inicial</p>
+              {editingInitialBalance ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={initialBalanceInput}
+                    onChange={(e) => setInitialBalanceInput(e.target.value)}
+                    className="w-32 px-2 py-1 text-lg font-bold border border-slate-300 rounded"
+                  />
+                  <button
+                    onClick={saveInitialBalance}
+                    className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                  >
+                    Salvar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingInitialBalance(false);
+                      setInitialBalanceInput(initialBalance.toString());
+                    }}
+                    className="text-xs bg-slate-300 text-slate-700 px-2 py-1 rounded hover:bg-slate-400"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <p className="text-2xl font-bold text-slate-700">
+                    R$ {initialBalance.toFixed(2)}
+                  </p>
+                  <button
+                    onClick={() => setEditingInitialBalance(true)}
+                    className="text-xs text-blue-600 hover:text-blue-800"
+                  >
+                    Editar
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -367,7 +469,7 @@ export function FluxoCaixaTab() {
         <div className={`${balance >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'} border rounded-lg p-4`}>
           <div className="flex items-center justify-between">
             <div>
-              <p className={`text-sm ${balance >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo</p>
+              <p className={`text-sm ${balance >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo Final</p>
               <p className={`text-2xl font-bold ${balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
                 R$ {balance.toFixed(2)}
               </p>
