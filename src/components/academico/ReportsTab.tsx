@@ -38,7 +38,6 @@ interface Class {
   modality: string;
   cycle_id: string;
   course_id: string;
-  total_classes: number;
 }
 
 interface ReportData {
@@ -76,7 +75,7 @@ export function ReportsTab() {
   const [isExporting, setIsExporting] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
-    pageSize: 50, // Reduzido para 50 para melhor performance
+    pageSize: 1000, // Aumentado para 1000 registros por página
     total: 0,
     totalPages: 0,
   });
@@ -126,7 +125,7 @@ export function ReportsTab() {
       const [unitsRes, cyclesRes, classesRes, coursesRes] = await Promise.all([
         supabase.from('units').select('id, name').order('name'),
         supabase.from('cycles').select('id, name, status, end_date').order('created_at', { ascending: false }),
-        supabase.from('classes').select('id, name, modality, cycle_id, course_id, total_classes').order('name'),
+        supabase.from('classes').select('id, name, modality, cycle_id, course_id').order('name'),
         supabase.from('courses').select('id, name'),
       ]);
 
@@ -180,10 +179,69 @@ export function ReportsTab() {
       status: 'all',
     });
     setPagination(prev => ({ ...prev, page: 1 }));
-    // Não gerar relatório automaticamente ao limpar
+    generateReport();
   };
 
-  // Função simplificada para gerar relatório
+  // Função para calcular frequência de um aluno específico
+  const calculateStudentAttendance = async (classId: string, studentId: string, startDate?: string, endDate?: string) => {
+    try {
+      let query = supabase
+        .from('attendance')
+        .select('*', { count: 'exact', head: true })
+        .eq('class_id', classId)
+        .eq('student_id', studentId)
+        .eq('present', true);
+
+      if (startDate) {
+        query = query.gte('class_date', startDate);
+      }
+      if (endDate) {
+        query = query.lte('class_date', endDate);
+      }
+
+      const { count } = await query;
+      return count || 0;
+    } catch (error) {
+      console.error('Error calculating attendance:', error);
+      return 0;
+    }
+  };
+
+  // Função para buscar acessos EAD
+  const getEADAccesses = async (classId: string, studentId: string, startDate?: string, endDate?: string) => {
+    try {
+      const { data } = await supabase
+        .from('ead_access')
+        .select('access_date_1, access_date_2, access_date_3')
+        .eq('class_id', classId)
+        .eq('student_id', studentId)
+        .single();
+
+      if (!data) return [];
+
+      let accesses = [
+        data.access_date_1,
+        data.access_date_2,
+        data.access_date_3,
+      ].filter(Boolean);
+
+      if (startDate || endDate) {
+        accesses = accesses.filter((d) => {
+          if (!d) return false;
+          const accessDate = new Date(d);
+          if (startDate && accessDate < new Date(startDate)) return false;
+          if (endDate && accessDate > new Date(endDate)) return false;
+          return true;
+        });
+      }
+
+      return accesses;
+    } catch (error) {
+      console.error('Error getting EAD accesses:', error);
+      return [];
+    }
+  };
+
   const generateReport = async () => {
     if (!user) return;
 
@@ -195,7 +253,7 @@ export function ReportsTab() {
     setIsLoading(true);
 
     try {
-      // 1. Buscar turmas filtradas
+      // 1. Buscar todas as turmas que atendem aos filtros (sem limite)
       let classQuery = supabase
         .from('classes')
         .select('id, cycle_id, modality, total_classes, course_id, name');
@@ -223,33 +281,12 @@ export function ReportsTab() {
         setReportData([]);
         setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
         setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
-        setIsLoading(false);
         return;
       }
 
       const classIds = filteredClasses.map(c => c.id);
 
-      // 2. Buscar contagem total de alunos para paginação
-      let countQuery = supabase
-        .from('class_students')
-        .select('*', { count: 'exact', head: true })
-        .in('class_id', classIds);
-
-      if (filters.status !== 'all') {
-        countQuery = countQuery.eq('current_status', filters.status);
-      }
-
-      const { count: totalCount } = await countQuery;
-
-      if (!totalCount || totalCount === 0) {
-        setReportData([]);
-        setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
-        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
-        setIsLoading(false);
-        return;
-      }
-
-      // 3. Buscar alunos da página atual
+      // 2. Buscar TODOS os alunos matriculados nessas turmas (sem paginação)
       let studentQuery = supabase
         .from('class_students')
         .select(`
@@ -259,7 +296,7 @@ export function ReportsTab() {
           current_status,
           class_id,
           student_id,
-          students!inner (
+          students (
             id,
             full_name,
             unit_id
@@ -267,32 +304,27 @@ export function ReportsTab() {
         `)
         .in('class_id', classIds);
 
+      // Aplicar filtro de status se necessário
       if (filters.status !== 'all') {
         studentQuery = studentQuery.eq('current_status', filters.status);
       }
 
-      // Aplicar paginação
-      const from = (pagination.page - 1) * pagination.pageSize;
-      const to = from + pagination.pageSize - 1;
-      studentQuery = studentQuery.range(from, to);
-
-      const { data: classStudents, error: studentsError } = await studentQuery;
+      const { data: allClassStudents, error: studentsError, count } = await studentQuery;
 
       if (studentsError) {
         console.error('Error loading students:', studentsError);
         return;
       }
 
-      if (!classStudents || classStudents.length === 0) {
+      if (!allClassStudents || allClassStudents.length === 0) {
         setReportData([]);
         setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
-        setPagination(prev => ({ ...prev, total: totalCount, totalPages: Math.ceil(totalCount / prev.pageSize) }));
-        setIsLoading(false);
+        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
         return;
       }
 
-      // 4. Filtrar por nome e unidade (em memória)
-      let filteredStudents = classStudents;
+      // 3. Filtrar por nome do aluno e unidade
+      let filteredStudents = allClassStudents;
 
       if (filters.studentName) {
         const searchTerm = filters.studentName.toLowerCase();
@@ -307,73 +339,21 @@ export function ReportsTab() {
         );
       }
 
-      // 5. Buscar dados de presença em lote (apenas se necessário)
-      const needsAttendanceData = filters.startDate || filters.endDate;
-      
-      // Coletar IDs para busca em lote
-      const studentIds = filteredStudents.map(cs => cs.student_id);
-      const videoconferenceClassIds = filteredClasses
-        .filter(c => c.modality === 'VIDEOCONFERENCIA')
-        .map(c => c.id);
-      const eadClassIds = filteredClasses
-        .filter(c => c.modality === 'EAD')
-        .map(c => c.id);
+      // 4. Aplicar paginação em memória
+      const totalFiltered = filteredStudents.length;
+      const startIndex = (pagination.page - 1) * pagination.pageSize;
+      const endIndex = Math.min(startIndex + pagination.pageSize, totalFiltered);
+      const paginatedStudents = filteredStudents.slice(startIndex, endIndex);
 
-      // Mapas para dados de frequência
-      const attendanceMap = new Map();
-      const eadMap = new Map();
-
-      // Buscar presenças em lote (apenas se necessário e se houver dados)
-      if (needsAttendanceData && videoconferenceClassIds.length > 0 && studentIds.length > 0) {
-        let attQuery = supabase
-          .from('attendance')
-          .select('class_id, student_id, class_date')
-          .in('class_id', videoconferenceClassIds)
-          .in('student_id', studentIds)
-          .eq('present', true);
-
-        if (filters.startDate) {
-          attQuery = attQuery.gte('class_date', filters.startDate);
-        }
-        if (filters.endDate) {
-          attQuery = attQuery.lte('class_date', filters.endDate);
-        }
-
-        const { data: attendanceData } = await attQuery;
-        
-        if (attendanceData) {
-          attendanceData.forEach(att => {
-            const key = `${att.class_id}_${att.student_id}`;
-            if (!attendanceMap.has(key)) {
-              attendanceMap.set(key, []);
-            }
-            attendanceMap.get(key).push(att);
-          });
-        }
-      }
-
-      // Buscar acessos EAD em lote
-      if (eadClassIds.length > 0 && studentIds.length > 0) {
-        const { data: eadData } = await supabase
-          .from('ead_access')
-          .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
-          .in('class_id', eadClassIds)
-          .in('student_id', studentIds);
-
-        if (eadData) {
-          eadData.forEach(access => {
-            const key = `${access.class_id}_${access.student_id}`;
-            eadMap.set(key, access);
-          });
-        }
-      }
-
-      // 6. Processar dados
+      // 5. Processar dados para os alunos da página atual
       const processedData: ReportData[] = [];
       const today = new Date().toISOString().split('T')[0];
+
+      // Criar mapas para lookup rápido
       const classMap = new Map(filteredClasses.map(c => [c.id, c]));
 
-      for (const cs of filteredStudents) {
+      // Para cada aluno, buscar dados de frequência individualmente (mais confiável)
+      for (const cs of paginatedStudents) {
         const cls = classMap.get(cs.class_id);
         if (!cls || !cs.students) continue;
 
@@ -396,9 +376,14 @@ export function ReportsTab() {
         }
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
-          const key = `${cls.id}_${cs.student_id}`;
-          const attendances = attendanceMap.get(key) || [];
-          const attendedCount = attendances.length;
+          // Calcular presenças individualmente para este aluno
+          const attendedCount = await calculateStudentAttendance(
+            cls.id, 
+            cs.student_id, 
+            filters.startDate || undefined, 
+            filters.endDate || undefined
+          );
+          
           const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
           processedData.push({
@@ -419,28 +404,13 @@ export function ReportsTab() {
             enrollmentDate: cs.enrollment_date,
           });
         } else {
-          const key = `${cls.id}_${cs.student_id}`;
-          const access = eadMap.get(key);
-          
-          let accesses: string[] = [];
-          if (access) {
-            accesses = [
-              access.access_date_1,
-              access.access_date_2,
-              access.access_date_3,
-            ].filter(Boolean);
-
-            // Filtrar por data se necessário
-            if (filters.startDate || filters.endDate) {
-              accesses = accesses.filter((d) => {
-                if (!d) return false;
-                const accessDate = new Date(d);
-                if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
-                if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
-                return true;
-              });
-            }
-          }
+          // Buscar acessos EAD para este aluno
+          const accesses = await getEADAccesses(
+            cls.id, 
+            cs.student_id, 
+            filters.startDate || undefined, 
+            filters.endDate || undefined
+          );
 
           processedData.push({
             studentId: cs.students.id,
@@ -465,13 +435,50 @@ export function ReportsTab() {
 
       setReportData(processedData);
 
-      // Calcular estatísticas (usando dados da página atual para simplificar)
-      const emAndamentoCount = processedData.filter(d => d.displayStatus === 'Em Andamento').length;
-      const aprovadoCount = processedData.filter(d => d.displayStatus === 'Aprovado').length;
-      const reprovadoCount = processedData.filter(d => d.displayStatus === 'Reprovado').length;
+      // Calcular estatísticas (baseado em todos os alunos filtrados, não apenas página atual)
+      const allProcessedData: ReportData[] = [];
+      
+      // Processar alguns dados para estatísticas (sem buscar presenças individuais para não sobrecarregar)
+      for (const cs of filteredStudents.slice(0, 1000)) { // Limite para não travar
+        const cls = classMap.get(cs.class_id);
+        if (!cls || !cs.students) continue;
+
+        const cycleInfo = cyclesMap.current.get(cls.cycle_id) || { status: 'unknown', end_date: '' };
+        const isCycleActive = cycleInfo.status === 'active' && today <= cycleInfo.end_date;
+
+        let displayStatus = '';
+        if (isCycleActive) {
+          displayStatus = 'Em Andamento';
+        } else if (cs.current_status === 'aprovado') {
+          displayStatus = 'Aprovado';
+        } else if (cs.current_status === 'reprovado') {
+          displayStatus = 'Reprovado';
+        } else {
+          displayStatus = 'Pendente';
+        }
+
+        allProcessedData.push({
+          studentId: cs.students.id,
+          studentName: cs.students.full_name,
+          unitName: unitsMap.current.get(cs.students.unit_id) || 'Não informado',
+          courseName: coursesMap.current.get(cls.course_id) || 'Não informado',
+          className: cls.name,
+          classModality: cls.modality,
+          currentStatus: cs.current_status || 'em_andamento',
+          displayStatus,
+          cycleStatus: cycleInfo.status,
+          cycleEndDate: cycleInfo.end_date,
+          enrollmentType: cs.enrollment_type,
+          enrollmentDate: cs.enrollment_date,
+        });
+      }
+
+      const emAndamentoCount = allProcessedData.filter(d => d.displayStatus === 'Em Andamento').length;
+      const aprovadoCount = allProcessedData.filter(d => d.displayStatus === 'Aprovado').length;
+      const reprovadoCount = allProcessedData.filter(d => d.displayStatus === 'Reprovado').length;
 
       setStats({
-        totalStudents: processedData.length,
+        totalStudents: filteredStudents.length,
         emAndamentoCount,
         aprovadoCount,
         reprovadoCount,
@@ -479,8 +486,8 @@ export function ReportsTab() {
 
       setPagination(prev => ({
         ...prev,
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / prev.pageSize),
+        total: filteredStudents.length,
+        totalPages: Math.ceil(filteredStudents.length / prev.pageSize),
       }));
 
     } catch (error: any) {
@@ -564,7 +571,495 @@ export function ReportsTab() {
     setIsExporting(true);
     
     try {
-      exportToXLSX(reportData);
+      // Para exportação, buscar todos os dados sem paginação
+      await generateFullReportForExport();
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const generateFullReportForExport = async () => {
+    if (!user) return;
+
+    setIsLoading(true);
+
+    try {
+      // Similar ao generateReport mas sem paginação
+      let classQuery = supabase
+        .from('classes')
+        .select('id, cycle_id, modality, total_classes, course_id, name');
+
+      if (filters.cycleId) {
+        classQuery = classQuery.eq('cycle_id', filters.cycleId);
+      }
+
+      if (filters.classId) {
+        classQuery = classQuery.eq('id', filters.classId);
+      }
+
+      if (filters.modality !== 'all') {
+        classQuery = classQuery.eq('modality', filters.modality);
+      }
+
+      const { data: filteredClasses } = await classQuery;
+
+      if (!filteredClasses || filteredClasses.length === 0) return;
+
+      const classIds = filteredClasses.map(c => c.id);
+
+      let studentQuery = supabase
+        .from('class_students')
+        .select(`
+          id,
+          enrollment_type,
+          enrollment_date,
+          current_status,
+          class_id,
+          student_id,
+          students (
+            id,
+            full_name,
+            unit_id
+          )
+        `)
+        .in('class_id', classIds);
+
+      if (filters.status !== 'all') {
+        studentQuery = studentQuery.eq('current_status', filters.status);
+      }
+
+      const { data: allClassStudents } = await studentQuery;
+
+      if (!allClassStudents) return;
+
+      let filteredStudents = allClassStudents;
+
+      if (filters.studentName) {
+        const searchTerm = filters.studentName.toLowerCase();
+        filteredStudents = filteredStudents.filter(cs => 
+          cs.students?.full_name?.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      if (filters.unitId) {
+        filteredStudents = filteredStudents.filter(cs => 
+          cs.students?.unit_id === filters.unitId
+        );
+      }
+
+      const classMap = new Map(filteredClasses.map(c => [c.id, c]));
+      const today = new Date().toISOString().split('T')[0];
+      const exportData: ReportData[] = [];
+
+      // Processar em lotes para não sobrecarregar
+      const batchSize = 50;
+      for (let i = 0; i < filteredStudents.length; i += batchSize) {
+        const batch = filteredStudents.slice(i, i + batchSize);
+        
+        await Promise.all(batch.map(async (cs) => {
+          const cls = classMap.get(cs.class_id);
+          if (!cls || !cs.students) return;
+
+          const cycleInfo = cyclesMap.current.get(cls.cycle_id) || { status: 'unknown', end_date: '' };
+          const unitName = unitsMap.current.get(cs.students.unit_id) || 'Não informado';
+          const courseName = coursesMap.current.get(cls.course_id) || 'Não informado';
+
+          const isCycleActive = cycleInfo.status === 'active' && today <= cycleInfo.end_date;
+
+          let displayStatus = '';
+          if (isCycleActive) {
+            displayStatus = 'Em Andamento';
+          } else if (cs.current_status === 'aprovado') {
+            displayStatus = 'Aprovado';
+          } else if (cs.current_status === 'reprovado') {
+            displayStatus = 'Reprovado';
+          } else {
+            displayStatus = 'Pendente';
+          }
+
+          if (cls.modality === 'VIDEOCONFERENCIA') {
+            const attendedCount = await calculateStudentAttendance(cls.id, cs.student_id);
+            const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
+
+            exportData.push({
+              studentId: cs.students.id,
+              studentName: cs.students.full_name,
+              unitName,
+              courseName,
+              className: cls.name,
+              classModality: cls.modality,
+              classesTotal: cls.total_classes,
+              classesAttended: attendedCount,
+              attendancePercentage: percentage,
+              currentStatus: cs.current_status || 'em_andamento',
+              displayStatus,
+              cycleStatus: cycleInfo.status,
+              cycleEndDate: cycleInfo.end_date,
+              enrollmentType: cs.enrollment_type,
+              enrollmentDate: cs.enrollment_date,
+            });
+          } else {
+            const accesses = await getEADAccesses(cls.id, cs.student_id);
+
+            exportData.push({
+              studentId: cs.students.id,
+              studentName: cs.students.full_name,
+              unitName,
+              courseName,
+              className: cls.name,
+              classModality: cls.modality,
+              lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
+              currentStatus: cs.current_status || 'em_andamento',
+              displayStatus,
+              cycleStatus: cycleInfo.status,
+              cycleEndDate: cycleInfo.end_date,
+              enrollmentType: cs.enrollment_type,
+              enrollmentDate: cs.enrollment_date,
+            });
+          }
+        }));
+      }
+
+      exportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      exportToXLSX(exportData);
+
+    } catch (error) {
+      console.error('Error exporting full report:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const exportToPDF = async () => {
+    if (!reportRef.current || reportData.length === 0 || !tableRef.current) return;
+
+    setIsExporting(true);
+
+    try {
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - 2 * margin;
+
+      const emAndamentoPercentage = stats.totalStudents > 0
+        ? (stats.emAndamentoCount / stats.totalStudents) * 100
+        : 0;
+      const aprovadoPercentage = stats.totalStudents > 0
+        ? (stats.aprovadoCount / stats.totalStudents) * 100
+        : 0;
+      const reprovadoPercentage = stats.totalStudents > 0
+        ? (stats.reprovadoCount / stats.totalStudents) * 100
+        : 0;
+
+      const container = document.createElement('div');
+      container.style.width = `${contentWidth * 3.78}px`;
+      container.style.padding = '20px';
+      container.style.backgroundColor = '#ffffff';
+      container.style.fontFamily = 'Arial, sans-serif';
+      container.style.lineHeight = '1.5';
+
+      // Cabeçalho
+      const headerDiv = document.createElement('div');
+      headerDiv.style.textAlign = 'center';
+      headerDiv.style.marginBottom = '20px';
+      headerDiv.style.padding = '10px';
+      headerDiv.style.borderBottom = '2px solid #e2e8f0';
+
+      const logo = document.createElement('img');
+      logo.src = logoImg;
+      logo.style.width = '80px';
+      logo.style.height = 'auto';
+      logo.style.marginBottom = '10px';
+      headerDiv.appendChild(logo);
+
+      const title = document.createElement('h1');
+      title.textContent = 'Relatório de Acompanhamento de Alunos';
+      title.style.fontSize = '24px';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '5px';
+      title.style.color = '#1e293b';
+      headerDiv.appendChild(title);
+
+      const subtitle = document.createElement('p');
+      subtitle.textContent = `Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`;
+      subtitle.style.fontSize = '12px';
+      subtitle.style.color = '#64748b';
+      subtitle.style.marginBottom = '5px';
+      headerDiv.appendChild(subtitle);
+
+      container.appendChild(headerDiv);
+
+      // Filtros aplicados
+      const filtersDiv = document.createElement('div');
+      filtersDiv.style.display = 'flex';
+      filtersDiv.style.flexWrap = 'wrap';
+      filtersDiv.style.gap = '15px';
+      filtersDiv.style.marginBottom = '20px';
+      filtersDiv.style.padding = '10px';
+      filtersDiv.style.backgroundColor = '#f8fafc';
+      filtersDiv.style.borderRadius = '8px';
+      filtersDiv.style.fontSize = '12px';
+      filtersDiv.style.color = '#334155';
+
+      const activeFilters = [];
+      if (filters.cycleId) {
+        const cycle = cycles.find(c => c.id === filters.cycleId);
+        activeFilters.push(`Ciclo: ${cycle?.name || 'Todos'}`);
+      }
+      if (filters.classId) {
+        const cls = classes.find(c => c.id === filters.classId);
+        activeFilters.push(`Turma: ${cls?.name || 'Todas'}`);
+      }
+      if (filters.unitId) {
+        const unit = units.find(u => u.id === filters.unitId);
+        activeFilters.push(`Unidade: ${unit?.name || 'Todas'}`);
+      }
+      if (filters.modality !== 'all') {
+        activeFilters.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
+      }
+      if (filters.status !== 'all') {
+        let statusText = '';
+        if (filters.status === 'em_andamento') statusText = 'Em Andamento';
+        else if (filters.status === 'aprovado') statusText = 'Aprovados';
+        else if (filters.status === 'reprovado') statusText = 'Reprovados';
+        activeFilters.push(`Situação: ${statusText}`);
+      }
+      if (filters.startDate) {
+        activeFilters.push(`Data inicial: ${new Date(filters.startDate).toLocaleDateString('pt-BR')}`);
+      }
+      if (filters.endDate) {
+        activeFilters.push(`Data final: ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
+      }
+
+      filtersDiv.innerHTML = activeFilters.length > 0 
+        ? `<strong>Filtros aplicados:</strong> ${activeFilters.join(' • ')}` 
+        : '<strong>Nenhum filtro aplicado</strong>';
+
+      container.appendChild(filtersDiv);
+
+      // Estatísticas
+      const statsDiv = document.createElement('div');
+      statsDiv.style.marginBottom = '20px';
+
+      const statsTitle = document.createElement('h3');
+      statsTitle.textContent = 'Distribuição por Situação';
+      statsTitle.style.fontSize = '16px';
+      statsTitle.style.fontWeight = 'bold';
+      statsTitle.style.marginBottom = '15px';
+      statsTitle.style.color = '#1e293b';
+      statsDiv.appendChild(statsTitle);
+
+      const statsGrid = document.createElement('div');
+      statsGrid.style.display = 'grid';
+      statsGrid.style.gridTemplateColumns = 'repeat(4, 1fr)';
+      statsGrid.style.gap = '10px';
+      statsGrid.style.marginBottom = '15px';
+
+      // Total
+      const totalBox = document.createElement('div');
+      totalBox.style.backgroundColor = '#f1f5f9';
+      totalBox.style.padding = '15px';
+      totalBox.style.borderRadius = '8px';
+      totalBox.style.textAlign = 'center';
+      totalBox.innerHTML = `
+        <div style="color: #334155; font-size: 14px; font-weight: 500; margin-bottom: 5px;">Total de Alunos</div>
+        <div style="color: #0f172a; font-size: 32px; font-weight: bold;">${stats.totalStudents}</div>
+      `;
+
+      // Em Andamento
+      const emAndamentoBox = document.createElement('div');
+      emAndamentoBox.style.backgroundColor = '#dbeafe';
+      emAndamentoBox.style.padding = '15px';
+      emAndamentoBox.style.borderRadius = '8px';
+      emAndamentoBox.style.textAlign = 'center';
+      emAndamentoBox.innerHTML = `
+        <div style="color: #1e40af; font-size: 14px; font-weight: 500; margin-bottom: 5px;">Em Andamento</div>
+        <div style="color: #1e3a8a; font-size: 32px; font-weight: bold;">${stats.emAndamentoCount}</div>
+        <div style="color: #2563eb; font-size: 12px;">${emAndamentoPercentage.toFixed(1)}%</div>
+      `;
+
+      // Aprovados
+      const aprovadoBox = document.createElement('div');
+      aprovadoBox.style.backgroundColor = '#dcfce7';
+      aprovadoBox.style.padding = '15px';
+      aprovadoBox.style.borderRadius = '8px';
+      aprovadoBox.style.textAlign = 'center';
+      aprovadoBox.innerHTML = `
+        <div style="color: #166534; font-size: 14px; font-weight: 500; margin-bottom: 5px;">Aprovados</div>
+        <div style="color: #14532d; font-size: 32px; font-weight: bold;">${stats.aprovadoCount}</div>
+        <div style="color: #16a34a; font-size: 12px;">${aprovadoPercentage.toFixed(1)}%</div>
+      `;
+
+      // Reprovados
+      const reprovadoBox = document.createElement('div');
+      reprovadoBox.style.backgroundColor = '#fee2e2';
+      reprovadoBox.style.padding = '15px';
+      reprovadoBox.style.borderRadius = '8px';
+      reprovadoBox.style.textAlign = 'center';
+      reprovadoBox.innerHTML = `
+        <div style="color: #991b1b; font-size: 14px; font-weight: 500; margin-bottom: 5px;">Reprovados</div>
+        <div style="color: #7f1d1d; font-size: 32px; font-weight: bold;">${stats.reprovadoCount}</div>
+        <div style="color: #dc2626; font-size: 12px;">${reprovadoPercentage.toFixed(1)}%</div>
+      `;
+
+      statsGrid.appendChild(totalBox);
+      statsGrid.appendChild(emAndamentoBox);
+      statsGrid.appendChild(aprovadoBox);
+      statsGrid.appendChild(reprovadoBox);
+      statsDiv.appendChild(statsGrid);
+
+      // Barra de progresso
+      const progressContainer = document.createElement('div');
+      progressContainer.style.width = '100%';
+      progressContainer.style.marginTop = '10px';
+
+      const progressBar = document.createElement('div');
+      progressBar.style.width = '100%';
+      progressBar.style.height = '30px';
+      progressBar.style.backgroundColor = '#e2e8f0';
+      progressBar.style.borderRadius = '8px';
+      progressBar.style.overflow = 'hidden';
+      progressBar.style.display = 'flex';
+
+      if (stats.totalStudents > 0) {
+        const emAndamentoBar = document.createElement('div');
+        emAndamentoBar.style.width = `${emAndamentoPercentage}%`;
+        emAndamentoBar.style.height = '100%';
+        emAndamentoBar.style.backgroundColor = '#3b82f6';
+        emAndamentoBar.style.display = 'flex';
+        emAndamentoBar.style.alignItems = 'center';
+        emAndamentoBar.style.justifyContent = 'center';
+        emAndamentoBar.style.color = 'white';
+        emAndamentoBar.style.fontSize = '12px';
+        emAndamentoBar.style.fontWeight = 'bold';
+        emAndamentoBar.textContent = emAndamentoPercentage > 5 ? `${emAndamentoPercentage.toFixed(0)}%` : '';
+
+        const aprovadoBar = document.createElement('div');
+        aprovadoBar.style.width = `${aprovadoPercentage}%`;
+        aprovadoBar.style.height = '100%';
+        aprovadoBar.style.backgroundColor = '#22c55e';
+        aprovadoBar.style.display = 'flex';
+        aprovadoBar.style.alignItems = 'center';
+        aprovadoBar.style.justifyContent = 'center';
+        aprovadoBar.style.color = 'white';
+        aprovadoBar.style.fontSize = '12px';
+        aprovadoBar.style.fontWeight = 'bold';
+        aprovadoBar.textContent = aprovadoPercentage > 5 ? `${aprovadoPercentage.toFixed(0)}%` : '';
+
+        const reprovadoBar = document.createElement('div');
+        reprovadoBar.style.width = `${reprovadoPercentage}%`;
+        reprovadoBar.style.height = '100%';
+        reprovadoBar.style.backgroundColor = '#ef4444';
+        reprovadoBar.style.display = 'flex';
+        reprovadoBar.style.alignItems = 'center';
+        reprovadoBar.style.justifyContent = 'center';
+        reprovadoBar.style.color = 'white';
+        reprovadoBar.style.fontSize = '12px';
+        reprovadoBar.style.fontWeight = 'bold';
+        reprovadoBar.textContent = reprovadoPercentage > 5 ? `${reprovadoPercentage.toFixed(0)}%` : '';
+
+        progressBar.appendChild(emAndamentoBar);
+        progressBar.appendChild(aprovadoBar);
+        progressBar.appendChild(reprovadoBar);
+      }
+
+      progressContainer.appendChild(progressBar);
+      statsDiv.appendChild(progressContainer);
+      container.appendChild(statsDiv);
+
+      // Tabela
+      const tableContainer = document.createElement('div');
+      tableContainer.style.overflowX = 'auto';
+      tableContainer.style.marginTop = '20px';
+      
+      const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
+      tableClone.style.width = '100%';
+      tableClone.style.borderCollapse = 'collapse';
+      tableClone.style.fontSize = '10px';
+      tableClone.style.border = '1px solid #e2e8f0';
+      
+      // Ajustar células da tabela para melhor legibilidade
+      const cells = tableClone.querySelectorAll('th, td');
+      cells.forEach(cell => {
+        (cell as HTMLElement).style.padding = '8px 6px';
+        (cell as HTMLElement).style.borderBottom = '1px solid #e2e8f0';
+        (cell as HTMLElement).style.whiteSpace = 'normal';
+        (cell as HTMLElement).style.wordBreak = 'break-word';
+      });
+
+      tableContainer.appendChild(tableClone);
+      container.appendChild(tableContainer);
+
+      // Rodapé
+      const footerDiv = document.createElement('div');
+      footerDiv.style.marginTop = '20px';
+      footerDiv.style.textAlign = 'center';
+      footerDiv.style.fontSize = '10px';
+      footerDiv.style.color = '#94a3b8';
+      footerDiv.style.padding = '10px';
+      footerDiv.style.borderTop = '1px solid #e2e8f0';
+      footerDiv.textContent = `Relatório gerado em ${new Date().toLocaleDateString('pt-BR')} • Total de registros: ${stats.totalStudents} • Página ${pagination.page} de ${pagination.totalPages}`;
+      
+      container.appendChild(footerDiv);
+      
+      document.body.appendChild(container);
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        logging: false,
+        backgroundColor: '#ffffff',
+        allowTaint: true,
+        useCORS: true,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+      const availableHeight = pageHeight - 20;
+      const totalPages = Math.ceil(imgHeight / availableHeight);
+
+      for (let i = 0; i < totalPages; i++) {
+        if (i > 0) pdf.addPage();
+
+        const sourceY = i * availableHeight * (canvas.width / contentWidth);
+        const sourceHeight = Math.min(
+          availableHeight * (canvas.width / contentWidth),
+          canvas.height - sourceY
+        );
+
+        if (sourceHeight > 0) {
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sourceHeight;
+          
+          const ctx = pageCanvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(
+              canvas,
+              0, sourceY, canvas.width, sourceHeight,
+              0, 0, canvas.width, sourceHeight
+            );
+          }
+
+          const pageImgData = pageCanvas.toDataURL('image/png');
+          const pageImgHeight = (sourceHeight * contentWidth) / canvas.width;
+
+          pdf.addImage(pageImgData, 'PNG', margin, 10, contentWidth, pageImgHeight);
+        }
+      }
+
+      pdf.save(`relatorio_alunos_${new Date().toISOString().split('T')[0]}.pdf`);
+      document.body.removeChild(container);
+
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Erro ao gerar PDF. Tente novamente.');
     } finally {
       setIsExporting(false);
     }
@@ -746,10 +1241,9 @@ export function ReportsTab() {
               setPagination(prev => ({ ...prev, page: 1 }));
               generateReport();
             }}
-            disabled={isLoading}
-            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
-            {isLoading ? 'Gerando...' : 'Gerar Relatório'}
+            Gerar Relatório
           </button>
         </div>
       </div>
@@ -766,16 +1260,25 @@ export function ReportsTab() {
           <div className="bg-blue-100 border border-blue-300 rounded-lg p-4">
             <p className="text-sm text-blue-800 font-medium">Em Andamento</p>
             <p className="text-3xl font-bold text-blue-900">{stats.emAndamentoCount}</p>
+            <p className="text-xs text-blue-700 mt-1">
+              {stats.totalStudents > 0 ? ((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(1) : '0'}%
+            </p>
           </div>
 
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-sm text-green-600 font-medium">Aprovados</p>
             <p className="text-3xl font-bold text-green-700">{stats.aprovadoCount}</p>
+            <p className="text-xs text-green-600 mt-1">
+              {stats.totalStudents > 0 ? ((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(1) : '0'}%
+            </p>
           </div>
 
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-sm text-red-600 font-medium">Reprovados</p>
             <p className="text-3xl font-bold text-red-700">{stats.reprovadoCount}</p>
+            <p className="text-xs text-red-600 mt-1">
+              {stats.totalStudents > 0 ? ((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(1) : '0'}%
+            </p>
           </div>
         </div>
 
@@ -790,23 +1293,23 @@ export function ReportsTab() {
             <div className="w-full h-8 bg-gray-200 rounded-lg overflow-hidden flex">
               <div
                 className="bg-blue-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                style={{ width: stats.totalStudents > 0 ? `${(stats.emAndamentoCount / stats.totalStudents) * 100}%` : '0%' }}
+                style={{ width: `${(stats.emAndamentoCount / stats.totalStudents) * 100}%` }}
               >
-                {stats.totalStudents > 0 && ((stats.emAndamentoCount / stats.totalStudents) * 100) > 5 && 
+                {((stats.emAndamentoCount / stats.totalStudents) * 100) > 5 && 
                   `${((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(0)}%`}
               </div>
               <div
                 className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                style={{ width: stats.totalStudents > 0 ? `${(stats.aprovadoCount / stats.totalStudents) * 100}%` : '0%' }}
+                style={{ width: `${(stats.aprovadoCount / stats.totalStudents) * 100}%` }}
               >
-                {stats.totalStudents > 0 && ((stats.aprovadoCount / stats.totalStudents) * 100) > 5 && 
+                {((stats.aprovadoCount / stats.totalStudents) * 100) > 5 && 
                   `${((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
               </div>
               <div
                 className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                style={{ width: stats.totalStudents > 0 ? `${(stats.reprovadoCount / stats.totalStudents) * 100}%` : '0%' }}
+                style={{ width: `${(stats.reprovadoCount / stats.totalStudents) * 100}%` }}
               >
-                {stats.totalStudents > 0 && ((stats.reprovadoCount / stats.totalStudents) * 100) > 5 && 
+                {((stats.reprovadoCount / stats.totalStudents) * 100) > 5 && 
                   `${((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
               </div>
             </div>
