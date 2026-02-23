@@ -5,23 +5,37 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoBase64 from '../../assets/image.png';
+import logoUrl from '../../assets/image.png';
 
-// Converter a imagem para base64 para evitar erros de assinatura PNG
 const getLogoBase64 = async (url: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'Anonymous';
+    img.crossOrigin = 'anonymous';
+
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0);
-      const dataURL = canvas.toDataURL('image/png');
-      resolve(dataURL);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          reject(new Error('Could not get canvas context'));
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0);
+        const dataURL = canvas.toDataURL('image/png');
+        resolve(dataURL);
+      } catch (error) {
+        reject(error);
+      }
     };
-    img.onerror = reject;
+
+    img.onerror = () => {
+      reject(new Error('Failed to load image'));
+    };
+
     img.src = url;
   });
 };
@@ -508,10 +522,9 @@ export function ReportsTab() {
     setIsExporting(true);
 
     try {
-      // Converter logo para base64
       let logoBase64String = '';
       try {
-        logoBase64String = await getLogoBase64(logoBase64);
+        logoBase64String = await getLogoBase64(logoUrl);
       } catch (error) {
         console.warn('Could not load logo, continuing without it', error);
       }
