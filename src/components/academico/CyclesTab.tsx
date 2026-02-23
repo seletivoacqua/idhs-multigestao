@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { Plus, Calendar, Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye, Award, User, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -555,110 +556,33 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     setCourses(data || []);
   };
 
-  const loadClassStudents = async () => {
-  const { data, error } = await supabase
-    .from('class_students')
-    .select('*, students(*)')
-    .eq('class_id', classData.id);
+  const loadClasses = async () => {
+    if (!user) return;
 
-  if (error) {
-    console.error('Error loading class students:', error);
-    return;
-  }
+    const { data, error } = await supabase
+      .from('classes')
+      .select('*, courses(name, modality)')
+      .eq('cycle_id', cycle.id)
+      .order('created_at', { ascending: false });
 
-  if (classData.modality === 'VIDEOCONFERENCIA') {
-    const studentsWithAttendance = await Promise.all(
-      (data || []).map(async (cs) => {
-        let totalClasses = classData.total_classes;
-        let adjustedPresentCount = 0;
-        let isProportionalCalculation = false;
+    if (error) {
+      console.error('Error loading classes:', error);
+      return;
+    }
 
-        const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
-        const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
+    const classesWithCount = await Promise.all(
+      (data || []).map(async (cls) => {
+        const { count } = await supabase
+          .from('class_students')
+          .select('*', { count: 'exact', head: true })
+          .eq('class_id', cls.id);
 
-        if (isEnrolledAfterCycleStart) {
-          isProportionalCalculation = true;
-
-          const { data: allClassDates } = await supabase
-            .from('attendance')
-            .select('class_date')
-            .eq('class_id', classData.id)
-            .order('class_date');
-
-          if (allClassDates && allClassDates.length > 0) {
-            const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
-
-            const classesAfterEnrollment = uniqueClassDates.filter(
-              (date) => date >= enrollmentDate
-            );
-            totalClasses = classesAfterEnrollment.length || classData.total_classes;
-
-            const { count: presentAfterEnrollment } = await supabase
-              .from('attendance')
-              .select('*', { count: 'exact', head: true })
-              .eq('class_id', classData.id)
-              .eq('student_id', cs.student_id)
-              .eq('present', true)
-              .gte('class_date', enrollmentDate);
-
-            adjustedPresentCount = presentAfterEnrollment || 0;
-          } else {
-            adjustedPresentCount = 0;
-            totalClasses = classData.total_classes;
-          }
-        } else {
-          const { count: presentCount } = await supabase
-            .from('attendance')
-            .select('*', { count: 'exact', head: true })
-            .eq('class_id', classData.id)
-            .eq('student_id', cs.student_id)
-            .eq('present', true);
-
-          adjustedPresentCount = presentCount || 0;
-        }
-
-        const percentage = totalClasses > 0 ? (adjustedPresentCount / totalClasses) * 100 : 0;
-
-        return {
-          ...cs,
-          attendanceCount: adjustedPresentCount,
-          attendancePercentage: percentage,
-          totalClasses,
-          isProportionalCalculation,
-          current_status: cs.current_status, // Incluir o status atual do banco
-        };
+        return { ...cls, _count: { students: count || 0 } };
       })
     );
 
-    setStudents(studentsWithAttendance);
-  } else {
-    const studentsWithAccess = await Promise.all(
-      (data || []).map(async (cs) => {
-        const { data: accessData } = await supabase
-          .from('ead_access')
-          .select('*')
-          .eq('class_id', classData.id)
-          .eq('student_id', cs.student_id)
-          .maybeSingle();
-
-        const isPresent = validateEADAccess(
-          accessData?.access_date_1,
-          accessData?.access_date_2,
-          accessData?.access_date_3
-        );
-
-        return {
-          ...cs,
-          accessData,
-          isPresent,
-          current_status: cs.current_status, // Incluir o status atual do banco
-        };
-      })
-    );
-
-    setStudents(studentsWithAccess);
-  }
-};
+    setClasses(classesWithCount);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1141,44 +1065,44 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setSelectedStudents(newSelected);
   };
 
- const handleEnrollStudents = async () => {
-  if (selectedStudents.size === 0) {
-    alert('Por favor, selecione pelo menos um aluno para matricular');
-    return;
-  }
+  const handleEnrollStudents = async () => {
+    if (selectedStudents.size === 0) {
+      alert('Por favor, selecione pelo menos um aluno para matricular');
+      return;
+    }
 
-  const enrollmentDate = new Date().toISOString();
-  const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
-    class_id: classData.id,
-    student_id: studentId,
-    enrollment_type: enrollmentType,
-    enrollment_date: enrollmentDate,
-    current_status: 'matriculado', // Status inicial deve ser matriculado
-    status_updated_at: new Date().toISOString(),
-  }));
-
-  const { error } = await supabase.from('class_students').insert(studentsToEnroll);
-
-  if (error) {
-    console.error('Error enrolling students:', error);
-    alert('Erro ao matricular alunos');
-    return;
-  }
-
-  if (classData.modality === 'EAD') {
-    const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
+    const enrollmentDate = new Date().toISOString();
+    const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
       class_id: classData.id,
       student_id: studentId,
+      enrollment_type: enrollmentType,
+      enrollment_date: enrollmentDate,
+      current_status: 'em_andamento',
+      status_updated_at: new Date().toISOString(),
     }));
-    await supabase.from('ead_access').insert(eadAccessRecords);
-  }
 
-  setShowEnrollmentModal(false);
-  setSelectedStudents(new Set());
-  loadClassStudents();
-  loadAvailableStudents();
-  alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso!`);
-};
+    const { error } = await supabase.from('class_students').insert(studentsToEnroll);
+
+    if (error) {
+      console.error('Error enrolling students:', error);
+      alert('Erro ao matricular alunos');
+      return;
+    }
+
+    if (classData.modality === 'EAD') {
+      const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
+        class_id: classData.id,
+        student_id: studentId,
+      }));
+      await supabase.from('ead_access').insert(eadAccessRecords);
+    }
+
+    setShowEnrollmentModal(false);
+    setSelectedStudents(new Set());
+    loadClassStudents();
+    loadAvailableStudents();
+    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso!`);
+  };
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!confirm('Tem certeza que deseja remover este aluno da turma?')) return;
@@ -1332,40 +1256,19 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setCertificateData(null);
   };
 
- const getStudentSituation = (student: any) => {
-  const today = new Date().toISOString().split('T')[0];
-  const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+  const getStudentSituation = (student: any) => {
+    const today = new Date().toISOString().split('T')[0];
+    const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
 
-  // Se o ciclo ainda está ativo, o status deve ser "Em Andamento" independente do que está no banco
-  if (isCycleActive) {
-    return {
-      status: 'Em Andamento',
-      color: 'bg-blue-100 text-blue-800',
-      canCertify: false,
-      message: 'Ciclo em andamento'
-    };
-  }
+    if (isCycleActive) {
+      return {
+        status: 'Em Andamento',
+        color: 'bg-blue-100 text-blue-800',
+        canCertify: false,
+        message: 'Ciclo em andamento'
+      };
+    }
 
-  // Se o ciclo não está mais ativo, usar o status calculado e armazenado no banco
-  const storedStatus = student.current_status;
-  
-  if (storedStatus === 'aprovado') {
-    return {
-      status: 'Aprovado',
-      color: 'bg-green-100 text-green-800',
-      canCertify: true,
-      message: 'Aluno aprovado'
-    };
-  } else if (storedStatus === 'reprovado') {
-    return {
-      status: 'Reprovado',
-      color: 'bg-red-100 text-red-800',
-      canCertify: false,
-      message: 'Aluno reprovado'
-    };
-  } else {
-    // Fallback para caso não tenha status ou seja 'em_andamento' com ciclo encerrado
-    // Neste caso, calculamos novamente para garantir
     if (classData.modality === 'VIDEOCONFERENCIA') {
       const isApproved = student.attendancePercentage >= 60;
       return {
@@ -1383,10 +1286,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
       };
     }
-  }
-};
+  };
 
-  
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-xl shadow-xl w-[95vw] max-w-[1400px] p-6 my-8 max-h-[85vh] overflow-y-auto">
