@@ -566,10 +566,11 @@ export function FluxoCaixaTab() {
         </div>
       )}
 
+      {/* Container da tabela com barra de rolagem vertical */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="max-h-96 overflow-y-auto"> {/* Altura máxima e rolagem vertical */}
           <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-200">
+            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10"> {/* Cabeçalho fixo */}
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Tipo</th>
