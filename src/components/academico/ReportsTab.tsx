@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
 
 const debounce = <T extends (...args: any[]) => any>(func: T, wait: number) => {
@@ -90,6 +90,7 @@ export function ReportsTab() {
 
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -492,11 +493,129 @@ export function ReportsTab() {
   };
 
   const exportToPDF = async () => {
-    if (reportData.length === 0) return;
+    if (!tableContainerRef.current || reportData.length === 0) return;
 
     setIsExporting(true);
 
     try {
+      // Criar um container temporário para o PDF
+      const pdfContainer = document.createElement('div');
+      pdfContainer.style.width = '1200px';
+      pdfContainer.style.padding = '20px';
+      pdfContainer.style.backgroundColor = '#ffffff';
+      pdfContainer.style.fontFamily = 'Arial, sans-serif';
+      pdfContainer.style.position = 'absolute';
+      pdfContainer.style.left = '-9999px';
+      pdfContainer.style.top = '0';
+      
+      // Adicionar logo
+      const logo = document.createElement('img');
+      logo.src = logoImg;
+      logo.style.width = '80px';
+      logo.style.height = 'auto';
+      logo.style.marginBottom = '20px';
+      pdfContainer.appendChild(logo);
+
+      // Título
+      const title = document.createElement('h1');
+      title.textContent = 'Relatório de Acompanhamento de Alunos';
+      title.style.fontSize = '24px';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '10px';
+      title.style.color = '#1e293b';
+      pdfContainer.appendChild(title);
+
+      // Data de geração
+      const date = document.createElement('p');
+      date.textContent = `Gerado em: ${new Date().toLocaleDateString('pt-BR')}`;
+      date.style.fontSize = '12px';
+      date.style.color = '#64748b';
+      date.style.marginBottom = '20px';
+      pdfContainer.appendChild(date);
+
+      // Filtros aplicados
+      const filtersDiv = document.createElement('div');
+      filtersDiv.style.marginBottom = '20px';
+      filtersDiv.style.fontSize = '12px';
+      filtersDiv.style.color = '#475569';
+      
+      const filterTexts = [];
+      if (filters.cycleId) {
+        const cycle = cycles.find(c => c.id === filters.cycleId);
+        filterTexts.push(`Ciclo: ${cycle?.name || 'Todos'}`);
+      }
+      if (filters.classId) {
+        const cls = classes.find(c => c.id === filters.classId);
+        filterTexts.push(`Turma: ${cls?.name || 'Todos'}`);
+      }
+      if (filters.unitId) {
+        const unit = units.find(u => u.id === filters.unitId);
+        filterTexts.push(`Unidade: ${unit?.name || 'Todos'}`);
+      }
+      if (filters.modality !== 'all') {
+        filterTexts.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h'}`);
+      }
+      
+      filtersDiv.textContent = filterTexts.join(' | ') || 'Nenhum filtro aplicado';
+      pdfContainer.appendChild(filtersDiv);
+
+      // Estatísticas
+      const statsDiv = document.createElement('div');
+      statsDiv.style.marginBottom = '20px';
+      statsDiv.style.display = 'grid';
+      statsDiv.style.gridTemplateColumns = 'repeat(4, 1fr)';
+      statsDiv.style.gap = '10px';
+
+      const createStatBox = (label: string, value: number, bgColor: string, textColor: string) => {
+        const box = document.createElement('div');
+        box.style.padding = '10px';
+        box.style.borderRadius = '8px';
+        box.style.backgroundColor = bgColor;
+        box.innerHTML = `
+          <div style="color: ${textColor}; font-size: 12px; font-weight: 500;">${label}</div>
+          <div style="color: ${textColor}; font-size: 24px; font-weight: bold;">${value}</div>
+        `;
+        return box;
+      };
+
+      statsDiv.appendChild(createStatBox('Total de Alunos', stats.totalStudents, '#eff6ff', '#1e40af'));
+      statsDiv.appendChild(createStatBox('Em Andamento', stats.emAndamentoCount, '#dbeafe', '#1e40af'));
+      statsDiv.appendChild(createStatBox('Aprovados', stats.aprovadoCount, '#dcfce7', '#166534'));
+      statsDiv.appendChild(createStatBox('Reprovados', stats.reprovadoCount, '#fee2e2', '#991b1b'));
+
+      pdfContainer.appendChild(statsDiv);
+
+      // Clonar a tabela
+      const originalTable = tableContainerRef.current.querySelector('table');
+      if (originalTable) {
+        const tableClone = originalTable.cloneNode(true) as HTMLTableElement;
+        tableClone.style.width = '100%';
+        tableClone.style.borderCollapse = 'collapse';
+        tableClone.style.fontSize = '10px';
+        
+        // Remover botões e elementos interativos do clone
+        tableClone.querySelectorAll('button, .hover\\:bg-slate-50').forEach(el => {
+          if (el instanceof HTMLElement) {
+            el.classList.remove('hover:bg-slate-50');
+          }
+        });
+
+        pdfContainer.appendChild(tableClone);
+      }
+
+      document.body.appendChild(pdfContainer);
+
+      // Gerar PDF
+      const canvas = await html2canvas(pdfContainer, {
+        scale: 2,
+        logging: false,
+        backgroundColor: '#ffffff',
+        allowTaint: true,
+        useCORS: true,
+        windowWidth: 1200,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
@@ -504,129 +623,30 @@ export function ReportsTab() {
       });
 
       const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
       const margin = 10;
+      const contentWidth = pageWidth - 2 * margin;
 
-      // Cabeçalho
-      const addHeader = () => {
-        // Logo
-        try {
-          pdf.addImage(logoImg, 'PNG', margin, 5, 20, 20);
-        } catch (e) {
-          console.warn('Could not add logo', e);
-        }
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
 
-        pdf.setFontSize(16);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text('Relatório de Acompanhamento de Alunos', pageWidth / 2, 15, { align: 'center' });
+      // Adicionar primeira página
+      pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight);
+      heightLeft -= pageHeight - 2 * margin;
 
-        pdf.setFontSize(10);
-        pdf.setFont('helvetica', 'normal');
-        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, pageWidth / 2, 22, { align: 'center' });
-
-        // Filtros aplicados
-        let yPos = 30;
-        pdf.setFontSize(8);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text('Filtros aplicados:', margin, yPos);
-        
-        yPos += 4;
-        pdf.setFont('helvetica', 'normal');
-        const filterTexts = [];
-        if (filters.cycleId) {
-          const cycle = cycles.find(c => c.id === filters.cycleId);
-          filterTexts.push(`Ciclo: ${cycle?.name || 'Todos'}`);
-        }
-        if (filters.classId) {
-          const cls = classes.find(c => c.id === filters.classId);
-          filterTexts.push(`Turma: ${cls?.name || 'Todos'}`);
-        }
-        if (filters.unitId) {
-          const unit = units.find(u => u.id === filters.unitId);
-          filterTexts.push(`Unidade: ${unit?.name || 'Todos'}`);
-        }
-        if (filters.modality !== 'all') {
-          filterTexts.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h'}`);
-        }
-        
-        pdf.text(filterTexts.join(' | ') || 'Nenhum filtro aplicado', margin, yPos);
-
-        // Estatísticas
-        yPos += 8;
-        pdf.setFontSize(10);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text('Distribuição por Situação', margin, yPos);
-
-        yPos += 6;
-        const statsData = [
-          ['Em Andamento', stats.emAndamentoCount.toString(), `${((stats.emAndamentoCount / stats.totalStudents) * 100 || 0).toFixed(1)}%`],
-          ['Aprovados', stats.aprovadoCount.toString(), `${((stats.aprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}%`],
-          ['Reprovados', stats.reprovadoCount.toString(), `${((stats.reprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}%`],
-        ];
-
-        autoTable(pdf, {
-          startY: yPos,
-          head: [['Situação', 'Quantidade', 'Percentual']],
-          body: statsData,
-          theme: 'grid',
-          headStyles: { fillColor: [59, 130, 246] },
-          margin: { left: margin, right: margin },
-        });
-
-        return (pdf as any).lastAutoTable.finalY + 5;
-      };
-
-      let finalY = addHeader();
-
-      // Tabela de dados
-      const tableHeaders = [
-        'Unidade',
-        'Aluno',
-        'Turma',
-        'Curso',
-        'Módulos',
-        'Ciclo',
-        'Situação',
-        'Aulas',
-        'Freq.',
-        'Acessos',
-      ];
-
-      const tableBody = reportData.map(row => [
-        row.unitName,
-        row.studentName,
-        row.className,
-        row.courseName,
-        row.moduleNames.join(', ') || '-',
-        row.cycleName,
-        row.displayStatus,
-        row.totalClasses?.toString() || '-',
-        row.attendancePercentage ? `${row.attendancePercentage.toFixed(1)}%` : '-',
-        row.lastAccesses?.join(', ') || '-',
-      ]);
-
-      autoTable(pdf, {
-        startY: finalY,
-        head: [tableHeaders],
-        body: tableBody,
-        theme: 'striped',
-        headStyles: { fillColor: [59, 130, 246] },
-        styles: { fontSize: 7, cellPadding: 2 },
-        columnStyles: {
-          0: { cellWidth: 25 }, // Unidade
-          1: { cellWidth: 30 }, // Aluno
-          2: { cellWidth: 25 }, // Turma
-          3: { cellWidth: 30 }, // Curso
-          4: { cellWidth: 25 }, // Módulos
-          5: { cellWidth: 20 }, // Ciclo
-          6: { cellWidth: 15 }, // Situação
-          7: { cellWidth: 10 }, // Aulas
-          8: { cellWidth: 12 }, // Freq.
-          9: { cellWidth: 25 }, // Acessos
-        },
-        margin: { left: margin, right: margin },
-      });
+      // Adicionar páginas adicionais se necessário
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight);
+        heightLeft -= pageHeight - 2 * margin;
+      }
 
       pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+
+      // Limpar
+      document.body.removeChild(pdfContainer);
 
     } catch (error) {
       console.error('Error generating PDF:', error);
@@ -865,7 +885,7 @@ export function ReportsTab() {
       </div>
 
       {/* Tabela de dados */}
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden" ref={tableContainerRef}>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
