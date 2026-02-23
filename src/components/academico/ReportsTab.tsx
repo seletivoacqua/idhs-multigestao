@@ -5,7 +5,26 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoImg from '../../assets/image.png';
+import logoBase64 from '../../assets/image.png';
+
+// Converter a imagem para base64 para evitar erros de assinatura PNG
+const getLogoBase64 = async (url: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0);
+      const dataURL = canvas.toDataURL('image/png');
+      resolve(dataURL);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+};
 
 const debounce = <T extends (...args: any[]) => any>(func: T, wait: number) => {
   let timeout: NodeJS.Timeout | null = null;
@@ -45,7 +64,6 @@ interface ReportData {
   className: string;
   classModality: string;
   totalClasses: number;
-  moduleNames: string[];
   attendedClasses: number;
   attendancePercentage: number;
   lastAccesses: string[];
@@ -206,24 +224,7 @@ export function ReportsTab() {
         return;
       }
 
-      // 2. Buscar módulos dos cursos
-      const courseIds = [...new Set(classStudents.map(cs => cs.classes.course_id))];
-      const { data: courseModules } = await supabase
-        .from('course_modules')
-        .select('course_id, name')
-        .in('course_id', courseIds)
-        .order('order_number');
-
-      // Criar mapa de módulos por curso
-      const modulesMap = new Map();
-      courseModules?.forEach(module => {
-        if (!modulesMap.has(module.course_id)) {
-          modulesMap.set(module.course_id, []);
-        }
-        modulesMap.get(module.course_id).push(module.name);
-      });
-
-      // 3. Separar alunos por modalidade para buscar dados específicos
+      // 2. Separar alunos por modalidade para buscar dados específicos
       const studentIds = classStudents.map(cs => cs.student_id);
       const classIds = classStudents.map(cs => cs.class_id);
 
@@ -268,7 +269,7 @@ export function ReportsTab() {
         eadAccessData = data || [];
       }
 
-      // 4. Criar maps para acesso rápido
+      // 3. Criar maps para acesso rápido
       const attendanceMap = new Map();
       attendanceData.forEach(att => {
         const key = `${att.class_id}_${att.student_id}`;
@@ -284,7 +285,7 @@ export function ReportsTab() {
         eadMap.set(key, access);
       });
 
-      // 5. Processar dados
+      // 4. Processar dados
       const processedData: ReportData[] = [];
 
       for (const cs of classStudents) {
@@ -307,7 +308,6 @@ export function ReportsTab() {
         }
 
         const unitName = student.units?.name || 'Não informado';
-        const moduleNames = modulesMap.get(cls.course_id) || [];
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
@@ -329,7 +329,6 @@ export function ReportsTab() {
             className: cls.name,
             classModality: cls.modality,
             totalClasses: cls.total_classes,
-            moduleNames,
             attendedClasses: attendedCount,
             attendancePercentage: percentage,
             lastAccesses: [],
@@ -371,7 +370,6 @@ export function ReportsTab() {
             className: cls.name,
             classModality: cls.modality,
             totalClasses: cls.total_classes,
-            moduleNames,
             attendedClasses: 0,
             attendancePercentage: 0,
             lastAccesses: filteredAccesses.map(d => new Date(d).toLocaleDateString('pt-BR')),
@@ -438,7 +436,7 @@ export function ReportsTab() {
       'Nome do Aluno',
       'Turma',
       'Curso',
-      'Módulos',
+      'Modalidade',
       'Ciclo',
       'Situação do Ciclo',
       'Situação do Aluno',
@@ -453,7 +451,7 @@ export function ReportsTab() {
       row.studentName,
       row.className,
       row.courseName,
-      row.moduleNames.join(', ') || '-',
+      row.classModality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
       row.cycleName,
       row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
       row.displayStatus,
@@ -498,6 +496,14 @@ export function ReportsTab() {
     setIsExporting(true);
 
     try {
+      // Converter logo para base64
+      let logoBase64String = '';
+      try {
+        logoBase64String = await getLogoBase64(logoBase64);
+      } catch (error) {
+        console.warn('Could not load logo, continuing without it', error);
+      }
+
       // Criar um container temporário para o PDF
       const pdfContainer = document.createElement('div');
       pdfContainer.style.width = '1200px';
@@ -508,13 +514,15 @@ export function ReportsTab() {
       pdfContainer.style.left = '-9999px';
       pdfContainer.style.top = '0';
       
-      // Adicionar logo
-      const logo = document.createElement('img');
-      logo.src = logoImg;
-      logo.style.width = '80px';
-      logo.style.height = 'auto';
-      logo.style.marginBottom = '20px';
-      pdfContainer.appendChild(logo);
+      // Adicionar logo se disponível
+      if (logoBase64String) {
+        const logo = document.createElement('img');
+        logo.src = logoBase64String;
+        logo.style.width = '80px';
+        logo.style.height = 'auto';
+        logo.style.marginBottom = '20px';
+        pdfContainer.appendChild(logo);
+      }
 
       // Título
       const title = document.createElement('h1');
@@ -571,8 +579,9 @@ export function ReportsTab() {
         box.style.padding = '10px';
         box.style.borderRadius = '8px';
         box.style.backgroundColor = bgColor;
+        box.style.textAlign = 'center';
         box.innerHTML = `
-          <div style="color: ${textColor}; font-size: 12px; font-weight: 500;">${label}</div>
+          <div style="color: ${textColor}; font-size: 12px; font-weight: 500; margin-bottom: 5px;">${label}</div>
           <div style="color: ${textColor}; font-size: 24px; font-weight: bold;">${value}</div>
         `;
         return box;
@@ -594,9 +603,13 @@ export function ReportsTab() {
         tableClone.style.fontSize = '10px';
         
         // Remover botões e elementos interativos do clone
-        tableClone.querySelectorAll('button, .hover\\:bg-slate-50').forEach(el => {
+        tableClone.querySelectorAll('button, .hover\\:bg-slate-50, [class*="hover:"]').forEach(el => {
           if (el instanceof HTMLElement) {
-            el.classList.remove('hover:bg-slate-50');
+            el.classList.forEach(className => {
+              if (className.includes('hover:')) {
+                el.classList.remove(className);
+              }
+            });
           }
         });
 
@@ -605,14 +618,25 @@ export function ReportsTab() {
 
       document.body.appendChild(pdfContainer);
 
-      // Gerar PDF
+      // Gerar PDF com configurações melhoradas
       const canvas = await html2canvas(pdfContainer, {
         scale: 2,
         logging: false,
         backgroundColor: '#ffffff',
-        allowTaint: true,
+        allowTaint: false,
         useCORS: true,
         windowWidth: 1200,
+        onclone: (clonedDoc) => {
+          // Garantir que todas as imagens carregaram
+          const images = clonedDoc.querySelectorAll('img');
+          return Promise.all(Array.from(images).map(img => {
+            if (img.complete) return Promise.resolve();
+            return new Promise((resolve) => {
+              img.onload = resolve;
+              img.onerror = resolve;
+            });
+          }));
+        }
       });
 
       const imgData = canvas.toDataURL('image/png');
@@ -632,14 +656,14 @@ export function ReportsTab() {
       let position = 0;
 
       // Adicionar primeira página
-      pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight);
+      pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight, undefined, 'FAST');
       heightLeft -= pageHeight - 2 * margin;
 
       // Adicionar páginas adicionais se necessário
       while (heightLeft > 0) {
         position = heightLeft - imgHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight);
+        pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight, undefined, 'FAST');
         heightLeft -= pageHeight - 2 * margin;
       }
 
@@ -667,6 +691,10 @@ export function ReportsTab() {
       default:
         return 'bg-slate-100 text-slate-700';
     }
+  };
+
+  const getModalityDisplay = (modality: string) => {
+    return modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h';
   };
 
   return (
@@ -903,7 +931,7 @@ export function ReportsTab() {
                   Curso
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Módulos
+                  Modalidade
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Ciclo
@@ -940,7 +968,13 @@ export function ReportsTab() {
                     <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
                     <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
                     <td className="px-6 py-3 text-sm text-slate-700">
-                      {row.moduleNames.length > 0 ? row.moduleNames.join(', ') : '-'}
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                        row.classModality === 'VIDEOCONFERENCIA' 
+                          ? 'bg-purple-100 text-purple-700'
+                          : 'bg-orange-100 text-orange-700'
+                      }`}>
+                        {getModalityDisplay(row.classModality)}
+                      </span>
                     </td>
                     <td className="px-6 py-3 text-sm text-slate-700">
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -969,7 +1003,15 @@ export function ReportsTab() {
                         : '-'}
                     </td>
                     <td className="px-6 py-3 text-sm text-slate-700">
-                      {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
+                      {row.lastAccesses?.length ? (
+                        <div className="flex flex-col gap-1">
+                          {row.lastAccesses.map((access, i) => (
+                            <span key={i} className="text-xs bg-slate-100 px-2 py-1 rounded">
+                              {access}
+                            </span>
+                          ))}
+                        </div>
+                      ) : '-'}
                     </td>
                   </tr>
                 ))
