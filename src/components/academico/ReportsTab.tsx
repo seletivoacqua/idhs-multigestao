@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
-import { Filter, FileSpreadsheet, FileText } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Filter, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
+import { debounce } from 'lodash';
 
 interface Unit {
   id: string;
@@ -34,11 +35,36 @@ interface ReportData {
   status: 'Frequente' | 'Ausente';
 }
 
+interface ClassWithRelations {
+  id: string;
+  name: string;
+  modality: 'VIDEOCONFERENCIA' | 'EAD';
+  total_classes: number;
+  cycle_id: string;
+  courses: {
+    name: string;
+    modality: string;
+  };
+  class_students: Array<{
+    student_id: string;
+    students: {
+      id: string;
+      full_name: string;
+      unit_id: string;
+      units: {
+        name: string;
+      } | null;
+    };
+  }>;
+}
+
 export function ReportsTab() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
   const [reportData, setReportData] = useState<ReportData[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isExportingPDF, setIsExportingPDF] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -50,6 +76,7 @@ export function ReportsTab() {
   });
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
 
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -63,11 +90,22 @@ export function ReportsTab() {
     loadClasses();
   }, []);
 
+  // Debounced generate report
+  const debouncedGenerateReport = useCallback(
+    debounce(() => {
+      if (user) {
+        generateReport();
+      }
+    }, 500),
+    [user, filters]
+  );
+
   useEffect(() => {
-    if (user) {
-      generateReport();
-    }
-  }, [filters, user]);
+    debouncedGenerateReport();
+    return () => {
+      debouncedGenerateReport.cancel();
+    };
+  }, [filters, debouncedGenerateReport]);
 
   const loadUnits = async () => {
     if (!user) return;
@@ -120,137 +158,221 @@ export function ReportsTab() {
   const generateReport = async () => {
     if (!user) return;
 
-    let classesQuery = supabase
-      .from('classes')
-      .select('*, courses(name, modality)');
+    setIsLoading(true);
 
-    if (filters.cycleId) {
-      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-    }
+    try {
+      // 1. Buscar turmas com uma única consulta
+      let classesQuery = supabase
+        .from('classes')
+        .select(`
+          id,
+          name,
+          modality,
+          total_classes,
+          courses!inner (
+            name,
+            modality
+          ),
+          cycle_id,
+          class_students (
+            student_id,
+            students!inner (
+              id,
+              full_name,
+              unit_id,
+              units (
+                name
+              )
+            )
+          )
+        `);
 
-    if (filters.classId) {
-      classesQuery = classesQuery.eq('id', filters.classId);
-    }
+      // Aplicar filtros
+      if (filters.cycleId) {
+        classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+      }
 
-    if (filters.modality !== 'all') {
-      classesQuery = classesQuery.eq('modality', filters.modality);
-    }
+      if (filters.classId) {
+        classesQuery = classesQuery.eq('id', filters.classId);
+      }
 
-    const { data: classes, error: classesError } = await classesQuery;
+      if (filters.modality !== 'all') {
+        classesQuery = classesQuery.eq('modality', filters.modality);
+      }
 
-    if (classesError) {
-      console.error('Error loading classes:', classesError);
-      return;
-    }
+      const { data: classes, error: classesError } = await classesQuery;
 
-    const allReportData: ReportData[] = [];
+      if (classesError) {
+        console.error('Error loading classes:', classesError);
+        return;
+      }
 
-    for (const cls of classes || []) {
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select('*, students(full_name, unit_id, units(name))')
-        .eq('class_id', cls.id);
+      if (!classes || classes.length === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
+        return;
+      }
 
-      if (!classStudents) continue;
+      // 2. Coletar todos os IDs de alunos e turmas para consultas em lote
+      const classIds = classes.map(c => c.id);
+      const studentIds = classes.flatMap(c => 
+        c.class_students?.map(cs => cs.student_id) || []
+      );
 
-      for (const cs of classStudents) {
-        if (filters.unitId && cs.students.unit_id !== filters.unitId) {
-          continue;
+      if (studentIds.length === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
+        return;
+      }
+
+      // 3. Buscar todas as presenças de uma vez (para videoconferência)
+      let attendanceData: any[] = [];
+      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
+      
+      if (videoconferenceClasses.length > 0) {
+        let attendanceQuery = supabase
+          .from('attendance')
+          .select('*')
+          .in('class_id', classIds)
+          .in('student_id', studentIds)
+          .eq('present', true);
+
+        if (filters.startDate) {
+          attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
         }
 
-        if (filters.studentName && !cs.students.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
-          continue;
+        if (filters.endDate) {
+          attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
         }
 
-        let unitName = 'Não informado';
-        if (cs.students.unit_id) {
-          const unit = units.find(u => u.id === cs.students.unit_id);
-          if (unit) {
-            unitName = unit.name;
-          } else if (cs.students.units) {
-            unitName = cs.students.units.name || 'Não informado';
-          }
+        const { data } = await attendanceQuery;
+        attendanceData = data || [];
+      }
+
+      // 4. Buscar todos os acessos EAD de uma vez
+      let eadAccessData: any[] = [];
+      const eadClasses = classes.filter(c => c.modality === 'EAD');
+      
+      if (eadClasses.length > 0) {
+        const { data } = await supabase
+          .from('ead_access')
+          .select('*')
+          .in('class_id', classIds)
+          .in('student_id', studentIds);
+
+        eadAccessData = data || [];
+      }
+
+      // 5. Criar mapas para acesso rápido aos dados
+      const attendanceMap = new Map();
+      attendanceData.forEach(att => {
+        const key = `${att.class_id}_${att.student_id}`;
+        if (!attendanceMap.has(key)) {
+          attendanceMap.set(key, []);
         }
+        attendanceMap.get(key).push(att);
+      });
 
-        if (cls.modality === 'VIDEOCONFERENCIA') {
-          let attendanceQuery = supabase
-            .from('attendance')
-            .select('*')
-            .eq('class_id', cls.id)
-            .eq('student_id', cs.student_id)
-            .eq('present', true);
+      const eadAccessMap = new Map();
+      eadAccessData.forEach(access => {
+        const key = `${access.class_id}_${access.student_id}`;
+        eadAccessMap.set(key, access);
+      });
 
-          if (filters.startDate) {
-            attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
+      // 6. Processar todos os dados em memória
+      const allReportData: ReportData[] = [];
+
+      for (const cls of classes as ClassWithRelations[]) {
+        if (!cls.class_students) continue;
+
+        for (const cs of cls.class_students) {
+          const student = cs.students;
+          
+          // Aplicar filtros de unidade e nome
+          if (filters.unitId && student.unit_id !== filters.unitId) {
+            continue;
           }
 
-          if (filters.endDate) {
-            attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
+          if (filters.studentName && 
+              !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
+            continue;
           }
 
-          const { data: attendanceData } = await attendanceQuery;
+          // Obter nome da unidade
+          const unitName = student.units?.name || 
+                          units.find(u => u.id === student.unit_id)?.name || 
+                          'Não informado';
 
-          const attendedCount = attendanceData?.length || 0;
-          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
+          if (cls.modality === 'VIDEOCONFERENCIA') {
+            const key = `${cls.id}_${student.id}`;
+            const attendances = attendanceMap.get(key) || [];
+            
+            const attendedCount = attendances.length;
+            const percentage = cls.total_classes > 0 
+              ? (attendedCount / cls.total_classes) * 100 
+              : 0;
 
-          allReportData.push({
-            studentName: cs.students.full_name,
-            unitName: unitName,
-            courseName: cls.courses.name,
-            className: cls.name,
-            classesTotal: cls.total_classes,
-            classesAttended: attendedCount,
-            attendancePercentage: percentage,
-            status: percentage >= 60 ? 'Frequente' : 'Ausente',
-          });
-        } else {
-          const { data: accessData } = await supabase
-            .from('ead_access')
-            .select('*')
-            .eq('class_id', cls.id)
-            .eq('student_id', cs.student_id)
-            .maybeSingle();
+            allReportData.push({
+              studentName: student.full_name,
+              unitName,
+              courseName: cls.courses.name,
+              className: cls.name,
+              classesTotal: cls.total_classes,
+              classesAttended: attendedCount,
+              attendancePercentage: percentage,
+              status: percentage >= 60 ? 'Frequente' : 'Ausente',
+            });
+          } else {
+            const key = `${cls.id}_${student.id}`;
+            const access = eadAccessMap.get(key);
+            
+            let accesses = [
+              access?.access_date_1,
+              access?.access_date_2,
+              access?.access_date_3,
+            ].filter(Boolean);
 
-          let accesses = [
-            accessData?.access_date_1,
-            accessData?.access_date_2,
-            accessData?.access_date_3,
-          ].filter(Boolean);
+            // Filtrar por data se necessário
+            if (filters.startDate || filters.endDate) {
+              accesses = accesses.filter((d) => {
+                if (!d) return false;
+                const accessDate = new Date(d);
+                if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
+                if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
+                return true;
+              });
+            }
 
-          if (filters.startDate || filters.endDate) {
-            accesses = accesses.filter((d) => {
-              if (!d) return false;
-              const accessDate = new Date(d);
-              if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
-              if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
-              return true;
+            allReportData.push({
+              studentName: student.full_name,
+              unitName,
+              courseName: cls.courses.name,
+              className: cls.name,
+              lastAccesses: accesses.map(d => 
+                d ? new Date(d).toLocaleDateString('pt-BR') : ''
+              ),
+              status: accesses.length > 0 ? 'Frequente' : 'Ausente',
             });
           }
-
-          allReportData.push({
-            studentName: cs.students.full_name,
-            unitName: unitName,
-            courseName: cls.courses.name,
-            className: cls.name,
-            lastAccesses: accesses.map((d) =>
-              d ? new Date(d).toLocaleDateString('pt-BR') : ''
-            ),
-            status: accesses.length > 0 ? 'Frequente' : 'Ausente',
-          });
         }
       }
+
+      setReportData(allReportData);
+
+      const presentCount = allReportData.filter(d => d.status === 'Frequente').length;
+      const absentCount = allReportData.filter(d => d.status === 'Ausente').length;
+
+      setStats({
+        totalStudents: allReportData.length,
+        presentCount,
+        absentCount,
+      });
+
+    } catch (error) {
+      console.error('Error generating report:', error);
+    } finally {
+      setIsLoading(false);
     }
-
-    setReportData(allReportData);
-
-    const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
-    const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
-
-    setStats({
-      totalStudents: allReportData.length,
-      presentCount,
-      absentCount,
-    });
   };
 
   const exportToXLSX = () => {
@@ -299,37 +421,127 @@ export function ReportsTab() {
   };
 
   const exportToPDF = async () => {
-    if (!reportRef.current || reportData.length === 0) return;
+    if (!reportRef.current || reportData.length === 0 || !tableRef.current) return;
 
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4',
-    });
+    setIsExportingPDF(true);
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
-    const contentWidth = pageWidth - 2 * margin;
+    try {
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
 
-    const presentPercentage = stats.totalStudents > 0
-      ? (stats.presentCount / stats.totalStudents) * 100
-      : 0;
-    const absentPercentage = stats.totalStudents > 0
-      ? (stats.absentCount / stats.totalStudents) * 100
-      : 0;
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - 2 * margin;
 
-    // Criar elemento para a barra de progresso
-    const createProgressBar = () => {
-      const progressDiv = document.createElement('div');
-      progressDiv.style.width = '100%';
-      progressDiv.style.height = '30px';
-      progressDiv.style.backgroundColor = '#e2e8f0';
-      progressDiv.style.borderRadius = '8px';
-      progressDiv.style.overflow = 'hidden';
-      progressDiv.style.display = 'flex';
-      progressDiv.style.marginTop = '10px';
-      progressDiv.style.marginBottom = '20px';
+      const presentPercentage = stats.totalStudents > 0
+        ? (stats.presentCount / stats.totalStudents) * 100
+        : 0;
+      const absentPercentage = stats.totalStudents > 0
+        ? (stats.absentCount / stats.totalStudents) * 100
+        : 0;
+
+      // Criar container para o conteúdo do PDF
+      const container = document.createElement('div');
+      container.style.width = `${contentWidth * 3.78}px`;
+      container.style.padding = '10px';
+      container.style.backgroundColor = '#ffffff';
+      container.style.fontFamily = 'Arial, sans-serif';
+
+      // Adicionar cabeçalho
+      const headerDiv = document.createElement('div');
+      headerDiv.style.textAlign = 'center';
+      headerDiv.style.marginBottom = '15px';
+
+      const logo = document.createElement('img');
+      logo.src = logoImg;
+      logo.style.width = '60px';
+      logo.style.height = 'auto';
+      logo.style.marginBottom = '10px';
+      headerDiv.appendChild(logo);
+
+      const title = document.createElement('h1');
+      title.textContent = 'Relatório de Frequência';
+      title.style.fontSize = '20px';
+      title.style.fontWeight = 'bold';
+      title.style.marginBottom = '5px';
+      title.style.color = '#1e293b';
+      headerDiv.appendChild(title);
+
+      const date = document.createElement('p');
+      date.textContent = `Gerado em: ${new Date().toLocaleDateString('pt-BR')}`;
+      date.style.fontSize = '12px';
+      date.style.color = '#64748b';
+      date.style.marginBottom = '10px';
+      headerDiv.appendChild(date);
+
+      container.appendChild(headerDiv);
+
+      // Adicionar informações dos filtros
+      const filtersDiv = document.createElement('div');
+      filtersDiv.style.display = 'flex';
+      filtersDiv.style.flexWrap = 'wrap';
+      filtersDiv.style.gap = '15px';
+      filtersDiv.style.marginBottom = '15px';
+      filtersDiv.style.fontSize = '11px';
+      filtersDiv.style.color = '#475569';
+
+      if (filters.cycleId) {
+        const cycle = cycles.find(c => c.id === filters.cycleId);
+        const filterItem = document.createElement('span');
+        filterItem.textContent = `Ciclo: ${cycle?.name || 'Todos'}`;
+        filtersDiv.appendChild(filterItem);
+      }
+
+      if (filters.classId) {
+        const cls = classes.find(c => c.id === filters.classId);
+        const filterItem = document.createElement('span');
+        filterItem.textContent = `Turma: ${cls?.name || 'Todas'}`;
+        filtersDiv.appendChild(filterItem);
+      }
+
+      const totalItem = document.createElement('span');
+      totalItem.textContent = `Total: ${stats.totalStudents} alunos`;
+      filtersDiv.appendChild(totalItem);
+
+      container.appendChild(filtersDiv);
+
+      // Adicionar estatísticas e barra de progresso
+      const statsDiv = document.createElement('div');
+      statsDiv.style.marginBottom = '20px';
+
+      const statsTitle = document.createElement('h3');
+      statsTitle.textContent = 'Distribuição de Frequência';
+      statsTitle.style.fontSize = '14px';
+      statsTitle.style.fontWeight = 'bold';
+      statsTitle.style.marginBottom = '10px';
+      statsTitle.style.color = '#1e293b';
+      statsDiv.appendChild(statsTitle);
+
+      const statsText = document.createElement('div');
+      statsText.style.display = 'flex';
+      statsText.style.justifyContent = 'space-between';
+      statsText.style.marginBottom = '5px';
+      statsText.style.fontSize = '12px';
+      statsText.style.color = '#475569';
+      statsText.innerHTML = `
+        <span>Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)</span>
+        <span>Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)</span>
+      `;
+      statsDiv.appendChild(statsText);
+
+      // Barra de progresso
+      const progressBar = document.createElement('div');
+      progressBar.style.width = '100%';
+      progressBar.style.height = '24px';
+      progressBar.style.backgroundColor = '#e2e8f0';
+      progressBar.style.borderRadius = '6px';
+      progressBar.style.overflow = 'hidden';
+      progressBar.style.display = 'flex';
+      progressBar.style.marginTop = '5px';
 
       if (stats.totalStudents > 0) {
         const presentBar = document.createElement('div');
@@ -340,7 +552,7 @@ export function ReportsTab() {
         presentBar.style.alignItems = 'center';
         presentBar.style.justifyContent = 'center';
         presentBar.style.color = 'white';
-        presentBar.style.fontSize = '12px';
+        presentBar.style.fontSize = '11px';
         presentBar.style.fontWeight = 'bold';
         presentBar.textContent = presentPercentage > 8 ? `${presentPercentage.toFixed(0)}%` : '';
 
@@ -352,294 +564,120 @@ export function ReportsTab() {
         absentBar.style.alignItems = 'center';
         absentBar.style.justifyContent = 'center';
         absentBar.style.color = 'white';
-        absentBar.style.fontSize = '12px';
+        absentBar.style.fontSize = '11px';
         absentBar.style.fontWeight = 'bold';
         absentBar.textContent = absentPercentage > 8 ? `${absentPercentage.toFixed(0)}%` : '';
 
-        progressDiv.appendChild(presentBar);
-        progressDiv.appendChild(absentBar);
+        progressBar.appendChild(presentBar);
+        progressBar.appendChild(absentBar);
       }
 
-      return progressDiv;
-    };
+      statsDiv.appendChild(progressBar);
+      container.appendChild(statsDiv);
 
-    // Criar tabela com os dados
-    const tableElement = document.createElement('table');
-    tableElement.style.width = '100%';
-    tableElement.style.borderCollapse = 'collapse';
-    tableElement.style.fontSize = '10px';
-    tableElement.style.fontFamily = 'Arial, sans-serif';
-
-    // Cabeçalho da tabela
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    
-    const headers = ['Unidade', 'Aluno', 'Turma', 'Curso'];
-    if (reportData[0]?.classesTotal !== undefined) {
-      headers.push('Aulas', 'Assistidas', 'Freq.', 'Situação');
-    } else {
-      headers.push('Últimos Acessos', 'Situação');
-    }
-
-    headers.forEach(headerText => {
-      const th = document.createElement('th');
-      th.textContent = headerText;
-      th.style.padding = '8px 4px';
-      th.style.backgroundColor = '#f1f5f9';
-      th.style.border = '1px solid #e2e8f0';
-      th.style.textAlign = 'left';
-      th.style.fontWeight = 'bold';
-      th.style.fontSize = '10px';
-      headerRow.appendChild(th);
-    });
-    thead.appendChild(headerRow);
-    tableElement.appendChild(thead);
-
-    // Corpo da tabela
-    const tbody = document.createElement('tbody');
-    reportData.forEach(row => {
-      const tr = document.createElement('tr');
+      // Clonar a tabela para o PDF
+      const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
       
-      const cells = [
-        row.unitName,
-        row.studentName,
-        row.className,
-        row.courseName
-      ];
+      // Estilizar a tabela
+      tableClone.style.width = '100%';
+      tableClone.style.borderCollapse = 'collapse';
+      tableClone.style.fontSize = '10px';
+      
+      const ths = tableClone.querySelectorAll('th');
+      ths.forEach(th => {
+        th.style.backgroundColor = '#f1f5f9';
+        th.style.padding = '8px 4px';
+        th.style.border = '1px solid #e2e8f0';
+        th.style.textAlign = 'left';
+        th.style.fontWeight = 'bold';
+      });
 
-      if (row.classesTotal !== undefined) {
-        cells.push(
-          row.classesTotal?.toString() || '',
-          row.classesAttended?.toString() || '',
-          `${row.attendancePercentage?.toFixed(1)}%`,
-          row.status
-        );
-      } else {
-        cells.push(
-          row.lastAccesses?.join(', ') || '-',
-          row.status
-        );
-      }
-
-      cells.forEach(cellText => {
-        const td = document.createElement('td');
-        td.textContent = cellText;
+      const tds = tableClone.querySelectorAll('td');
+      tds.forEach(td => {
         td.style.padding = '6px 4px';
         td.style.border = '1px solid #e2e8f0';
-        td.style.fontSize = '9px';
         
-        if (cellText === 'Frequente') {
+        if (td.textContent === 'Frequente') {
           td.style.color = '#166534';
           td.style.fontWeight = 'bold';
-        } else if (cellText === 'Ausente') {
+        } else if (td.textContent === 'Ausente') {
           td.style.color = '#991b1b';
           td.style.fontWeight = 'bold';
         }
-        
-        tr.appendChild(td);
       });
-      
-      tbody.appendChild(tr);
-    });
-    tableElement.appendChild(tbody);
 
-    // Container para a página atual
-    const pageContainer = document.createElement('div');
-    pageContainer.style.position = 'absolute';
-    pageContainer.style.left = '-9999px';
-    pageContainer.style.top = '0';
-    pageContainer.style.width = `${contentWidth * 3.78}px`;
-    
-    // Adicionar título da seção de estatísticas
-    const statsTitle = document.createElement('h3');
-    statsTitle.textContent = 'Distribuição de Frequência';
-    statsTitle.style.fontSize = '14px';
-    statsTitle.style.fontWeight = 'bold';
-    statsTitle.style.marginBottom = '10px';
-    statsTitle.style.color = '#1e293b';
-    
-    // Adicionar texto com percentuais
-    const statsText = document.createElement('div');
-    statsText.style.display = 'flex';
-    statsText.style.justifyContent = 'space-between';
-    statsText.style.marginBottom = '5px';
-    statsText.style.fontSize = '12px';
-    statsText.style.color = '#475569';
-    statsText.innerHTML = `
-      <span>Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)</span>
-      <span>Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)</span>
-    `;
-    
-    // Criar barra de progresso
-    const progressBar = createProgressBar();
-    
-    // Adicionar elementos ao container
-    pageContainer.appendChild(statsTitle);
-    pageContainer.appendChild(statsText);
-    pageContainer.appendChild(progressBar);
-    pageContainer.appendChild(tableElement);
-    
-    document.body.appendChild(pageContainer);
+      container.appendChild(tableClone);
 
-    try {
-      // Renderizar container completo para medir altura
-      const canvas = await html2canvas(pageContainer, {
+      // Adicionar container ao DOM temporariamente
+      document.body.appendChild(container);
+
+      // Renderizar o container
+      const canvas = await html2canvas(container, {
         scale: 2,
         logging: false,
         backgroundColor: '#ffffff',
+        allowTaint: true,
+        useCORS: true,
       });
 
+      const imgData = canvas.toDataURL('image/png');
       const imgHeight = (canvas.height * contentWidth) / canvas.width;
-      const availableHeight = pageHeight - 50; // Espaço para cabeçalho e rodapé
-      
-      // Calcular número de páginas necessárias
-      const totalPages = Math.ceil(imgHeight / availableHeight);
-      
-      // Altura aproximada de cada linha da tabela
-      const tableStartY = 95; // Posição Y onde a tabela começa (após cabeçalho e barra)
-      const rowHeight = 8; // Altura aproximada de cada linha em mm
 
-      for (let page = 0; page < totalPages; page++) {
-        if (page > 0) {
+      // Calcular número de páginas necessárias
+      const availableHeight = pageHeight - 20;
+      const totalPages = Math.ceil(imgHeight / availableHeight);
+
+      for (let i = 0; i < totalPages; i++) {
+        if (i > 0) {
           pdf.addPage();
         }
 
-        // Adicionar cabeçalho do relatório
-        pdf.addImage(logoImg, 'PNG', (pageWidth - 20) / 2, 5, 20, 15);
-        
-        pdf.setFontSize(16);
-        pdf.setTextColor(30, 41, 59);
-        pdf.text('Relatório de Frequência', pageWidth / 2, 25, { align: 'center' });
-        
-        pdf.setFontSize(10);
-        pdf.setTextColor(71, 85, 105);
-        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, pageWidth / 2, 32, { align: 'center' });
+        const sourceY = i * availableHeight * (canvas.width / contentWidth);
+        const sourceHeight = Math.min(
+          availableHeight * (canvas.width / contentWidth),
+          canvas.height - sourceY
+        );
 
-        // Informações dos filtros
-        pdf.setFontSize(8);
-        let yFilter = 38;
-        
-        if (filters.cycleId) {
-          const cycle = cycles.find(c => c.id === filters.cycleId);
-          pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, margin, yFilter);
-        }
-        
-        if (filters.classId) {
-          const cls = classes.find(c => c.id === filters.classId);
-          pdf.text(`Turma: ${cls?.name || 'Todas'}`, margin + 60, yFilter);
-        }
-        
-        pdf.text(`Total: ${stats.totalStudents} alunos`, margin + 120, yFilter);
-
-        // Adicionar estatísticas e barra de progresso na primeira página apenas
-        if (page === 0) {
-          pdf.setFontSize(12);
-          pdf.setTextColor(30, 41, 59);
-          pdf.text('Distribuição de Frequência', margin, 48);
+        if (sourceHeight > 0) {
+          // Criar um canvas para a página atual
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sourceHeight;
           
-          pdf.setFontSize(10);
-          pdf.setTextColor(71, 85, 105);
-          pdf.text(`Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)`, margin, 55);
-          pdf.text(`Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)`, margin + 80, 55);
-          
-          // Desenhar barra de progresso
-          const barY = 60;
-          const barHeight = 8;
-          const barWidth = contentWidth;
-          
-          // Fundo da barra
-          pdf.setFillColor(226, 232, 240);
-          pdf.roundedRect(margin, barY, barWidth, barHeight, 2, 2, 'F');
-          
-          if (stats.totalStudents > 0) {
-            // Barra de frequentes
-            const presentWidth = (presentPercentage / 100) * barWidth;
-            if (presentWidth > 0) {
-              pdf.setFillColor(34, 197, 94);
-              pdf.roundedRect(margin, barY, presentWidth, barHeight, 2, 2, 'F');
-              
-              // Texto da porcentagem na barra
-              if (presentPercentage > 8) {
-                pdf.setTextColor(255, 255, 255);
-                pdf.setFontSize(8);
-                pdf.setFont('helvetica', 'bold');
-                pdf.text(`${presentPercentage.toFixed(0)}%`, margin + 5, barY + 5.5);
-              }
-            }
-            
-            // Barra de ausentes
-            const absentWidth = (absentPercentage / 100) * barWidth;
-            if (absentWidth > 0) {
-              pdf.setFillColor(239, 68, 68);
-              pdf.roundedRect(margin + presentWidth, barY, absentWidth, barHeight, 2, 2, 'F');
-              
-              // Texto da porcentagem na barra
-              if (absentPercentage > 8) {
-                pdf.setTextColor(255, 255, 255);
-                pdf.setFontSize(8);
-                pdf.setFont('helvetica', 'bold');
-                pdf.text(`${absentPercentage.toFixed(0)}%`, margin + presentWidth + 5, barY + 5.5);
-              }
-            }
+          const ctx = pageCanvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(
+              canvas,
+              0, sourceY, canvas.width, sourceHeight,
+              0, 0, canvas.width, sourceHeight
+            );
           }
-        }
 
-        // Criar tabela apenas para a página atual
-        const startRow = page * Math.floor((availableHeight - (page === 0 ? 25 : 0)) / rowHeight);
-        const endRow = Math.min(startRow + Math.floor((availableHeight - (page === 0 ? 25 : 0)) / rowHeight), reportData.length);
-        
-        if (startRow < reportData.length) {
-          const pageTable = document.createElement('table');
-          pageTable.style.width = '100%';
-          pageTable.style.borderCollapse = 'collapse';
-          pageTable.style.fontSize = '9px';
-          
-          // Adicionar cabeçalho
-          const pageThead = document.createElement('thead');
-          const pageHeaderRow = headerRow.cloneNode(true);
-          pageThead.appendChild(pageHeaderRow);
-          pageTable.appendChild(pageThead);
-          
-          // Adicionar linhas da página
-          const pageTbody = document.createElement('tbody');
-          for (let i = startRow; i < endRow; i++) {
-            const row = tbody.children[i - startRow]?.cloneNode(true);
-            if (row) {
-              pageTbody.appendChild(row);
-            }
-          }
-          pageTable.appendChild(pageTbody);
+          const pageImgData = pageCanvas.toDataURL('image/png');
+          const pageImgHeight = (sourceHeight * contentWidth) / canvas.width;
 
-          // Renderizar tabela da página
-          const tempDiv = document.createElement('div');
-          tempDiv.style.position = 'absolute';
-          tempDiv.style.left = '-9999px';
-          tempDiv.style.top = '0';
-          tempDiv.style.width = `${contentWidth * 3.78}px`;
-          tempDiv.appendChild(pageTable);
-          document.body.appendChild(tempDiv);
-
-          const tableCanvas = await html2canvas(pageTable, {
-            scale: 2,
-            logging: false,
-            backgroundColor: '#ffffff',
-          });
-
-          const tableImgData = tableCanvas.toDataURL('image/png');
-          const tableImgHeight = (tableCanvas.height * contentWidth) / tableCanvas.width;
-          
-          // Posicionar tabela na página
-          const tableY = page === 0 ? 75 : 45;
-          pdf.addImage(tableImgData, 'PNG', margin, tableY, contentWidth, tableImgHeight);
-
-          document.body.removeChild(tempDiv);
+          pdf.addImage(
+            pageImgData,
+            'PNG',
+            margin,
+            10,
+            contentWidth,
+            pageImgHeight
+          );
         }
       }
-    } finally {
-      document.body.removeChild(pageContainer);
-    }
 
-    pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+      pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+
+      // Remover container temporário
+      document.body.removeChild(container);
+
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Erro ao gerar PDF. Tente novamente.');
+    } finally {
+      setIsExportingPDF(false);
+    }
   };
 
   const presentPercentage = stats.totalStudents > 0
@@ -656,7 +694,7 @@ export function ReportsTab() {
         <div className="flex gap-3">
           <button
             onClick={exportToXLSX}
-            disabled={reportData.length === 0}
+            disabled={reportData.length === 0 || isLoading}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title={reportData.length === 0 ? "Não há dados para exportar" : "Exportar para Excel"}
           >
@@ -665,12 +703,16 @@ export function ReportsTab() {
           </button>
           <button
             onClick={exportToPDF}
-            disabled={reportData.length === 0}
+            disabled={reportData.length === 0 || isLoading || isExportingPDF}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             title={reportData.length === 0 ? "Não há dados para gerar PDF" : "Gerar PDF"}
           >
-            <FileText className="w-5 h-5" />
-            <span>Gerar PDF</span>
+            {isExportingPDF ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <FileText className="w-5 h-5" />
+            )}
+            <span>{isExportingPDF ? 'Gerando...' : 'Gerar PDF'}</span>
           </button>
         </div>
       </div>
@@ -826,7 +868,7 @@ export function ReportsTab() {
 
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table ref={tableRef} className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
@@ -844,10 +886,10 @@ export function ReportsTab() {
                 {reportData[0]?.classesTotal !== undefined ? (
                   <>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Aulas Ministradas
+                      Aulas
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Aulas Assistidas
+                      Assistidas
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Frequência
@@ -864,39 +906,49 @@ export function ReportsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {reportData.map((row, index) => (
-                <tr key={index} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
-                  <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
-                  <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
-                  <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
-                  {row.classesTotal !== undefined ? (
-                    <>
-                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesTotal}</td>
-                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
-                      <td className="px-6 py-3 text-sm text-slate-700 font-medium">
-                        {row.attendancePercentage?.toFixed(1)}%
-                      </td>
-                    </>
-                  ) : (
-                    <td className="px-6 py-3 text-sm text-slate-700">
-                      {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
-                    </td>
-                  )}
-                  <td className="px-6 py-3">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        row.status === 'Frequente'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {row.status}
-                    </span>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                    <div className="flex justify-center items-center space-x-2">
+                      <Loader2 className="w-6 h-6 animate-spin text-green-500" />
+                      <span>Carregando dados...</span>
+                    </div>
                   </td>
                 </tr>
-              ))}
-              {reportData.length === 0 && (
+              ) : reportData.length > 0 ? (
+                reportData.map((row, index) => (
+                  <tr key={index} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
+                    <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
+                    <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
+                    <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
+                    {row.classesTotal !== undefined ? (
+                      <>
+                        <td className="px-6 py-3 text-sm text-slate-700">{row.classesTotal}</td>
+                        <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
+                        <td className="px-6 py-3 text-sm text-slate-700 font-medium">
+                          {row.attendancePercentage?.toFixed(1)}%
+                        </td>
+                      </>
+                    ) : (
+                      <td className="px-6 py-3 text-sm text-slate-700">
+                        {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
+                      </td>
+                    )}
+                    <td className="px-6 py-3">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          row.status === 'Frequente'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
+                        }`}
+                      >
+                        {row.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
                 <tr>
                   <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
