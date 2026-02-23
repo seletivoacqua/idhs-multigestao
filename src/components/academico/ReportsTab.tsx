@@ -6,18 +6,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
-
-function debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  return function executedFunction(...args: Parameters<T>) {
-    const later = () => {
-      timeout = null;
-      func(...args);
-    };
-    if (timeout) clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-}
+import { debounce } from 'lodash';
 
 interface Unit {
   id: string;
@@ -43,7 +32,10 @@ interface ReportData {
   classesAttended?: number;
   attendancePercentage?: number;
   lastAccesses?: string[];
-  status: 'Frequente' | 'Ausente';
+  currentStatus: 'em_andamento' | 'aprovado' | 'reprovado';
+  displayStatus: string;
+  cycleStatus: string;
+  cycleEndDate: string;
 }
 
 interface PaginationState {
@@ -75,6 +67,7 @@ export function ReportsTab() {
     unitId: '',
     modality: 'all',
     studentName: '',
+    status: 'all', // Novo filtro por status
   });
 
   const { user } = useAuth();
@@ -84,13 +77,10 @@ export function ReportsTab() {
 
   const [stats, setStats] = useState({
     totalStudents: 0,
-    presentCount: 0,
-    absentCount: 0,
+    emAndamentoCount: 0,
+    aprovadoCount: 0,
+    reprovadoCount: 0,
   });
-
-  // Cache para dados de presença
-  const attendanceCache = useRef<Map<string, any>>(new Map());
-  const eadCache = useRef<Map<string, any>>(new Map());
 
   useEffect(() => {
     loadInitialData();
@@ -101,7 +91,6 @@ export function ReportsTab() {
     };
   }, []);
 
-  // Load initial data (units, cycles, classes)
   const loadInitialData = async () => {
     if (!user) return;
 
@@ -120,7 +109,6 @@ export function ReportsTab() {
     }
   };
 
-  // Debounced filter change
   const debouncedFilterChange = useCallback(
     debounce((newFilters) => {
       setPagination(prev => ({ ...prev, page: 1 }));
@@ -137,11 +125,9 @@ export function ReportsTab() {
     });
   };
 
-  // Versão otimizada do generateReport com paginação
   const generateReport = async () => {
     if (!user) return;
 
-    // Cancelar requisição anterior
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -150,7 +136,28 @@ export function ReportsTab() {
     setIsLoading(true);
 
     try {
-      // Buscar turmas com limite para performance
+      // 1. Primeiro, obter o total de registros para paginação
+      let countQuery = supabase
+        .from('classes')
+        .select('id', { count: 'exact', head: true });
+
+      if (filters.cycleId) countQuery = countQuery.eq('cycle_id', filters.cycleId);
+      if (filters.classId) countQuery = countQuery.eq('id', filters.classId);
+      if (filters.modality !== 'all') countQuery = countQuery.eq('modality', filters.modality);
+
+      const { count: totalClasses } = await countQuery;
+
+      if (!totalClasses || totalClasses === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
+        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
+        return;
+      }
+
+      // 2. Buscar apenas as turmas da página atual
+      const from = (pagination.page - 1) * pagination.pageSize;
+      const to = from + pagination.pageSize - 1;
+
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -158,31 +165,40 @@ export function ReportsTab() {
           name,
           modality,
           total_classes,
-          courses!inner (name)
+          cycle_id,
+          courses!inner (
+            name,
+            modality
+          ),
+          cycles!inner (
+            name,
+            status,
+            end_date
+          )
         `)
-        .limit(100);
+        .range(from, to);
 
       if (filters.cycleId) classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
       if (filters.classId) classesQuery = classesQuery.eq('id', filters.classId);
       if (filters.modality !== 'all') classesQuery = classesQuery.eq('modality', filters.modality);
 
-      const { data: classes, error: classesError } = await classesQuery;
+      const { data: classes } = await classesQuery;
 
-      if (classesError || !classes || classes.length === 0) {
+      if (!classes || classes.length === 0) {
         setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
-        setPagination(prev => ({ ...prev, total: 0, totalPages: 1 }));
         return;
       }
 
+      // 3. Buscar alunos matriculados com seus status
       const classIds = classes.map(c => c.id);
-
-      // Buscar alunos matriculados com filtros
-      let studentsQuery = supabase
+      
+      const { data: classStudents } = await supabase
         .from('class_students')
         .select(`
           student_id,
           class_id,
+          current_status,
+          status_updated_at,
           students!inner (
             id,
             full_name,
@@ -192,60 +208,49 @@ export function ReportsTab() {
         `)
         .in('class_id', classIds);
 
-      if (filters.unitId) {
-        studentsQuery = studentsQuery.eq('students.unit_id', filters.unitId);
-      }
-
-      const { data: classStudents, error: studentsError } = await studentsQuery;
-
-      if (studentsError || !classStudents || classStudents.length === 0) {
+      if (!classStudents) {
         setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
         return;
       }
 
-      // Aplicar filtro de nome do aluno no frontend (mais rápido que no backend)
-      const filteredStudents = filters.studentName
-        ? classStudents.filter(cs =>
-            cs.students.full_name.toLowerCase().includes(filters.studentName.toLowerCase())
-          )
-        : classStudents;
+      const studentIds = classStudents.map(cs => cs.student_id);
+      const uniqueStudentIds = [...new Set(studentIds)];
 
-      if (filteredStudents.length === 0) {
-        setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
-        return;
-      }
+      // 4. Buscar presenças de forma otimizada
+      let attendanceData: any[] = [];
+      let eadAccessData: any[] = [];
 
-      const studentIds = [...new Set(filteredStudents.map(cs => cs.student_id))];
-      const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
-      const eadClassIds = classes.filter(c => c.modality === 'EAD').map(c => c.id);
+      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
+      const eadClasses = classes.filter(c => c.modality === 'EAD');
 
-      // Buscar dados de presença em paralelo, apenas para as turmas necessárias
-      const [attendanceData, eadAccessData] = await Promise.all([
-        videoClassIds.length > 0 ? (async () => {
-          let query = supabase
-            .from('attendance')
-            .select('class_id, student_id, present')
-            .in('class_id', videoClassIds)
-            .in('student_id', studentIds)
-            .eq('present', true);
+      await Promise.all([
+        (async () => {
+          if (videoconferenceClasses.length > 0) {
+            let query = supabase
+              .from('attendance')
+              .select('class_id, student_id, class_date')
+              .in('class_id', classIds)
+              .in('student_id', uniqueStudentIds)
+              .eq('present', true);
 
-          if (filters.startDate) query = query.gte('class_date', filters.startDate);
-          if (filters.endDate) query = query.lte('class_date', filters.endDate);
+            if (filters.startDate) query = query.gte('class_date', filters.startDate);
+            if (filters.endDate) query = query.lte('class_date', filters.endDate);
 
-          const { data } = await query;
-          return data || [];
-        })() : Promise.resolve([]),
+            const { data } = await query;
+            attendanceData = data || [];
+          }
+        })(),
+        (async () => {
+          if (eadClasses.length > 0) {
+            const { data } = await supabase
+              .from('ead_access')
+              .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
+              .in('class_id', classIds)
+              .in('student_id', uniqueStudentIds);
 
-        eadClassIds.length > 0 ? (async () => {
-          const { data } = await supabase
-            .from('ead_access')
-            .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
-            .in('class_id', eadClassIds)
-            .in('student_id', studentIds);
-          return data || [];
-        })() : Promise.resolve([])
+            eadAccessData = data || [];
+          }
+        })()
       ]);
 
       // 5. Criar maps para acesso rápido
@@ -264,24 +269,44 @@ export function ReportsTab() {
         eadMap.set(key, access);
       });
 
-      // Criar maps para acesso rápido
+      // 6. Processar dados
+      const allReportData: ReportData[] = [];
       const classMap = new Map(classes.map(c => [c.id, c]));
 
-      // Processar dados de forma otimizada
-      const allReportData: ReportData[] = filteredStudents.map(cs => {
+      for (const cs of classStudents) {
         const cls = classMap.get(cs.class_id);
-        if (!cls) return null;
+        if (!cls) continue;
 
         const student = cs.students;
-        const unitName = student.units?.name || 'Não informado';
+        
+        // Aplicar filtros adicionais
+        if (filters.unitId && student.unit_id !== filters.unitId) continue;
+        if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
+
+        const unitName = student.units?.name || 
+                        units.find(u => u.id === student.unit_id)?.name || 
+                        'Não informado';
+
+        // Determinar o status de exibição
+        let displayStatus = '';
+        if (cls.cycles.status === 'active' && new Date() <= new Date(cls.cycles.end_date)) {
+          displayStatus = 'Em Andamento';
+        } else if (cs.current_status === 'aprovado') {
+          displayStatus = 'Aprovado';
+        } else if (cs.current_status === 'reprovado') {
+          displayStatus = 'Reprovado';
+        } else {
+          displayStatus = 'Pendente';
+        }
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
           const attendances = attendanceMap.get(key) || [];
+          
           const attendedCount = attendances.length;
           const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
-          return {
+          allReportData.push({
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
@@ -289,12 +314,15 @@ export function ReportsTab() {
             classesTotal: cls.total_classes,
             classesAttended: attendedCount,
             attendancePercentage: percentage,
-            status: percentage >= 60 ? 'Frequente' : 'Ausente',
-          } as ReportData;
+            currentStatus: cs.current_status || 'em_andamento',
+            displayStatus,
+            cycleStatus: cls.cycles.status,
+            cycleEndDate: cls.cycles.end_date,
+          });
         } else {
           const key = `${cls.id}_${student.id}`;
           const access = eadMap.get(key);
-
+          
           let accesses = [
             access?.access_date_1,
             access?.access_date_2,
@@ -311,32 +339,46 @@ export function ReportsTab() {
             });
           }
 
-          return {
+          allReportData.push({
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
             className: cls.name,
             lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
-            status: accesses.length > 0 ? 'Frequente' : 'Ausente',
-          } as ReportData;
+            currentStatus: cs.current_status || 'em_andamento',
+            displayStatus,
+            cycleStatus: cls.cycles.status,
+            cycleEndDate: cls.cycles.end_date,
+          });
         }
-      }).filter(Boolean) as ReportData[];
+      }
 
-      setReportData(allReportData);
+      // Aplicar filtro por status
+      const filteredData = filters.status === 'all' 
+        ? allReportData 
+        : allReportData.filter(d => d.currentStatus === filters.status);
 
-      // Calcular estatísticas de forma otimizada
-      const presentCount = allReportData.reduce((count, d) => count + (d.status === 'Frequente' ? 1 : 0), 0);
+      setReportData(filteredData);
+
+      // Calcular estatísticas
+      const emAndamentoCount = filteredData.filter(d => 
+        d.cycleStatus === 'active' && new Date() <= new Date(d.cycleEndDate)
+      ).length;
+      
+      const aprovadoCount = filteredData.filter(d => d.currentStatus === 'aprovado').length;
+      const reprovadoCount = filteredData.filter(d => d.currentStatus === 'reprovado').length;
 
       setStats({
-        totalStudents: allReportData.length,
-        presentCount,
-        absentCount: allReportData.length - presentCount,
+        totalStudents: filteredData.length,
+        emAndamentoCount,
+        aprovadoCount,
+        reprovadoCount,
       });
 
       setPagination(prev => ({
         ...prev,
-        total: allReportData.length,
-        totalPages: 1,
+        total: totalClasses,
+        totalPages: Math.ceil(totalClasses / prev.pageSize),
       }));
 
     } catch (error: any) {
@@ -349,61 +391,45 @@ export function ReportsTab() {
     }
   };
 
-  // Função de exportação otimizada (busca todos os dados apenas quando necessário)
-  const exportAllData = async () => {
-    if (reportData.length === 0) return;
-    
-    setIsExporting(true);
-    
-    try {
-      // Se já temos todos os dados (poucos registros), usa os dados atuais
-      if (pagination.total <= pagination.pageSize) {
-        exportToXLSX(reportData);
-        return;
-      }
-
-      // Caso contrário, busca todos os dados para exportação
-      const allData = await fetchAllDataForExport();
-      
-      if (filters.modality === 'all' || filters.modality === 'VIDEOCONFERENCIA') {
-        exportToXLSX(allData);
-      } else {
-        exportToXLSX(allData);
-      }
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const fetchAllDataForExport = async () => {
-    // Implementar lógica para buscar todos os dados
-    // Similar ao generateReport mas sem paginação
-    return reportData; // Placeholder
-  };
-
   const exportToXLSX = (data: ReportData[]) => {
-    const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso'];
+    const headers = [
+      'Unidade', 
+      'Nome do Aluno', 
+      'Turma', 
+      'Curso',
+      'Status do Ciclo',
+      'Data Fim do Ciclo'
+    ];
 
     if (data[0]?.classesTotal !== undefined) {
-      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)', 'Situação');
+      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
     } else {
-      headers.push('Últimos Acessos', 'Situação');
+      headers.push('Últimos Acessos');
     }
+    
+    headers.push('Situação');
 
     const rows = data.map((row) => {
-      const base = [row.unitName, row.studentName, row.className, row.courseName];
+      const base = [
+        row.unitName, 
+        row.studentName, 
+        row.className, 
+        row.courseName,
+        row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
+        new Date(row.cycleEndDate).toLocaleDateString('pt-BR')
+      ];
 
       if (row.classesTotal !== undefined) {
         base.push(
           row.classesTotal?.toString() || '',
           row.classesAttended?.toString() || '',
-          row.attendancePercentage?.toFixed(1) || '',
-          row.status
+          row.attendancePercentage?.toFixed(1) || ''
         );
       } else {
-        base.push(row.lastAccesses?.join(', ') || '', row.status);
+        base.push(row.lastAccesses?.join(', ') || '');
       }
 
+      base.push(row.displayStatus);
       return base;
     });
 
@@ -424,6 +450,18 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const exportAllData = async () => {
+    if (reportData.length === 0) return;
+    
+    setIsExporting(true);
+    
+    try {
+      exportToXLSX(reportData);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const exportToPDF = async () => {
     if (!reportRef.current || reportData.length === 0 || !tableRef.current) return;
 
@@ -441,21 +479,23 @@ export function ReportsTab() {
       const margin = 10;
       const contentWidth = pageWidth - 2 * margin;
 
-      const presentPercentage = stats.totalStudents > 0
-        ? (stats.presentCount / stats.totalStudents) * 100
+      const emAndamentoPercentage = stats.totalStudents > 0
+        ? (stats.emAndamentoCount / stats.totalStudents) * 100
         : 0;
-      const absentPercentage = stats.totalStudents > 0
-        ? (stats.absentCount / stats.totalStudents) * 100
+      const aprovadoPercentage = stats.totalStudents > 0
+        ? (stats.aprovadoCount / stats.totalStudents) * 100
+        : 0;
+      const reprovadoPercentage = stats.totalStudents > 0
+        ? (stats.reprovadoCount / stats.totalStudents) * 100
         : 0;
 
-      // Criar container para o PDF
       const container = document.createElement('div');
       container.style.width = `${contentWidth * 3.78}px`;
       container.style.padding = '10px';
       container.style.backgroundColor = '#ffffff';
       container.style.fontFamily = 'Arial, sans-serif';
 
-      // Adicionar cabeçalho
+      // Cabeçalho
       const headerDiv = document.createElement('div');
       headerDiv.style.textAlign = 'center';
       headerDiv.style.marginBottom = '15px';
@@ -468,7 +508,7 @@ export function ReportsTab() {
       headerDiv.appendChild(logo);
 
       const title = document.createElement('h1');
-      title.textContent = 'Relatório de Frequência';
+      title.textContent = 'Relatório de Acompanhamento de Alunos';
       title.style.fontSize = '20px';
       title.style.fontWeight = 'bold';
       title.style.marginBottom = '5px';
@@ -484,7 +524,7 @@ export function ReportsTab() {
 
       container.appendChild(headerDiv);
 
-      // Informações dos filtros
+      // Filtros
       const filtersDiv = document.createElement('div');
       filtersDiv.style.display = 'flex';
       filtersDiv.style.flexWrap = 'wrap';
@@ -500,43 +540,69 @@ export function ReportsTab() {
         filtersDiv.appendChild(filterItem);
       }
 
-      if (filters.classId) {
-        const cls = classes.find(c => c.id === filters.classId);
-        const filterItem = document.createElement('span');
-        filterItem.textContent = `Turma: ${cls?.name || 'Todas'}`;
-        filtersDiv.appendChild(filterItem);
-      }
-
       const totalItem = document.createElement('span');
       totalItem.textContent = `Total: ${stats.totalStudents} alunos`;
       filtersDiv.appendChild(totalItem);
 
       container.appendChild(filtersDiv);
 
-      // Estatísticas e barra de progresso
+      // Estatísticas
       const statsDiv = document.createElement('div');
       statsDiv.style.marginBottom = '20px';
 
       const statsTitle = document.createElement('h3');
-      statsTitle.textContent = 'Distribuição de Frequência';
+      statsTitle.textContent = 'Distribuição por Situação';
       statsTitle.style.fontSize = '14px';
       statsTitle.style.fontWeight = 'bold';
       statsTitle.style.marginBottom = '10px';
       statsTitle.style.color = '#1e293b';
       statsDiv.appendChild(statsTitle);
 
-      const statsText = document.createElement('div');
-      statsText.style.display = 'flex';
-      statsText.style.justifyContent = 'space-between';
-      statsText.style.marginBottom = '5px';
-      statsText.style.fontSize = '12px';
-      statsText.style.color = '#475569';
-      statsText.innerHTML = `
-        <span>Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)</span>
-        <span>Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)</span>
-      `;
-      statsDiv.appendChild(statsText);
+      const statsGrid = document.createElement('div');
+      statsGrid.style.display = 'grid';
+      statsGrid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+      statsGrid.style.gap = '10px';
+      statsGrid.style.marginBottom = '10px';
 
+      // Em Andamento
+      const emAndamentoBox = document.createElement('div');
+      emAndamentoBox.style.backgroundColor = '#dbeafe';
+      emAndamentoBox.style.padding = '10px';
+      emAndamentoBox.style.borderRadius = '8px';
+      emAndamentoBox.innerHTML = `
+        <div style="color: #1e40af; font-size: 12px; font-weight: 500;">Em Andamento</div>
+        <div style="color: #1e3a8a; font-size: 24px; font-weight: bold;">${stats.emAndamentoCount}</div>
+        <div style="color: #2563eb; font-size: 11px;">${emAndamentoPercentage.toFixed(1)}%</div>
+      `;
+
+      // Aprovados
+      const aprovadoBox = document.createElement('div');
+      aprovadoBox.style.backgroundColor = '#dcfce7';
+      aprovadoBox.style.padding = '10px';
+      aprovadoBox.style.borderRadius = '8px';
+      aprovadoBox.innerHTML = `
+        <div style="color: #166534; font-size: 12px; font-weight: 500;">Aprovados</div>
+        <div style="color: #14532d; font-size: 24px; font-weight: bold;">${stats.aprovadoCount}</div>
+        <div style="color: #16a34a; font-size: 11px;">${aprovadoPercentage.toFixed(1)}%</div>
+      `;
+
+      // Reprovados
+      const reprovadoBox = document.createElement('div');
+      reprovadoBox.style.backgroundColor = '#fee2e2';
+      reprovadoBox.style.padding = '10px';
+      reprovadoBox.style.borderRadius = '8px';
+      reprovadoBox.innerHTML = `
+        <div style="color: #991b1b; font-size: 12px; font-weight: 500;">Reprovados</div>
+        <div style="color: #7f1d1d; font-size: 24px; font-weight: bold;">${stats.reprovadoCount}</div>
+        <div style="color: #dc2626; font-size: 11px;">${reprovadoPercentage.toFixed(1)}%</div>
+      `;
+
+      statsGrid.appendChild(emAndamentoBox);
+      statsGrid.appendChild(aprovadoBox);
+      statsGrid.appendChild(reprovadoBox);
+      statsDiv.appendChild(statsGrid);
+
+      // Barra de progresso
       const progressBar = document.createElement('div');
       progressBar.style.width = '100%';
       progressBar.style.height = '24px';
@@ -544,35 +610,48 @@ export function ReportsTab() {
       progressBar.style.borderRadius = '6px';
       progressBar.style.overflow = 'hidden';
       progressBar.style.display = 'flex';
-      progressBar.style.marginTop = '5px';
+      progressBar.style.marginTop = '10px';
 
       if (stats.totalStudents > 0) {
-        const presentBar = document.createElement('div');
-        presentBar.style.width = `${presentPercentage}%`;
-        presentBar.style.height = '100%';
-        presentBar.style.backgroundColor = '#22c55e';
-        presentBar.style.display = 'flex';
-        presentBar.style.alignItems = 'center';
-        presentBar.style.justifyContent = 'center';
-        presentBar.style.color = 'white';
-        presentBar.style.fontSize = '11px';
-        presentBar.style.fontWeight = 'bold';
-        presentBar.textContent = presentPercentage > 8 ? `${presentPercentage.toFixed(0)}%` : '';
+        const emAndamentoBar = document.createElement('div');
+        emAndamentoBar.style.width = `${emAndamentoPercentage}%`;
+        emAndamentoBar.style.height = '100%';
+        emAndamentoBar.style.backgroundColor = '#3b82f6';
+        emAndamentoBar.style.display = 'flex';
+        emAndamentoBar.style.alignItems = 'center';
+        emAndamentoBar.style.justifyContent = 'center';
+        emAndamentoBar.style.color = 'white';
+        emAndamentoBar.style.fontSize = '11px';
+        emAndamentoBar.style.fontWeight = 'bold';
+        emAndamentoBar.textContent = emAndamentoPercentage > 8 ? `${emAndamentoPercentage.toFixed(0)}%` : '';
 
-        const absentBar = document.createElement('div');
-        absentBar.style.width = `${absentPercentage}%`;
-        absentBar.style.height = '100%';
-        absentBar.style.backgroundColor = '#ef4444';
-        absentBar.style.display = 'flex';
-        absentBar.style.alignItems = 'center';
-        absentBar.style.justifyContent = 'center';
-        absentBar.style.color = 'white';
-        absentBar.style.fontSize = '11px';
-        absentBar.style.fontWeight = 'bold';
-        absentBar.textContent = absentPercentage > 8 ? `${absentPercentage.toFixed(0)}%` : '';
+        const aprovadoBar = document.createElement('div');
+        aprovadoBar.style.width = `${aprovadoPercentage}%`;
+        aprovadoBar.style.height = '100%';
+        aprovadoBar.style.backgroundColor = '#22c55e';
+        aprovadoBar.style.display = 'flex';
+        aprovadoBar.style.alignItems = 'center';
+        aprovadoBar.style.justifyContent = 'center';
+        aprovadoBar.style.color = 'white';
+        aprovadoBar.style.fontSize = '11px';
+        aprovadoBar.style.fontWeight = 'bold';
+        aprovadoBar.textContent = aprovadoPercentage > 8 ? `${aprovadoPercentage.toFixed(0)}%` : '';
 
-        progressBar.appendChild(presentBar);
-        progressBar.appendChild(absentBar);
+        const reprovadoBar = document.createElement('div');
+        reprovadoBar.style.width = `${reprovadoPercentage}%`;
+        reprovadoBar.style.height = '100%';
+        reprovadoBar.style.backgroundColor = '#ef4444';
+        reprovadoBar.style.display = 'flex';
+        reprovadoBar.style.alignItems = 'center';
+        reprovadoBar.style.justifyContent = 'center';
+        reprovadoBar.style.color = 'white';
+        reprovadoBar.style.fontSize = '11px';
+        reprovadoBar.style.fontWeight = 'bold';
+        reprovadoBar.textContent = reprovadoPercentage > 8 ? `${reprovadoPercentage.toFixed(0)}%` : '';
+
+        progressBar.appendChild(emAndamentoBar);
+        progressBar.appendChild(aprovadoBar);
+        progressBar.appendChild(reprovadoBar);
       }
 
       statsDiv.appendChild(progressBar);
@@ -582,7 +661,7 @@ export function ReportsTab() {
       const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
       tableClone.style.width = '100%';
       tableClone.style.borderCollapse = 'collapse';
-      tableClone.style.fontSize = '10px';
+      tableClone.style.fontSize = '9px';
 
       container.appendChild(tableClone);
       document.body.appendChild(container);
@@ -647,15 +726,18 @@ export function ReportsTab() {
     generateReport();
   };
 
-  const presentPercentage = useMemo(() => 
-    stats.totalStudents > 0 ? (stats.presentCount / stats.totalStudents) * 100 : 0,
-    [stats.presentCount, stats.totalStudents]
-  );
-  
-  const absentPercentage = useMemo(() => 
-    stats.totalStudents > 0 ? (stats.absentCount / stats.totalStudents) * 100 : 0,
-    [stats.absentCount, stats.totalStudents]
-  );
+  const getStatusColor = (displayStatus: string) => {
+    switch (displayStatus) {
+      case 'Em Andamento':
+        return 'bg-blue-100 text-blue-700';
+      case 'Aprovado':
+        return 'bg-green-100 text-green-700';
+      case 'Reprovado':
+        return 'bg-red-100 text-red-700';
+      default:
+        return 'bg-slate-100 text-slate-700';
+    }
+  };
 
   return (
     <div className="space-y-6" ref={reportRef}>
@@ -695,7 +777,7 @@ export function ReportsTab() {
           <h3 className="font-semibold text-slate-800">Filtros</h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
             <select
@@ -745,6 +827,20 @@ export function ReportsTab() {
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Situação</label>
+            <select
+              value={filters.status}
+              onChange={(e) => handleFilterChange('status', e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="all">Todas</option>
+              <option value="em_andamento">Em Andamento</option>
+              <option value="aprovado">Aprovado</option>
+              <option value="reprovado">Reprovado</option>
+            </select>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
             <input
               type="date"
@@ -777,7 +873,7 @@ export function ReportsTab() {
             </select>
           </div>
 
-          <div className="md:col-span-3">
+          <div className="md:col-span-4">
             <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Nome do Aluno</label>
             <input
               type="text"
@@ -793,44 +889,60 @@ export function ReportsTab() {
       <div className="bg-white border border-slate-200 rounded-lg p-6">
         <h3 className="font-semibold text-slate-800 mb-4">Estatísticas</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
             <p className="text-2xl font-bold text-blue-700">{stats.totalStudents}</p>
           </div>
 
+          <div className="bg-blue-100 border border-blue-300 rounded-lg p-4">
+            <p className="text-sm text-blue-800 font-medium">Em Andamento</p>
+            <p className="text-2xl font-bold text-blue-900">{stats.emAndamentoCount}</p>
+          </div>
+
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-sm text-green-600 font-medium">Frequentes</p>
-            <p className="text-2xl font-bold text-green-700">{stats.presentCount}</p>
+            <p className="text-sm text-green-600 font-medium">Aprovados</p>
+            <p className="text-2xl font-bold text-green-700">{stats.aprovadoCount}</p>
           </div>
 
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-600 font-medium">Ausentes</p>
-            <p className="text-2xl font-bold text-red-700">{stats.absentCount}</p>
+            <p className="text-sm text-red-600 font-medium">Reprovados</p>
+            <p className="text-2xl font-bold text-red-700">{stats.reprovadoCount}</p>
           </div>
         </div>
 
         <div className="mb-2">
           <div className="flex justify-between text-sm text-slate-600 mb-1">
-            <span>Distribuição de Frequência</span>
+            <span>Distribuição por Situação</span>
             <span>
-              {presentPercentage.toFixed(1)}% Frequentes / {absentPercentage.toFixed(1)}% Ausentes
+              Em Andamento: {((stats.emAndamentoCount / stats.totalStudents) * 100 || 0).toFixed(1)}% | 
+              Aprovados: {((stats.aprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}% | 
+              Reprovados: {((stats.reprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}%
             </span>
           </div>
           <div className="w-full h-8 bg-slate-200 rounded-lg overflow-hidden flex">
             {stats.totalStudents > 0 && (
               <>
                 <div
-                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                  style={{ width: `${presentPercentage}%` }}
+                  className="bg-blue-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
+                  style={{ width: `${(stats.emAndamentoCount / stats.totalStudents) * 100}%` }}
                 >
-                  {presentPercentage > 8 && `${presentPercentage.toFixed(0)}%`}
+                  {((stats.emAndamentoCount / stats.totalStudents) * 100) > 8 && 
+                    `${((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(0)}%`}
+                </div>
+                <div
+                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
+                  style={{ width: `${(stats.aprovadoCount / stats.totalStudents) * 100}%` }}
+                >
+                  {((stats.aprovadoCount / stats.totalStudents) * 100) > 8 && 
+                    `${((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
                 </div>
                 <div
                   className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                  style={{ width: `${absentPercentage}%` }}
+                  style={{ width: `${(stats.reprovadoCount / stats.totalStudents) * 100}%` }}
                 >
-                  {absentPercentage > 8 && `${absentPercentage.toFixed(0)}%`}
+                  {((stats.reprovadoCount / stats.totalStudents) * 100) > 8 && 
+                    `${((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
                 </div>
               </>
             )}
@@ -873,6 +985,9 @@ export function ReportsTab() {
                   </th>
                 )}
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  Ciclo
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Situação
                 </th>
               </tr>
@@ -880,7 +995,7 @@ export function ReportsTab() {
             <tbody className="divide-y divide-slate-200">
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex justify-center items-center space-x-2">
                       <Loader2 className="w-6 h-6 animate-spin text-green-500" />
                       <span>Carregando dados...</span>
@@ -907,22 +1022,27 @@ export function ReportsTab() {
                         {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
                       </td>
                     )}
+                    <td className="px-6 py-3 text-sm text-slate-700">
+                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                        row.cycleStatus === 'active' 
+                          ? 'bg-green-100 text-green-700' 
+                          : 'bg-slate-100 text-slate-700'
+                      }`}>
+                        {row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
+                      </span>
+                    </td>
                     <td className="px-6 py-3">
                       <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          row.status === 'Frequente'
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-red-100 text-red-700'
-                        }`}
+                        className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(row.displayStatus)}`}
                       >
-                        {row.status}
+                        {row.displayStatus}
                       </span>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
@@ -931,7 +1051,6 @@ export function ReportsTab() {
           </table>
         </div>
         
-        {/* Paginação */}
         {pagination.totalPages > 1 && !isLoading && (
           <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50">
             <div className="text-sm text-slate-600">
