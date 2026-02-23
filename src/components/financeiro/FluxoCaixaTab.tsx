@@ -29,6 +29,13 @@ interface FixedExpense {
   pagamento_realizado: boolean;
 }
 
+// Função auxiliar para formatar data ISO (YYYY-MM-DD) para DD/MM/YYYY
+const formatDate = (isoDate: string): string => {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-');
+  return `${day}/${month}/${year}`;
+};
+
 export function FluxoCaixaTab() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
@@ -525,7 +532,8 @@ export function FluxoCaixaTab() {
             </button>
           </form>
 
-          <div className="space-y-2">
+          {/* Lista de despesas fixas com rolagem vertical */}
+          <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
             {fixedExpenses.map((expense) => (
               <div
                 key={expense.id}
@@ -566,15 +574,16 @@ export function FluxoCaixaTab() {
         </div>
       )}
 
-      {/* Container da tabela com barra de rolagem vertical */}
+      {/* Tabela de transações com rolagem vertical */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <div className="max-h-96 overflow-y-auto"> {/* Altura máxima e rolagem vertical */}
+        <div className="max-h-96 overflow-y-auto">
           <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-10"> {/* Cabeçalho fixo */}
+            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Tipo</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Descrição</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Fornecedor</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Método</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
@@ -585,7 +594,7 @@ export function FluxoCaixaTab() {
               {filteredTransactions.map((transaction) => (
                 <tr key={transaction.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
-                    {new Date(transaction.transaction_date).toLocaleDateString('pt-BR')}
+                    {formatDate(transaction.transaction_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span
@@ -599,6 +608,9 @@ export function FluxoCaixaTab() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-sm text-slate-700">{transaction.description}</td>
+                  <td className="px-6 py-4 text-sm text-slate-700">
+                    {transaction.fornecedor || '-'}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700 capitalize">
                     {transaction.method}
                   </td>
@@ -630,7 +642,7 @@ export function FluxoCaixaTab() {
               ))}
               {filteredTransactions.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
                     Nenhuma transação encontrada para este período
                   </td>
                 </tr>
