@@ -323,6 +323,36 @@ const exportToPDF = async () => {
     year: 'numeric'
   });
 
+  // Função auxiliar para calcular altura de uma linha (definida antes de ser usada)
+  const getRowHeight = async (row: HTMLElement, width: number): Promise<number> => {
+    const tempTable = document.createElement('table');
+    tempTable.style.width = '100%';
+    tempTable.style.fontSize = '10px';
+    tempTable.style.borderCollapse = 'collapse';
+    tempTable.style.position = 'absolute';
+    tempTable.style.left = '-9999px';
+    tempTable.style.top = '0';
+    tempTable.style.width = `${width * 3.78}px`;
+    
+    const tbody = document.createElement('tbody');
+    tbody.appendChild(row.cloneNode(true));
+    tempTable.appendChild(tbody);
+    
+    document.body.appendChild(tempTable);
+    
+    try {
+      const canvas = await html2canvas(tempTable, {
+        scale: 1,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+      
+      return (canvas.height * width) / canvas.width;
+    } finally {
+      document.body.removeChild(tempTable);
+    }
+  };
+
   // Função para adicionar cabeçalho em cada página
   const addHeader = (pageNum: number) => {
     if (pageNum > 0) {
@@ -372,7 +402,7 @@ const exportToPDF = async () => {
   tempDiv.style.position = 'absolute';
   tempDiv.style.left = '-9999px';
   tempDiv.style.top = '0';
-  tempDiv.style.width = `${contentWidth * 3.78}px`; // Converter mm para px (aprox)
+  tempDiv.style.width = `${contentWidth * 3.78}px`;
   tempDiv.appendChild(tableClone);
   document.body.appendChild(tempDiv);
 
@@ -386,36 +416,60 @@ const exportToPDF = async () => {
     
     if (!headerRow) return;
 
-    // Renderizar linha por linha para controlar quebras
+    // Calcular altura de cada linha antecipadamente
+    const rowHeights = await Promise.all(
+      rows.map(row => getRowHeight(row, contentWidth))
+    );
+
     let currentPage = 0;
     let currentY = headerHeight;
-    let currentRows: HTMLElement[] = [];
+    let startRow = 0;
+    let endRow = 0;
 
-    for (let i = 0; i <= rows.length; i++) {
-      // Criar tabela temporária com as linhas atuais
-      const tempTable = document.createElement('table');
-      tempTable.style.width = '100%';
-      tempTable.style.fontSize = '10px';
-      tempTable.style.borderCollapse = 'collapse';
+    while (endRow < rows.length) {
+      let pageRows: HTMLElement[] = [];
+      let pageHeight_ = 0;
       
-      // Adicionar cabeçalho
-      const tempThead = document.createElement('thead');
-      tempThead.appendChild(headerRow.cloneNode(true));
-      tempTable.appendChild(tempThead);
+      // Acumular linhas que cabem na página atual
+      while (endRow < rows.length) {
+        const nextRowHeight = rowHeights[endRow];
+        if (currentY + pageHeight_ + nextRowHeight <= pageHeight - margin) {
+          pageRows.push(rows[endRow]);
+          pageHeight_ += nextRowHeight;
+          endRow++;
+        } else {
+          break;
+        }
+      }
+
+      if (pageRows.length === 0 && endRow < rows.length) {
+        // Se uma linha não cabe sozinha na página, força ela a entrar
+        pageRows.push(rows[endRow]);
+        endRow++;
+      }
+
+      // Criar tabela para esta página
+      const pageTable = document.createElement('table');
+      pageTable.style.width = '100%';
+      pageTable.style.fontSize = '10px';
+      pageTable.style.borderCollapse = 'collapse';
       
-      // Adicionar corpo com as linhas atuais
-      const tempTbody = document.createElement('tbody');
-      currentRows.forEach(row => tempTbody.appendChild(row.cloneNode(true)));
-      tempTable.appendChild(tempTbody);
+      const pageThead = document.createElement('thead');
+      pageThead.appendChild(headerRow.cloneNode(true));
+      pageTable.appendChild(pageThead);
+      
+      const pageTbody = document.createElement('tbody');
+      pageRows.forEach(row => pageTbody.appendChild(row.cloneNode(true)));
+      pageTable.appendChild(pageTbody);
 
       // Adicionar ao DOM temporário
-      const rowTestDiv = document.createElement('div');
-      rowTestDiv.appendChild(tempTable);
-      document.body.appendChild(rowTestDiv);
+      const pageDiv = document.createElement('div');
+      pageDiv.appendChild(pageTable);
+      document.body.appendChild(pageDiv);
 
       try {
-        // Renderizar a tabela atual
-        const canvas = await html2canvas(tempTable, {
+        // Renderizar tabela da página
+        const canvas = await html2canvas(pageTable, {
           scale: 2,
           useCORS: true,
           logging: false,
@@ -423,78 +477,16 @@ const exportToPDF = async () => {
           backgroundColor: '#ffffff',
         });
 
+        addHeader(currentPage);
+        
         const imgData = canvas.toDataURL('image/png');
         const imgHeight = (canvas.height * contentWidth) / canvas.width;
-
-        // Verificar se a próxima linha caberia na página
-        const nextRowHeight = i < rows.length ? await getRowHeight(rows[i], contentWidth) : 0;
         
-        if (currentY + imgHeight + nextRowHeight > pageHeight - margin && currentRows.length > 0) {
-          // Não cabe mais linhas, renderizar página atual
-          addHeader(currentPage);
-          
-          // Renderizar as linhas acumuladas
-          const pageCanvas = await html2canvas(tempTable, {
-            scale: 2,
-            useCORS: true,
-            logging: false,
-            allowTaint: true,
-            backgroundColor: '#ffffff',
-          });
-
-          const pageImgData = pageCanvas.toDataURL('image/png');
-          const pageImgHeight = (pageCanvas.height * contentWidth) / pageCanvas.width;
-          
-          pdf.addImage(pageImgData, 'PNG', margin, currentY, contentWidth, pageImgHeight);
-          
-          // Preparar para próxima página
-          currentPage++;
-          currentY = headerHeight;
-          currentRows = [];
-          
-          // Adicionar a linha atual na nova página
-          if (i < rows.length) {
-            currentRows.push(rows[i]);
-          }
-        } else {
-          // Cabe na página atual, adicionar linha atual
-          if (i < rows.length) {
-            currentRows.push(rows[i]);
-          }
-          
-          // Se for a última linha, renderizar página final
-          if (i === rows.length - 1 && currentRows.length > 0) {
-            const finalTempTable = document.createElement('table');
-            finalTempTable.style.width = '100%';
-            finalTempTable.style.fontSize = '10px';
-            finalTempTable.style.borderCollapse = 'collapse';
-            
-            const finalThead = document.createElement('thead');
-            finalThead.appendChild(headerRow.cloneNode(true));
-            finalTempTable.appendChild(finalThead);
-            
-            const finalTbody = document.createElement('tbody');
-            currentRows.forEach(row => finalTbody.appendChild(row.cloneNode(true)));
-            finalTempTable.appendChild(finalTbody);
-
-            const finalCanvas = await html2canvas(finalTempTable, {
-              scale: 2,
-              useCORS: true,
-              logging: false,
-              allowTaint: true,
-              backgroundColor: '#ffffff',
-            });
-
-            addHeader(currentPage);
-            
-            const finalImgData = finalCanvas.toDataURL('image/png');
-            const finalImgHeight = (finalCanvas.height * contentWidth) / finalCanvas.width;
-            
-            pdf.addImage(finalImgData, 'PNG', margin, currentY, contentWidth, finalImgHeight);
-          }
-        }
+        pdf.addImage(imgData, 'PNG', margin, currentY, contentWidth, imgHeight);
+        
+        currentPage++;
       } finally {
-        rowTestDiv.remove();
+        pageDiv.remove();
       }
     }
   } finally {
@@ -503,7 +495,6 @@ const exportToPDF = async () => {
 
   pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
 };
-
 // Função auxiliar para calcular altura de uma linha
 const getRowHeight = async (row: HTMLElement, contentWidth: number): Promise<number> => {
   const tempTable = document.createElement('table');
