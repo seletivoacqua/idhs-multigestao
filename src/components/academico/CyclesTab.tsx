@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Plus, Calendar, Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye, Award, User, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -92,7 +91,7 @@ async function updateStudentStatus(classId: string, studentId: string, classData
     const today = new Date().toISOString().split('T')[0];
     const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
 
-    let currentStatus = studentData?.current_status || 'matriculado';
+    let currentStatus = 'em_andamento';
 
     // Se o ciclo não estiver mais ativo, calcular status final
     if (!isCycleActive) {
@@ -1077,7 +1076,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       student_id: studentId,
       enrollment_type: enrollmentType,
       enrollment_date: enrollmentDate,
-      current_status: 'matriculado',
+      current_status: 'em_andamento',
       status_updated_at: new Date().toISOString(),
     }));
 
@@ -1262,10 +1261,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
     if (isCycleActive) {
       return {
-        status: 'Matriculado',
-        color: 'bg-slate-100 text-slate-800',
+        status: 'Em Andamento',
+        color: 'bg-blue-100 text-blue-800',
         canCertify: false,
-        message: 'Aluno matriculado'
+        message: 'Ciclo em andamento'
       };
     }
 
@@ -1634,10 +1633,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                                     student.isPresent
                                       ? 'bg-green-100 text-green-800'
-                                      : 'bg-slate-100 text-slate-800'
+                                      : 'bg-yellow-100 text-yellow-800'
                                   }`}
                                 >
-                                  {student.isPresent ? 'Aprovado' : 'Matriculado'}
+                                  {student.isPresent ? 'Aprovado' : 'Em andamento'}
                                 </span>
                               )}
                             </td>
@@ -1691,8 +1690,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   <Award className="w-5 h-5" />
                                   <span>Emitir</span>
                                 </button>
-                              ) : situation.status === 'Matriculado' ? (
-                                <span className="text-slate-500 font-medium text-sm">
+                              ) : situation.status === 'Em Andamento' ? (
+                                <span className="text-blue-500 font-medium text-sm">
                                   Aguardando fim do ciclo
                                 </span>
                               ) : (
