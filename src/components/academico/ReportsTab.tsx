@@ -67,7 +67,7 @@ export function ReportsTab() {
     if (user) {
       generateReport();
     }
-  }, [filters]);
+  }, [filters, user]);
 
   const loadUnits = async () => {
     if (!user) return;
@@ -91,7 +91,6 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('cycles')
       .select('id, name')
-      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -108,7 +107,6 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('classes')
       .select('id, name')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
@@ -124,8 +122,7 @@ export function ReportsTab() {
 
     let classesQuery = supabase
       .from('classes')
-      .select('*, courses(name, modality)')
-      .eq('user_id', user.id);
+      .select('*, courses(name, modality)');
 
     if (filters.cycleId) {
       classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
@@ -165,14 +162,12 @@ export function ReportsTab() {
           continue;
         }
 
-        // Obter nome da unidade
         let unitName = 'Não informado';
         if (cs.students.unit_id) {
           const unit = units.find(u => u.id === cs.students.unit_id);
           if (unit) {
             unitName = unit.name;
           } else if (cs.students.units) {
-            // Se já veio com join
             unitName = cs.students.units.name || 'Não informado';
           }
         }
@@ -196,7 +191,7 @@ export function ReportsTab() {
           const { data: attendanceData } = await attendanceQuery;
 
           const attendedCount = attendanceData?.length || 0;
-          const percentage = (attendedCount / cls.total_classes) * 100;
+          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
           allReportData.push({
             studentName: cs.students.full_name,
@@ -259,6 +254,8 @@ export function ReportsTab() {
   };
 
   const exportToXLSX = () => {
+    if (reportData.length === 0) return;
+
     const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso'];
 
     if (reportData[0]?.classesTotal !== undefined) {
@@ -301,149 +298,203 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
- const exportToPDF = async () => {
-  if (!reportRef.current) return;
+  const exportToPDF = async () => {
+    if (!reportRef.current || reportData.length === 0) return;
 
-  const pdf = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4',
-  });
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
+    });
 
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const contentWidth = pageWidth - 2 * margin;
 
-  const headerHeight = 45;
-  const title = 'Relatório de Frequência';
-  const date = new Date().toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric'
-  });
+    // Criar uma tabela apenas com os dados para o PDF
+    const tableElement = document.createElement('table');
+    tableElement.style.width = '100%';
+    tableElement.style.borderCollapse = 'collapse';
+    tableElement.style.fontSize = '10px';
+    tableElement.style.fontFamily = 'Arial, sans-serif';
 
-  const logoWidth = 20;
-  const logoHeight = 15;
-  const logoX = (pageWidth - logoWidth) / 2;
-  pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-
-  pdf.setFontSize(18);
-  pdf.text(title, pageWidth / 2, 25, { align: 'center' });
-
-  pdf.setFontSize(10);
-  pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
-
-  pdf.setFontSize(9);
-  let yPos = 38;
-  if (filters.cycleId) {
-    const cycle = cycles.find(c => c.id === filters.cycleId);
-    pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
-    yPos += 5;
-  }
-  if (filters.classId) {
-    const cls = classes.find(c => c.id === filters.classId);
-    pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
-    yPos += 5;
-  }
-  pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
-
-  const tableElement = reportRef.current.querySelector('table');
-  if (tableElement) {
-    // Clona a tabela para não modificar a original
-    const tableClone = tableElement.cloneNode(true) as HTMLElement;
+    // Cabeçalho da tabela
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
     
-    // Aplica estilos para garantir que a tabela seja renderizada corretamente
-    tableClone.style.width = '100%';
-    tableClone.style.fontSize = '10px';
-    
-    // Cria um container temporário
+    const headers = ['Unidade', 'Aluno', 'Turma', 'Curso'];
+    if (reportData[0]?.classesTotal !== undefined) {
+      headers.push('Aulas', 'Assistidas', 'Freq.', 'Situação');
+    } else {
+      headers.push('Últimos Acessos', 'Situação');
+    }
+
+    headers.forEach(headerText => {
+      const th = document.createElement('th');
+      th.textContent = headerText;
+      th.style.padding = '8px 4px';
+      th.style.backgroundColor = '#f1f5f9';
+      th.style.border = '1px solid #e2e8f0';
+      th.style.textAlign = 'left';
+      th.style.fontWeight = 'bold';
+      th.style.fontSize = '10px';
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    tableElement.appendChild(thead);
+
+    // Corpo da tabela
+    const tbody = document.createElement('tbody');
+    reportData.forEach(row => {
+      const tr = document.createElement('tr');
+      
+      const cells = [
+        row.unitName,
+        row.studentName,
+        row.className,
+        row.courseName
+      ];
+
+      if (row.classesTotal !== undefined) {
+        cells.push(
+          row.classesTotal?.toString() || '',
+          row.classesAttended?.toString() || '',
+          `${row.attendancePercentage?.toFixed(1)}%`,
+          row.status
+        );
+      } else {
+        cells.push(
+          row.lastAccesses?.join(', ') || '-',
+          row.status
+        );
+      }
+
+      cells.forEach(cellText => {
+        const td = document.createElement('td');
+        td.textContent = cellText;
+        td.style.padding = '6px 4px';
+        td.style.border = '1px solid #e2e8f0';
+        td.style.fontSize = '9px';
+        
+        if (cellText === 'Frequente') {
+          td.style.color = '#166534';
+          td.style.fontWeight = 'bold';
+        } else if (cellText === 'Ausente') {
+          td.style.color = '#991b1b';
+          td.style.fontWeight = 'bold';
+        }
+        
+        tr.appendChild(td);
+      });
+      
+      tbody.appendChild(tr);
+    });
+    tableElement.appendChild(tbody);
+
+    // Container temporário
     const tempDiv = document.createElement('div');
     tempDiv.style.position = 'absolute';
     tempDiv.style.left = '-9999px';
     tempDiv.style.top = '0';
-    tempDiv.style.width = `${pageWidth * 3.78}px`; // Converte mm para px (aprox)
-    tempDiv.appendChild(tableClone);
+    tempDiv.style.width = `${contentWidth * 3.78}px`;
+    tempDiv.appendChild(tableElement);
     document.body.appendChild(tempDiv);
 
     try {
-      const canvas = await html2canvas(tableClone, {
+      // Renderizar tabela completa para medir altura
+      const canvas = await html2canvas(tableElement, {
         scale: 2,
-        useCORS: true,
         logging: false,
-        allowTaint: true,
         backgroundColor: '#ffffff',
       });
 
-      const imgData = canvas.toDataURL('image/png');
-      const imgWidth = pageWidth - 20;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      // Altura disponível para conteúdo (considerando margens)
-      const availableHeight = pageHeight - headerHeight - 10;
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+      const availableHeight = pageHeight - 40; // Espaço para cabeçalho e rodapé
       
-      // Se a imagem é maior que a página, dividir em partes
-      if (imgHeight > availableHeight) {
-        // Calcular quantas páginas serão necessárias
-        const numberOfPages = Math.ceil(imgHeight / availableHeight);
-        
-        for (let i = 0; i < numberOfPages; i++) {
-          // Adicionar nova página se não for a primeira
-          if (i > 0) {
-            pdf.addPage();
-          }
+      // Calcular número de páginas necessárias
+      const totalPages = Math.ceil(imgHeight / availableHeight);
+      
+      // Altura de cada linha (aproximadamente)
+      const rowHeight = imgHeight / (reportData.length + 1); // +1 para o cabeçalho
+      const rowsPerPage = Math.floor(availableHeight / rowHeight);
 
-          // Adicionar cabeçalho em cada página
-          pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-          pdf.setFontSize(18);
-          pdf.text(title, pageWidth / 2, 25, { align: 'center' });
-          pdf.setFontSize(10);
-          pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
-          pdf.setFontSize(9);
-          
-          // Reposicionar informações de filtros
-          let filterYPos = 38;
-          if (filters.cycleId) {
-            const cycle = cycles.find(c => c.id === filters.cycleId);
-            pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, filterYPos);
-            filterYPos += 5;
-          }
-          if (filters.classId) {
-            const cls = classes.find(c => c.id === filters.classId);
-            pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, filterYPos);
-            filterYPos += 5;
-          }
-          pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, filterYPos);
-          
-          // Calcular a posição Y para esta parte da tabela
-          const startY = headerHeight;
-          
-          // Recortar a imagem para mostrar apenas a parte correspondente a esta página
-          const sourceY = i * (canvas.height / numberOfPages);
-          const sourceHeight = canvas.height / numberOfPages;
-          
-          // Criar um novo canvas apenas com a parte da página atual
-          const pageCanvas = document.createElement('canvas');
-          pageCanvas.width = canvas.width;
-          pageCanvas.height = sourceHeight;
-          const ctx = pageCanvas.getContext('2d');
-          ctx?.drawImage(canvas, 0, sourceY, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
-          
-          const pageImgData = pageCanvas.toDataURL('image/png');
-          const pageImgHeight = (sourceHeight * imgWidth) / canvas.width;
-          
-          pdf.addImage(pageImgData, 'PNG', 10, startY, imgWidth, pageImgHeight);
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) {
+          pdf.addPage();
         }
-      } else {
-        // Se a tabela cabe em uma página
-        pdf.addImage(imgData, 'PNG', 10, headerHeight, imgWidth, imgHeight);
+
+        // Adicionar cabeçalho do relatório
+        pdf.addImage(logoImg, 'PNG', (pageWidth - 20) / 2, 5, 20, 15);
+        
+        pdf.setFontSize(16);
+        pdf.text('Relatório de Frequência', pageWidth / 2, 25, { align: 'center' });
+        
+        pdf.setFontSize(10);
+        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, pageWidth / 2, 32, { align: 'center' });
+
+        // Informações dos filtros
+        pdf.setFontSize(8);
+        let yFilter = 38;
+        
+        if (filters.cycleId) {
+          const cycle = cycles.find(c => c.id === filters.cycleId);
+          pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, margin, yFilter);
+        }
+        
+        if (filters.classId) {
+          const cls = classes.find(c => c.id === filters.classId);
+          pdf.text(`Turma: ${cls?.name || 'Todas'}`, margin + 60, yFilter);
+        }
+        
+        pdf.text(`Total: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, margin + 120, yFilter);
+
+        // Criar tabela para a página atual
+        const startRow = page * rowsPerPage;
+        const endRow = Math.min((page + 1) * rowsPerPage, reportData.length);
+        
+        const pageTable = document.createElement('table');
+        pageTable.style.width = '100%';
+        pageTable.style.borderCollapse = 'collapse';
+        pageTable.style.fontSize = '9px';
+        
+        // Adicionar cabeçalho
+        const pageThead = document.createElement('thead');
+        pageThead.appendChild(headerRow.cloneNode(true));
+        pageTable.appendChild(pageThead);
+        
+        // Adicionar linhas da página
+        const pageTbody = document.createElement('tbody');
+        for (let i = startRow; i < endRow; i++) {
+          const row = tbody.children[i - startRow].cloneNode(true);
+          pageTbody.appendChild(row);
+        }
+        pageTable.appendChild(pageTbody);
+
+        // Renderizar tabela da página
+        const pageDiv = document.createElement('div');
+        pageDiv.appendChild(pageTable);
+        document.body.appendChild(pageDiv);
+
+        const pageCanvas = await html2canvas(pageTable, {
+          scale: 2,
+          logging: false,
+          backgroundColor: '#ffffff',
+        });
+
+        const pageImgData = pageCanvas.toDataURL('image/png');
+        const pageImgHeight = (pageCanvas.height * contentWidth) / pageCanvas.width;
+        
+        pdf.addImage(pageImgData, 'PNG', margin, 45, contentWidth, pageImgHeight);
+
+        document.body.removeChild(pageDiv);
       }
     } finally {
-      // Remover o elemento temporário
       document.body.removeChild(tempDiv);
     }
-  }
 
-  pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
-};
+    pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
 
   const presentPercentage = stats.totalStudents > 0
     ? (stats.presentCount / stats.totalStudents) * 100
@@ -461,6 +512,7 @@ export function ReportsTab() {
             onClick={exportToXLSX}
             disabled={reportData.length === 0}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title={reportData.length === 0 ? "Não há dados para exportar" : "Exportar para Excel"}
           >
             <FileSpreadsheet className="w-5 h-5" />
             <span>Exportar XLSX</span>
@@ -469,6 +521,7 @@ export function ReportsTab() {
             onClick={exportToPDF}
             disabled={reportData.length === 0}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title={reportData.length === 0 ? "Não há dados para gerar PDF" : "Gerar PDF"}
           >
             <FileText className="w-5 h-5" />
             <span>Gerar PDF</span>
@@ -608,16 +661,16 @@ export function ReportsTab() {
             {stats.totalStudents > 0 && (
               <>
                 <div
-                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium"
+                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
                   style={{ width: `${presentPercentage}%` }}
                 >
-                  {presentPercentage > 10 && `${presentPercentage.toFixed(0)}%`}
+                  {presentPercentage > 8 && `${presentPercentage.toFixed(0)}%`}
                 </div>
                 <div
-                  className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium"
+                  className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
                   style={{ width: `${absentPercentage}%` }}
                 >
-                  {absentPercentage > 10 && `${absentPercentage.toFixed(0)}%`}
+                  {absentPercentage > 8 && `${absentPercentage.toFixed(0)}%`}
                 </div>
               </>
             )}
@@ -630,61 +683,61 @@ export function ReportsTab() {
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Unidade
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Nome do Aluno
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Turma
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Curso
                 </th>
                 {reportData[0]?.classesTotal !== undefined ? (
                   <>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Aulas Ministradas
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Aulas Assistidas
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Frequência
                     </th>
                   </>
                 ) : (
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                     Últimos Acessos
                   </th>
                 )}
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Situação
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {reportData.map((row, index) => (
-                <tr key={index} className="hover:bg-slate-50">
-                  <td className="px-6 py-2 text-sm text-slate-700">{row.unitName}</td>
-                  <td className="px-6 py-2 text-sm text-slate-800">{row.studentName}</td>
-                  <td className="px-6 py-2 text-sm text-slate-700">{row.className}</td>
-                  <td className="px-6 py-2 text-sm text-slate-700">{row.courseName}</td>
+                <tr key={index} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
+                  <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
                   {row.classesTotal !== undefined ? (
                     <>
-                      <td className="px-6 py-2 text-sm text-slate-700">{row.classesTotal}</td>
-                      <td className="px-6 py-2 text-sm text-slate-700">{row.classesAttended}</td>
-                      <td className="px-6 py-2 text-sm text-slate-700 font-medium">
+                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesTotal}</td>
+                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
+                      <td className="px-6 py-3 text-sm text-slate-700 font-medium">
                         {row.attendancePercentage?.toFixed(1)}%
                       </td>
                     </>
                   ) : (
-                    <td className="px-6 py-2 text-sm text-slate-700">
+                    <td className="px-6 py-3 text-sm text-slate-700">
                       {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
                     </td>
                   )}
-                  <td className="px-6 py-2">
+                  <td className="px-6 py-3">
                     <span
                       className={`px-2 py-1 rounded-full text-xs font-medium ${
                         row.status === 'Frequente'
@@ -699,7 +752,7 @@ export function ReportsTab() {
               ))}
               {reportData.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
