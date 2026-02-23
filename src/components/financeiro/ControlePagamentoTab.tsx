@@ -36,6 +36,28 @@ export function ControlePagamentoTab() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
   const { user } = useAuth();
 
+  // Função utilitária para formatar datas sem problemas de fuso horário
+  const formatDate = (dateString: string | undefined | null): string => {
+    if (!dateString) return '-';
+    
+    // Divide a string YYYY-MM-DD em partes e cria a data no horário local (meio-dia)
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day, 12, 0, 0);
+    
+    return date.toLocaleDateString('pt-BR');
+  };
+
+  // Função para criar data no formato ISO sem perder o dia por causa do fuso
+  const createISODate = (dateString: string): string => {
+    if (!dateString) return '';
+    
+    // Mantém a data no formato YYYY-MM-DD sem conversão de fuso
+    const [year, month, day] = dateString.split('-').map(Number);
+    // Cria a data no UTC meio-dia para garantir que ao salvar no banco não perca o dia
+    const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    return date.toISOString();
+  };
+
   const [formData, setFormData] = useState({
     unit_name: '',
     cnpj_cpf: '',
@@ -60,6 +82,7 @@ export function ControlePagamentoTab() {
   const updateOverdueInvoices = async () => {
     if (!user) return;
 
+    // Criar data atual no início do dia no horário local
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -72,8 +95,9 @@ export function ControlePagamentoTab() {
 
     if (overdueInvoices) {
       for (const invoice of overdueInvoices) {
-        const dueDate = new Date(invoice.due_date);
-        dueDate.setHours(0, 0, 0, 0);
+        // Criar data de vencimento usando o mesmo método para evitar problemas de fuso
+        const [year, month, day] = invoice.due_date.split('-').map(Number);
+        const dueDate = new Date(year, month - 1, day, 0, 0, 0);
 
         const oneDayAfterDue = new Date(dueDate);
         oneDayAfterDue.setDate(oneDayAfterDue.getDate() + 1);
@@ -147,6 +171,11 @@ export function ControlePagamentoTab() {
 
     let invoiceId = editingInvoice?.id;
 
+    // Converter as datas para ISO string mantendo o dia correto
+    const issueDateISO = createISODate(formData.issue_date);
+    const dueDateISO = createISODate(formData.due_date);
+    const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
+
     if (editingInvoice) {
       const { error } = await supabase
         .from('invoices')
@@ -157,11 +186,11 @@ export function ControlePagamentoTab() {
           exercise_year: formData.exercise_year,
           document_type: formData.document_type,
           invoice_number: formData.invoice_number,
-          issue_date: formData.issue_date,
-          due_date: formData.due_date,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
           net_value: parseFloat(formData.net_value),
           payment_status: formData.payment_status,
-          payment_date: formData.payment_date || null,
+          payment_date: paymentDateISO,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
           estado: formData.estado,
           updated_at: new Date().toISOString(),
@@ -188,11 +217,11 @@ export function ControlePagamentoTab() {
           exercise_year: formData.exercise_year,
           document_type: formData.document_type,
           invoice_number: formData.invoice_number,
-          issue_date: formData.issue_date,
-          due_date: formData.due_date,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
           net_value: parseFloat(formData.net_value),
           payment_status: formData.payment_status,
-          payment_date: formData.payment_date || null,
+          payment_date: paymentDateISO,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
           estado: formData.estado,
         },
@@ -258,11 +287,11 @@ export function ControlePagamentoTab() {
       exercise_year: invoice.exercise_year,
       document_type: invoice.document_type,
       invoice_number: invoice.invoice_number,
-      issue_date: invoice.issue_date,
-      due_date: invoice.due_date,
+      issue_date: invoice.issue_date.split('T')[0], // Pega apenas a parte da data
+      due_date: invoice.due_date.split('T')[0],
       net_value: invoice.net_value.toString(),
       payment_status: invoice.payment_status,
-      payment_date: invoice.payment_date || '',
+      payment_date: invoice.payment_date?.split('T')[0] || '',
       paid_value: invoice.paid_value?.toString() || '',
       estado: invoice.estado || 'MA',
     });
@@ -429,13 +458,13 @@ export function ControlePagamentoTab() {
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.invoice_number}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {new Date(invoice.issue_date).toLocaleDateString('pt-BR')}
+                    {formatDate(invoice.issue_date)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {new Date(invoice.due_date).toLocaleDateString('pt-BR')}
+                    {formatDate(invoice.due_date)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {invoice.payment_date ? new Date(invoice.payment_date).toLocaleDateString('pt-BR') : '-'}
+                    {formatDate(invoice.payment_date)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
                     R$ {Number(invoice.net_value).toFixed(2)}
@@ -481,7 +510,7 @@ export function ControlePagamentoTab() {
               ))}
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
                     Nenhuma nota fiscal encontrada
                   </td>
                 </tr>
