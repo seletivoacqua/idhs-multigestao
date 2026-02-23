@@ -107,7 +107,6 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('classes')
       .select('id, name')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
@@ -124,8 +123,7 @@ export function ReportsTab() {
     let classesQuery = supabase
       .from('classes')
       .select('*, courses(name, modality)')
-      .eq('user_id', user.id);
-
+    
     if (filters.cycleId) {
       classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
     }
