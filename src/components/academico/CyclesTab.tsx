@@ -1262,10 +1262,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
     if (isCycleActive) {
       return {
-        status: 'Em Andamento',
-        color: 'bg-blue-100 text-blue-800',
+        status: 'Matriculado',
+        color: 'bg-slate-100 text-slate-800',
         canCertify: false,
-        message: 'Ciclo em andamento'
+        message: 'Aluno matriculado'
       };
     }
 
@@ -1634,10 +1634,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                                     student.isPresent
                                       ? 'bg-green-100 text-green-800'
-                                      : 'bg-yellow-100 text-yellow-800'
+                                      : 'bg-slate-100 text-slate-800'
                                   }`}
                                 >
-                                  {student.isPresent ? 'Aprovado' : 'Em andamento'}
+                                  {student.isPresent ? 'Aprovado' : 'Matriculado'}
                                 </span>
                               )}
                             </td>
@@ -1691,8 +1691,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   <Award className="w-5 h-5" />
                                   <span>Emitir</span>
                                 </button>
-                              ) : situation.status === 'Em Andamento' ? (
-                                <span className="text-blue-500 font-medium text-sm">
+                              ) : situation.status === 'Matriculado' ? (
+                                <span className="text-slate-500 font-medium text-sm">
                                   Aguardando fim do ciclo
                                 </span>
                               ) : (

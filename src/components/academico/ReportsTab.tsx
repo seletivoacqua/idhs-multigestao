@@ -226,10 +226,10 @@ export function ReportsTab() {
         videoClassIds.length > 0 ? (async () => {
           let query = supabase
             .from('attendance')
-            .select('class_id, student_id, status')
+            .select('class_id, student_id, present')
             .in('class_id', videoClassIds)
             .in('student_id', studentIds)
-            .eq('status', 'present');
+            .eq('present', true);
 
           if (filters.startDate) query = query.gte('class_date', filters.startDate);
           if (filters.endDate) query = query.lte('class_date', filters.endDate);
@@ -240,7 +240,7 @@ export function ReportsTab() {
 
         eadClassIds.length > 0 ? (async () => {
           const { data } = await supabase
-            .from('ead_class_access')
+            .from('ead_access')
             .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
             .in('class_id', eadClassIds)
             .in('student_id', studentIds);
