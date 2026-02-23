@@ -23,15 +23,14 @@ interface Class {
 }
 
 interface ReportData {
-  studentName: string;
   unitName: string;
+  studentName: string;
   courseName: string;
-  className: string;
-  classesTotal?: number;
-  classesAttended?: number;
-  attendancePercentage?: number;
-  lastAccesses?: string[];
-  status: 'Frequente' | 'Ausente';
+  modality: string;               // NOVO
+  classesAttended: number;         // AULAS ASSISTIDAS (sempre presente)
+  accesses: string;                // ACESSOS (formatado como string)
+  frequency: string;               // FREQUENCIA (ex: "75%", "Sim/Não", etc.)
+  status: 'Frequente' | 'Ausente'; // mantido para consistência
 }
 
 export function ReportsTab() {
@@ -172,7 +171,14 @@ export function ReportsTab() {
           }
         }
 
+        // Inicializa variáveis
+        let classesAttended = 0;
+        let accessesArray: string[] = [];
+        let frequency = '';
+        let status: 'Frequente' | 'Ausente' = 'Ausente';
+
         if (cls.modality === 'VIDEOCONFERENCIA') {
+          // Busca attendance
           let attendanceQuery = supabase
             .from('attendance')
             .select('*')
@@ -190,20 +196,15 @@ export function ReportsTab() {
 
           const { data: attendanceData } = await attendanceQuery;
 
-          const attendedCount = attendanceData?.length || 0;
-          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
+          classesAttended = attendanceData?.length || 0;
+          const percentage = cls.total_classes > 0 ? (classesAttended / cls.total_classes) * 100 : 0;
+          frequency = `${percentage.toFixed(1)}%`;
+          status = percentage >= 60 ? 'Frequente' : 'Ausente';
 
-          allReportData.push({
-            studentName: cs.students.full_name,
-            unitName: unitName,
-            courseName: cls.courses.name,
-            className: cls.name,
-            classesTotal: cls.total_classes,
-            classesAttended: attendedCount,
-            attendancePercentage: percentage,
-            status: percentage >= 60 ? 'Frequente' : 'Ausente',
-          });
+          // Para videoconferência, acessos não se aplicam (ou poderiam ser opcionais)
+          accessesArray = [];
         } else {
+          // EAD – busca acessos
           const { data: accessData } = await supabase
             .from('ead_access')
             .select('*')
@@ -211,33 +212,40 @@ export function ReportsTab() {
             .eq('student_id', cs.student_id)
             .maybeSingle();
 
-          let accesses = [
+          accessesArray = [
             accessData?.access_date_1,
             accessData?.access_date_2,
             accessData?.access_date_3,
-          ].filter(Boolean);
+          ].filter(Boolean).map((d) =>
+            d ? new Date(d).toLocaleDateString('pt-BR') : ''
+          );
 
           if (filters.startDate || filters.endDate) {
-            accesses = accesses.filter((d) => {
+            accessesArray = accessesArray.filter((d) => {
               if (!d) return false;
-              const accessDate = new Date(d);
+              const accessDate = new Date(d.split('/').reverse().join('-')); // converte de volta para Date
               if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
               if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
               return true;
             });
           }
 
-          allReportData.push({
-            studentName: cs.students.full_name,
-            unitName: unitName,
-            courseName: cls.courses.name,
-            className: cls.name,
-            lastAccesses: accesses.map((d) =>
-              d ? new Date(d).toLocaleDateString('pt-BR') : ''
-            ),
-            status: accesses.length > 0 ? 'Frequente' : 'Ausente',
-          });
+          // Para EAD, consideramos que o aluno é frequente se tiver pelo menos um acesso no período
+          classesAttended = accessesArray.length; // opcional, pode ser tratado como "acessos realizados"
+          frequency = accessesArray.length > 0 ? 'Sim' : 'Não'; // ou outra lógica
+          status = accessesArray.length > 0 ? 'Frequente' : 'Ausente';
         }
+
+        allReportData.push({
+          unitName,
+          studentName: cs.students.full_name,
+          courseName: cls.courses.name,
+          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+          classesAttended,
+          accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
+          frequency,
+          status,
+        });
       }
     }
 
@@ -256,30 +264,17 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso'];
+    const headers = ['UNIDADE', 'ALUNO', 'CURSO', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
 
-    if (reportData[0]?.classesTotal !== undefined) {
-      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)', 'Situação');
-    } else {
-      headers.push('Últimos Acessos', 'Situação');
-    }
-
-    const rows = reportData.map((row) => {
-      const base = [row.unitName, row.studentName, row.className, row.courseName];
-
-      if (row.classesTotal !== undefined) {
-        base.push(
-          row.classesTotal?.toString() || '',
-          row.classesAttended?.toString() || '',
-          row.attendancePercentage?.toFixed(1) || '',
-          row.status
-        );
-      } else {
-        base.push(row.lastAccesses?.join(', ') || '', row.status);
-      }
-
-      return base;
-    });
+    const rows = reportData.map((row) => [
+      row.unitName,
+      row.studentName,
+      row.courseName,
+      row.modality,
+      row.classesAttended.toString(),
+      row.accesses,
+      row.frequency,
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
@@ -374,12 +369,7 @@ export function ReportsTab() {
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     
-    const headers = ['Unidade', 'Aluno', 'Turma', 'Curso'];
-    if (reportData[0]?.classesTotal !== undefined) {
-      headers.push('Aulas', 'Assistidas', 'Freq.', 'Situação');
-    } else {
-      headers.push('Últimos Acessos', 'Situação');
-    }
+    const headers = ['UNIDADE', 'ALUNO', 'CURSO', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
 
     headers.forEach(headerText => {
       const th = document.createElement('th');
@@ -403,23 +393,12 @@ export function ReportsTab() {
       const cells = [
         row.unitName,
         row.studentName,
-        row.className,
-        row.courseName
+        row.courseName,
+        row.modality,
+        row.classesAttended.toString(),
+        row.accesses,
+        row.frequency,
       ];
-
-      if (row.classesTotal !== undefined) {
-        cells.push(
-          row.classesTotal?.toString() || '',
-          row.classesAttended?.toString() || '',
-          `${row.attendancePercentage?.toFixed(1)}%`,
-          row.status
-        );
-      } else {
-        cells.push(
-          row.lastAccesses?.join(', ') || '-',
-          row.status
-        );
-      }
 
       cells.forEach(cellText => {
         const td = document.createElement('td');
@@ -428,14 +407,7 @@ export function ReportsTab() {
         td.style.border = '1px solid #e2e8f0';
         td.style.fontSize = '9px';
         
-        if (cellText === 'Frequente') {
-          td.style.color = '#166534';
-          td.style.fontWeight = 'bold';
-        } else if (cellText === 'Ausente') {
-          td.style.color = '#991b1b';
-          td.style.fontWeight = 'bold';
-        }
-        
+        // Opcional: destaque para status
         tr.appendChild(td);
       });
       
@@ -509,7 +481,7 @@ export function ReportsTab() {
         
         pdf.setFontSize(16);
         pdf.setTextColor(30, 41, 59);
-        pdf.text('Relatório de Frequência', pageWidth / 2, 25, { align: 'center' });
+        pdf.text('Relatório de Frequência e Acessos', pageWidth / 2, 25, { align: 'center' });
         
         pdf.setFontSize(10);
         pdf.setTextColor(71, 85, 105);
@@ -830,36 +802,25 @@ export function ReportsTab() {
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Unidade
+                  UNIDADE
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Nome do Aluno
+                  ALUNO
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Turma
+                  CURSO
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Curso
+                  MODALIDADE
                 </th>
-                {reportData[0]?.classesTotal !== undefined ? (
-                  <>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Aulas Ministradas
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Aulas Assistidas
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Frequência
-                    </th>
-                  </>
-                ) : (
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                    Últimos Acessos
-                  </th>
-                )}
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Situação
+                  AULAS ASSISTIDAS
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  ACESSOS
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  FREQUENCIA
                 </th>
               </tr>
             </thead>
@@ -868,37 +829,16 @@ export function ReportsTab() {
                 <tr key={index} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
                   <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
-                  <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
                   <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
-                  {row.classesTotal !== undefined ? (
-                    <>
-                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesTotal}</td>
-                      <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
-                      <td className="px-6 py-3 text-sm text-slate-700 font-medium">
-                        {row.attendancePercentage?.toFixed(1)}%
-                      </td>
-                    </>
-                  ) : (
-                    <td className="px-6 py-3 text-sm text-slate-700">
-                      {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
-                    </td>
-                  )}
-                  <td className="px-6 py-3">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        row.status === 'Frequente'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {row.status}
-                    </span>
-                  </td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.modality}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.accesses}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.frequency}</td>
                 </tr>
               ))}
               {reportData.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
