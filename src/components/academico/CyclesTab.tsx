@@ -58,6 +58,128 @@ function validateEADAccess(access_date_1: string | null, access_date_2: string |
   return uniqueMonths.size === 3;
 }
 
+// Função para calcular e atualizar o status do aluno no banco
+async function updateStudentStatus(classId: string, studentId: string, classData?: any, studentData?: any) {
+  try {
+    // Buscar dados se não fornecidos
+    if (!classData) {
+      const { data } = await supabase
+        .from('classes')
+        .select('*, cycles(*)')
+        .eq('id', classId)
+        .single();
+      classData = data;
+    }
+
+    if (!studentData) {
+      const { data } = await supabase
+        .from('class_students')
+        .select('*')
+        .eq('class_id', classId)
+        .eq('student_id', studentId)
+        .single();
+      studentData = data;
+    }
+
+    // Buscar ciclo
+    const { data: cycleData } = await supabase
+      .from('cycles')
+      .select('*')
+      .eq('id', classData.cycle_id)
+      .single();
+
+    const today = new Date().toISOString().split('T')[0];
+    const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
+
+    let currentStatus = 'em_andamento';
+
+    // Se o ciclo não estiver mais ativo, calcular status final
+    if (!isCycleActive) {
+      if (classData.modality === 'VIDEOCONFERENCIA') {
+        // Calcular frequência para videoconferência
+        let totalClasses = classData.total_classes;
+        let presentCount = 0;
+
+        const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
+        const isExceptional = studentData?.enrollment_type === 'exceptional' && enrollmentDate > cycleData?.start_date;
+
+        // Buscar presenças
+        let query = supabase
+          .from('attendance')
+          .select('*', { count: 'exact', head: true })
+          .eq('class_id', classId)
+          .eq('student_id', studentId)
+          .eq('present', true);
+
+        if (isExceptional && enrollmentDate) {
+          query = query.gte('class_date', enrollmentDate);
+        }
+
+        const { count } = await query;
+        presentCount = count || 0;
+
+        const percentage = totalClasses > 0 ? (presentCount / totalClasses) * 100 : 0;
+        currentStatus = percentage >= 60 ? 'aprovado' : 'reprovado';
+      } else {
+        // Validar EAD
+        const { data: accessData } = await supabase
+          .from('ead_access')
+          .select('*')
+          .eq('class_id', classId)
+          .eq('student_id', studentId)
+          .single();
+
+        const isPresent = validateEADAccess(
+          accessData?.access_date_1,
+          accessData?.access_date_2,
+          accessData?.access_date_3
+        );
+
+        currentStatus = isPresent ? 'aprovado' : 'reprovado';
+      }
+    }
+
+    // Atualizar status no banco
+    await supabase
+      .from('class_students')
+      .update({
+        current_status: currentStatus,
+        status_updated_at: new Date().toISOString()
+      })
+      .eq('class_id', classId)
+      .eq('student_id', studentId);
+
+    return currentStatus;
+  } catch (error) {
+    console.error('Error updating student status:', error);
+    return null;
+  }
+}
+
+// Função para atualizar status de todos os alunos de uma turma
+async function updateAllStudentsStatus(classId: string) {
+  try {
+    const { data: classData } = await supabase
+      .from('classes')
+      .select('*, cycles(*)')
+      .eq('id', classId)
+      .single();
+
+    const { data: students } = await supabase
+      .from('class_students')
+      .select('student_id, enrollment_date, enrollment_type')
+      .eq('class_id', classId);
+
+    if (!students) return;
+
+    for (const student of students) {
+      await updateStudentStatus(classId, student.student_id, classData, student);
+    }
+  } catch (error) {
+    console.error('Error updating all students status:', error);
+  }
+}
+
 export function CyclesTab() {
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -183,6 +305,9 @@ export function CyclesTab() {
 
     if (classes) {
       for (const cls of classes) {
+        // Atualizar status de todos os alunos antes de fechar a turma
+        await updateAllStudentsStatus(cls.id);
+        
         const { error } = await supabase
           .from('classes')
           .update({ status: 'closed' })
@@ -752,6 +877,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     </div>
   );
 }
+
 interface ClassManagementModalProps {
   classData: Class;
   onClose: () => void;
@@ -770,6 +896,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
+  const [cycleEndDate, setCycleEndDate] = useState<string>('');
+  const [cycleStatus, setCycleStatus] = useState<string>('');
   const { user } = useAuth();
 
   useEffect(() => {
@@ -781,7 +909,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const loadCycleData = async () => {
     const { data, error } = await supabase
       .from('cycles')
-      .select('start_date')
+      .select('start_date, end_date, status')
       .eq('id', classData.cycle_id)
       .single();
 
@@ -792,6 +920,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
     if (data) {
       setCycleStartDate(data.start_date);
+      setCycleEndDate(data.end_date);
+      setCycleStatus(data.status);
     }
   };
 
@@ -813,14 +943,12 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
           let adjustedPresentCount = 0;
           let isProportionalCalculation = false;
 
-          // Check if student enrolled after cycle start date
           const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
           const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
 
           if (isEnrolledAfterCycleStart) {
             isProportionalCalculation = true;
 
-            // Get all unique class dates from attendance records for this class
             const { data: allClassDates } = await supabase
               .from('attendance')
               .select('class_date')
@@ -828,16 +956,13 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
               .order('class_date');
 
             if (allClassDates && allClassDates.length > 0) {
-              // Get unique class dates
               const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
 
-              // Count classes that occurred on or after enrollment date
               const classesAfterEnrollment = uniqueClassDates.filter(
                 (date) => date >= enrollmentDate
               );
               totalClasses = classesAfterEnrollment.length || classData.total_classes;
 
-              // Count present days for this student on or after enrollment date
               const { count: presentAfterEnrollment } = await supabase
                 .from('attendance')
                 .select('*', { count: 'exact', head: true })
@@ -848,12 +973,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
               adjustedPresentCount = presentAfterEnrollment || 0;
             } else {
-              // No attendance records yet
               adjustedPresentCount = 0;
               totalClasses = classData.total_classes;
             }
           } else {
-            // Regular enrollment - enrolled before or on cycle start date
             const { count: presentCount } = await supabase
               .from('attendance')
               .select('*', { count: 'exact', head: true })
@@ -953,6 +1076,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       student_id: studentId,
       enrollment_type: enrollmentType,
       enrollment_date: enrollmentDate,
+      current_status: 'em_andamento',
+      status_updated_at: new Date().toISOString(),
     }));
 
     const { error } = await supabase.from('class_students').insert(studentsToEnroll);
@@ -999,6 +1124,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   const handleCloseClass = async () => {
     if (!confirm('Tem certeza que deseja encerrar esta turma? Esta ação não pode ser desfeita.')) return;
+
+    // Atualizar status de todos os alunos antes de fechar
+    await updateAllStudentsStatus(classData.id);
 
     const { error } = await supabase
       .from('classes')
@@ -1127,9 +1255,40 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setCertificateData(null);
   };
 
+  const getStudentSituation = (student: any) => {
+    const today = new Date().toISOString().split('T')[0];
+    const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+
+    if (isCycleActive) {
+      return {
+        status: 'Em Andamento',
+        color: 'bg-blue-100 text-blue-800',
+        canCertify: false,
+        message: 'Ciclo em andamento'
+      };
+    }
+
+    if (classData.modality === 'VIDEOCONFERENCIA') {
+      const isApproved = student.attendancePercentage >= 60;
+      return {
+        status: isApproved ? 'Aprovado' : 'Reprovado',
+        color: isApproved ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+        canCertify: isApproved,
+        message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
+      };
+    } else {
+      const isApproved = student.isPresent;
+      return {
+        status: isApproved ? 'Aprovado' : 'Reprovado',
+        color: isApproved ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+        canCertify: isApproved,
+        message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
+      };
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      {/* MODAL PRINCIPAL - AUMENTADO */}
       <div className="bg-white rounded-xl shadow-xl w-[95vw] max-w-[1400px] p-6 my-8 max-h-[85vh] overflow-y-auto">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -1197,7 +1356,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
           </nav>
         </div>
 
-        {/* CONTEÚDO DAS ABAS COM MAIOR ALTURA */}
         <div className="min-h-[500px]">
           {tab === 'students' && (
             <div className="space-y-6">
@@ -1261,48 +1419,52 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             student.students.cpf?.toLowerCase().includes(search)
                           );
                         })
-                        .map((student) => (
-                        <tr key={student.id} className="hover:bg-slate-50">
-                          <td className="px-6 py-4 text-sm text-slate-800">
-                            <div className="font-medium">{student.students.full_name}</div>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-slate-600">
-                            {student.students.cpf || '-'}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                              student.enrollment_type === 'exceptional'
-                                ? 'bg-amber-100 text-amber-800'
-                                : 'bg-blue-100 text-blue-800'
-                            }`}>
-                              {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
-                            </span>
-                            {student.enrollment_date && (
-                              <div className="text-xs text-slate-500 mt-1">
-                                Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
-                              </div>
-                            )}
-                            {student.isProportionalCalculation && (
-                              <div className="text-xs text-amber-600 mt-1 font-medium">
-                                Cálculo proporcional aplicado
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                              Matriculado
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm">
-                            <button
-                              onClick={() => handleRemoveStudent(student.student_id)}
-                              className="text-red-600 hover:text-red-800 font-medium px-3 py-1 hover:bg-red-50 rounded"
-                            >
-                              Remover
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                        .map((student) => {
+                        const situation = getStudentSituation(student);
+                        
+                        return (
+                          <tr key={student.id} className="hover:bg-slate-50">
+                            <td className="px-6 py-4 text-sm text-slate-800">
+                              <div className="font-medium">{student.students.full_name}</div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600">
+                              {student.students.cpf || '-'}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                                student.enrollment_type === 'exceptional'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
+                              </span>
+                              {student.enrollment_date && (
+                                <div className="text-xs text-slate-500 mt-1">
+                                  Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                                </div>
+                              )}
+                              {student.isProportionalCalculation && (
+                                <div className="text-xs text-amber-600 mt-1 font-medium">
+                                  Cálculo proporcional aplicado
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${situation.color}`}>
+                                {situation.status}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              <button
+                                onClick={() => handleRemoveStudent(student.student_id)}
+                                className="text-red-600 hover:text-red-800 font-medium px-3 py-1 hover:bg-red-50 rounded"
+                              >
+                                Remover
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {students.length === 0 && (
                         <tr>
                           <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
@@ -1371,10 +1533,22 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                     <p className="text-2xl font-bold text-amber-800">{classData.total_classes}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-amber-700">Status</p>
-                    <p className="text-2xl font-bold text-amber-800">Ativo</p>
+                    <p className="text-sm text-amber-700">Status do Ciclo</p>
+                    <p className="text-2xl font-bold text-amber-800">
+                      {cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
+                    </p>
                   </div>
                 </div>
+                
+                {cycleStatus === 'active' && (
+                  <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-800">
+                      <strong>⚠️ Atenção:</strong> Este ciclo ainda está ativo. 
+                      As situações abaixo são baseadas na frequência atual, 
+                      mas podem mudar até o encerramento do ciclo.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="mb-4">
@@ -1402,6 +1576,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                           {classData.modality === 'EAD' ? 'Status de Acesso' : 'Frequência'}
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                          Situação
+                        </th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                           Detalhes
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
@@ -1417,11 +1594,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                           return student.students.full_name.toLowerCase().includes(search);
                         })
                         .map((student) => {
-                        const canCertify =
-                          classData.modality === 'VIDEOCONFERENCIA'
-                            ? student.attendancePercentage >= 60
-                            : student.isPresent;
-
+                        const situation = getStudentSituation(student);
+                        
                         return (
                           <tr key={student.id} className="hover:bg-slate-50">
                             <td className="px-6 py-4 text-sm text-slate-800">
@@ -1435,6 +1609,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                       className={`h-2.5 rounded-full ${
                                         student.attendancePercentage >= 60
                                           ? 'bg-green-500'
+                                          : student.attendancePercentage > 0
+                                          ? 'bg-yellow-500'
                                           : 'bg-red-500'
                                       }`}
                                       style={{ width: `${Math.min(student.attendancePercentage, 100)}%` }}
@@ -1444,6 +1620,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                     className={`font-semibold ${
                                       student.attendancePercentage >= 60
                                         ? 'text-green-700'
+                                        : student.attendancePercentage > 0
+                                        ? 'text-yellow-700'
                                         : 'text-red-700'
                                     }`}
                                   >
@@ -1455,12 +1633,17 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                                     student.isPresent
                                       ? 'bg-green-100 text-green-800'
-                                      : 'bg-red-100 text-red-800'
+                                      : 'bg-yellow-100 text-yellow-800'
                                   }`}
                                 >
-                                  {student.isPresent ? 'Aprovado (3 acessos em meses distintos)' : 'Reprovado'}
+                                  {student.isPresent ? 'Aprovado' : 'Em andamento'}
                                 </span>
                               )}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${situation.color}`}>
+                                {situation.status}
+                              </span>
                             </td>
                             <td className="px-6 py-4 text-sm text-slate-600">
                               {classData.modality === 'VIDEOCONFERENCIA' ? (
@@ -1470,7 +1653,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   </span>
                                   <span className="text-xs text-slate-500">
                                     {student.isProportionalCalculation && student.enrollment_date
-                                      ? `Matrícula após início do ciclo - cálculo proporcional (desde ${new Date(student.enrollment_date).toLocaleDateString('pt-BR')})`
+                                      ? `Matrícula: ${new Date(student.enrollment_date).toLocaleDateString('pt-BR')}`
                                       : 'Presenças registradas'}
                                   </span>
                                 </div>
@@ -1484,13 +1667,15 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                     ].filter(Boolean).length} de 3 acessos
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    {student.isPresent ? 'Acessos em meses distintos' : 'Necessário 3 acessos em meses diferentes'}
+                                    {student.isPresent 
+                                      ? 'Acessos em meses distintos' 
+                                      : 'Necessário 3 acessos em meses diferentes'}
                                   </span>
                                 </div>
                               )}
                             </td>
                             <td className="px-6 py-4">
-                              {canCertify ? (
+                              {situation.canCertify ? (
                                 <button
                                   onClick={() =>
                                     handleIssueCertificate(
@@ -1505,6 +1690,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   <Award className="w-5 h-5" />
                                   <span>Emitir</span>
                                 </button>
+                              ) : situation.status === 'Em Andamento' ? (
+                                <span className="text-blue-500 font-medium text-sm">
+                                  Aguardando fim do ciclo
+                                </span>
                               ) : (
                                 <span className="text-slate-400 font-medium text-sm">
                                   Não elegível
@@ -1520,15 +1709,25 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
               </div>
 
               <div className="pt-6 border-t border-slate-200">
-                <button
-                  onClick={handleCloseClass}
-                  className="w-full px-6 py-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-bold text-lg shadow-md"
-                >
-                  Encerrar Turma e Finalizar Ciclo
-                </button>
-                <p className="text-sm text-slate-500 text-center mt-3">
-                  Ao encerrar a turma, não será possível adicionar novas aulas ou alunos
-                </p>
+                {cycleStatus === 'active' ? (
+                  <>
+                    <button
+                      onClick={handleCloseClass}
+                      className="w-full px-6 py-4 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors font-bold text-lg shadow-md"
+                    >
+                      Encerrar Turma e Finalizar Ciclo
+                    </button>
+                    <p className="text-sm text-slate-500 text-center mt-3">
+                      Ao encerrar a turma, as situações dos alunos serão calculadas definitivamente
+                    </p>
+                  </>
+                ) : (
+                  <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
+                    <p className="text-green-800 font-medium">
+                      ✅ Ciclo encerrado - todas as situações estão consolidadas
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1674,7 +1873,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
   const handleSaveAttendance = async () => {
     if (!confirm('Salvar frequência para esta aula?')) return;
 
-    // Validate that the date is not empty
     if (!classDate) {
       alert('Por favor, selecione uma data para a aula');
       return;
@@ -1695,6 +1893,9 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
         ],
         { onConflict: 'class_id,student_id,class_number' }
       );
+
+      // Atualizar status do aluno após registrar presença
+      await updateStudentStatus(classData.id, student.student_id, classData, student);
     }
 
     alert('Frequência registrada com sucesso!');
@@ -1731,7 +1932,7 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
-            Data da Aula <span className="text-xs text-slate-500">(permite datas retroativas)</span>
+            Data da Aula
           </label>
           <input
             type="date"
@@ -1915,6 +2116,9 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
+    // Atualizar status do aluno após editar frequência
+    await updateStudentStatus(classData.id, student.student_id, classData, student);
+
     setEditingRecord(null);
     setEditData(null);
     loadAttendanceRecords();
@@ -1940,11 +2144,13 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
+    // Atualizar status do aluno após deletar frequência
+    await updateStudentStatus(classData.id, student.student_id, classData, student);
+
     loadAttendanceRecords();
     alert('Frequência excluída com sucesso!');
   };
 
-  // Calculate percentage based on enrollment date vs cycle start date
   let totalClassesForStudent = classData.total_classes;
   let percentage = 0;
   let presentCount = 0;
@@ -1956,16 +2162,13 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   if (isEnrolledAfterCycleStart && attendanceRecords.length > 0) {
     isProportionalCalculation = true;
 
-    // Count only classes that occurred on or after enrollment date
     const classesAfterEnrollment = attendanceRecords.filter(
       r => r.class_date >= enrollmentDate
     );
     totalClassesForStudent = classesAfterEnrollment.length || classData.total_classes;
 
-    // Count present records on or after enrollment date
     presentCount = attendanceRecords.filter(r => r.present && r.class_date >= enrollmentDate).length;
   } else {
-    // Regular calculation - all attendance records
     presentCount = attendanceRecords.filter(r => r.present).length;
   }
 
@@ -2160,6 +2363,9 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         { onConflict: 'class_id,student_id' }
       );
 
+    // Atualizar status do aluno após registrar acesso
+    await updateStudentStatus(classData.id, studentId, classData);
+
     alert('Acessos atualizados!');
     onUpdate();
   };
@@ -2186,6 +2392,9 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             ],
             { onConflict: 'class_id,student_id' }
           );
+
+        // Atualizar status do aluno
+        await updateStudentStatus(classData.id, student.student_id, classData);
       }
     }
     
@@ -2273,17 +2482,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                             },
                           })
                         }
-                        onPaste={(e) => {
-                          e.preventDefault();
-                          const pastedText = e.clipboardData.getData('text');
-                          setAccessData({
-                            ...accessData,
-                            [student.student_id]: {
-                              ...accessData[student.student_id],
-                              [`access_date_${num}`]: pastedText,
-                            },
-                          });
-                        }}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                       />
                     </td>
