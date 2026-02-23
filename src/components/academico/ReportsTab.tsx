@@ -58,15 +58,13 @@ interface ReportData {
   studentName: string;
   unitId: string;
   unitName: string;
-  courseId: string;
-  courseName: string;
   classId: string;
   className: string;
   classModality: string;
   totalClasses: number;
   attendedClasses: number;
   attendancePercentage: number;
-  lastAccesses: string[];
+  lastAccesses: Array<{ date: string; formatted: string }>;
   currentStatus: 'em_andamento' | 'aprovado' | 'reprovado';
   displayStatus: string;
   cycleStatus: string;
@@ -90,7 +88,7 @@ export function ReportsTab() {
   const [isExporting, setIsExporting] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
-    pageSize: 50,
+    pageSize: 1000,
     total: 0,
     totalPages: 0,
   });
@@ -171,10 +169,6 @@ export function ReportsTab() {
             total_classes,
             course_id,
             cycle_id,
-            courses!inner (
-              id,
-              name
-            ),
             cycles!inner (
               id,
               name,
@@ -323,8 +317,6 @@ export function ReportsTab() {
             studentName: student.full_name,
             unitId: student.unit_id,
             unitName,
-            courseId: cls.course_id,
-            courseName: cls.courses.name,
             classId: cls.id,
             className: cls.name,
             classModality: cls.modality,
@@ -342,17 +334,41 @@ export function ReportsTab() {
           const key = `${cls.id}_${student.id}`;
           const access = eadMap.get(key);
 
-          const accesses = [
-            access?.access_date_1,
-            access?.access_date_2,
-            access?.access_date_3,
-          ].filter(Boolean);
+          // Coletar todos os acessos que existem
+          const accesses = [];
+          
+          if (access?.access_date_1) {
+            const date = new Date(access.access_date_1);
+            accesses.push({
+              date: access.access_date_1,
+              formatted: date.toLocaleDateString('pt-BR')
+            });
+          }
+          
+          if (access?.access_date_2) {
+            const date = new Date(access.access_date_2);
+            accesses.push({
+              date: access.access_date_2,
+              formatted: date.toLocaleDateString('pt-BR')
+            });
+          }
+          
+          if (access?.access_date_3) {
+            const date = new Date(access.access_date_3);
+            accesses.push({
+              date: access.access_date_3,
+              formatted: date.toLocaleDateString('pt-BR')
+            });
+          }
+
+          // Ordenar acessos por data (mais recente primeiro)
+          accesses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
           // Filtrar acessos por data se necessário
           let filteredAccesses = accesses;
           if (filters.startDate || filters.endDate) {
-            filteredAccesses = accesses.filter((d: string) => {
-              const accessDate = new Date(d);
+            filteredAccesses = accesses.filter(access => {
+              const accessDate = new Date(access.date);
               if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
               if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
               return true;
@@ -364,15 +380,13 @@ export function ReportsTab() {
             studentName: student.full_name,
             unitId: student.unit_id,
             unitName,
-            courseId: cls.course_id,
-            courseName: cls.courses.name,
             classId: cls.id,
             className: cls.name,
             classModality: cls.modality,
             totalClasses: cls.total_classes,
             attendedClasses: 0,
             attendancePercentage: 0,
-            lastAccesses: filteredAccesses.map(d => new Date(d).toLocaleDateString('pt-BR')),
+            lastAccesses: filteredAccesses,
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
             cycleStatus: cls.cycles.status,
@@ -435,7 +449,6 @@ export function ReportsTab() {
       'Unidade',
       'Nome do Aluno',
       'Turma',
-      'Curso',
       'Modalidade',
       'Ciclo',
       'Situação do Ciclo',
@@ -450,7 +463,6 @@ export function ReportsTab() {
       row.unitName,
       row.studentName,
       row.className,
-      row.courseName,
       row.classModality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
       row.cycleName,
       row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
@@ -458,7 +470,7 @@ export function ReportsTab() {
       row.totalClasses?.toString() || '',
       row.attendedClasses?.toString() || '',
       row.attendancePercentage ? `${row.attendancePercentage.toFixed(1)}%` : '-',
-      row.lastAccesses?.join(', ') || '-',
+      row.lastAccesses?.map(a => a.formatted).join(', ') || '-',
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -928,9 +940,6 @@ export function ReportsTab() {
                   Turma
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Curso
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Modalidade
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
@@ -953,7 +962,7 @@ export function ReportsTab() {
             <tbody className="divide-y divide-slate-200">
               {isLoading ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex justify-center items-center space-x-2">
                       <Loader2 className="w-6 h-6 animate-spin text-green-500" />
                       <span>Carregando dados...</span>
@@ -966,7 +975,6 @@ export function ReportsTab() {
                     <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
                     <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
                     <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
-                    <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
                     <td className="px-6 py-3 text-sm text-slate-700">
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                         row.classModality === 'VIDEOCONFERENCIA' 
@@ -1003,21 +1011,23 @@ export function ReportsTab() {
                         : '-'}
                     </td>
                     <td className="px-6 py-3 text-sm text-slate-700">
-                      {row.lastAccesses?.length ? (
+                      {row.lastAccesses?.length > 0 ? (
                         <div className="flex flex-col gap-1">
                           {row.lastAccesses.map((access, i) => (
-                            <span key={i} className="text-xs bg-slate-100 px-2 py-1 rounded">
-                              {access}
+                            <span key={i} className="text-xs bg-slate-100 px-2 py-1 rounded inline-block">
+                              {access.formatted}
                             </span>
                           ))}
                         </div>
+                      ) : row.classModality === 'EAD' ? (
+                        <span className="text-xs text-slate-400 italic">Sem acesso</span>
                       ) : '-'}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
