@@ -312,7 +312,58 @@ export function ReportsTab() {
     const margin = 10;
     const contentWidth = pageWidth - 2 * margin;
 
-    // Criar uma tabela apenas com os dados para o PDF
+    const presentPercentage = stats.totalStudents > 0
+      ? (stats.presentCount / stats.totalStudents) * 100
+      : 0;
+    const absentPercentage = stats.totalStudents > 0
+      ? (stats.absentCount / stats.totalStudents) * 100
+      : 0;
+
+    // Criar elemento para a barra de progresso
+    const createProgressBar = () => {
+      const progressDiv = document.createElement('div');
+      progressDiv.style.width = '100%';
+      progressDiv.style.height = '30px';
+      progressDiv.style.backgroundColor = '#e2e8f0';
+      progressDiv.style.borderRadius = '8px';
+      progressDiv.style.overflow = 'hidden';
+      progressDiv.style.display = 'flex';
+      progressDiv.style.marginTop = '10px';
+      progressDiv.style.marginBottom = '20px';
+
+      if (stats.totalStudents > 0) {
+        const presentBar = document.createElement('div');
+        presentBar.style.width = `${presentPercentage}%`;
+        presentBar.style.height = '100%';
+        presentBar.style.backgroundColor = '#22c55e';
+        presentBar.style.display = 'flex';
+        presentBar.style.alignItems = 'center';
+        presentBar.style.justifyContent = 'center';
+        presentBar.style.color = 'white';
+        presentBar.style.fontSize = '12px';
+        presentBar.style.fontWeight = 'bold';
+        presentBar.textContent = presentPercentage > 8 ? `${presentPercentage.toFixed(0)}%` : '';
+
+        const absentBar = document.createElement('div');
+        absentBar.style.width = `${absentPercentage}%`;
+        absentBar.style.height = '100%';
+        absentBar.style.backgroundColor = '#ef4444';
+        absentBar.style.display = 'flex';
+        absentBar.style.alignItems = 'center';
+        absentBar.style.justifyContent = 'center';
+        absentBar.style.color = 'white';
+        absentBar.style.fontSize = '12px';
+        absentBar.style.fontWeight = 'bold';
+        absentBar.textContent = absentPercentage > 8 ? `${absentPercentage.toFixed(0)}%` : '';
+
+        progressDiv.appendChild(presentBar);
+        progressDiv.appendChild(absentBar);
+      }
+
+      return progressDiv;
+    };
+
+    // Criar tabela com os dados
     const tableElement = document.createElement('table');
     tableElement.style.width = '100%';
     tableElement.style.borderCollapse = 'collapse';
@@ -392,32 +443,61 @@ export function ReportsTab() {
     });
     tableElement.appendChild(tbody);
 
-    // Container temporário
-    const tempDiv = document.createElement('div');
-    tempDiv.style.position = 'absolute';
-    tempDiv.style.left = '-9999px';
-    tempDiv.style.top = '0';
-    tempDiv.style.width = `${contentWidth * 3.78}px`;
-    tempDiv.appendChild(tableElement);
-    document.body.appendChild(tempDiv);
+    // Container para a página atual
+    const pageContainer = document.createElement('div');
+    pageContainer.style.position = 'absolute';
+    pageContainer.style.left = '-9999px';
+    pageContainer.style.top = '0';
+    pageContainer.style.width = `${contentWidth * 3.78}px`;
+    
+    // Adicionar título da seção de estatísticas
+    const statsTitle = document.createElement('h3');
+    statsTitle.textContent = 'Distribuição de Frequência';
+    statsTitle.style.fontSize = '14px';
+    statsTitle.style.fontWeight = 'bold';
+    statsTitle.style.marginBottom = '10px';
+    statsTitle.style.color = '#1e293b';
+    
+    // Adicionar texto com percentuais
+    const statsText = document.createElement('div');
+    statsText.style.display = 'flex';
+    statsText.style.justifyContent = 'space-between';
+    statsText.style.marginBottom = '5px';
+    statsText.style.fontSize = '12px';
+    statsText.style.color = '#475569';
+    statsText.innerHTML = `
+      <span>Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)</span>
+      <span>Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)</span>
+    `;
+    
+    // Criar barra de progresso
+    const progressBar = createProgressBar();
+    
+    // Adicionar elementos ao container
+    pageContainer.appendChild(statsTitle);
+    pageContainer.appendChild(statsText);
+    pageContainer.appendChild(progressBar);
+    pageContainer.appendChild(tableElement);
+    
+    document.body.appendChild(pageContainer);
 
     try {
-      // Renderizar tabela completa para medir altura
-      const canvas = await html2canvas(tableElement, {
+      // Renderizar container completo para medir altura
+      const canvas = await html2canvas(pageContainer, {
         scale: 2,
         logging: false,
         backgroundColor: '#ffffff',
       });
 
       const imgHeight = (canvas.height * contentWidth) / canvas.width;
-      const availableHeight = pageHeight - 40; // Espaço para cabeçalho e rodapé
+      const availableHeight = pageHeight - 50; // Espaço para cabeçalho e rodapé
       
       // Calcular número de páginas necessárias
       const totalPages = Math.ceil(imgHeight / availableHeight);
       
-      // Altura de cada linha (aproximadamente)
-      const rowHeight = imgHeight / (reportData.length + 1); // +1 para o cabeçalho
-      const rowsPerPage = Math.floor(availableHeight / rowHeight);
+      // Altura aproximada de cada linha da tabela
+      const tableStartY = 95; // Posição Y onde a tabela começa (após cabeçalho e barra)
+      const rowHeight = 8; // Altura aproximada de cada linha em mm
 
       for (let page = 0; page < totalPages; page++) {
         if (page > 0) {
@@ -428,9 +508,11 @@ export function ReportsTab() {
         pdf.addImage(logoImg, 'PNG', (pageWidth - 20) / 2, 5, 20, 15);
         
         pdf.setFontSize(16);
+        pdf.setTextColor(30, 41, 59);
         pdf.text('Relatório de Frequência', pageWidth / 2, 25, { align: 'center' });
         
         pdf.setFontSize(10);
+        pdf.setTextColor(71, 85, 105);
         pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, pageWidth / 2, 32, { align: 'center' });
 
         // Informações dos filtros
@@ -447,50 +529,114 @@ export function ReportsTab() {
           pdf.text(`Turma: ${cls?.name || 'Todas'}`, margin + 60, yFilter);
         }
         
-        pdf.text(`Total: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, margin + 120, yFilter);
+        pdf.text(`Total: ${stats.totalStudents} alunos`, margin + 120, yFilter);
 
-        // Criar tabela para a página atual
-        const startRow = page * rowsPerPage;
-        const endRow = Math.min((page + 1) * rowsPerPage, reportData.length);
-        
-        const pageTable = document.createElement('table');
-        pageTable.style.width = '100%';
-        pageTable.style.borderCollapse = 'collapse';
-        pageTable.style.fontSize = '9px';
-        
-        // Adicionar cabeçalho
-        const pageThead = document.createElement('thead');
-        pageThead.appendChild(headerRow.cloneNode(true));
-        pageTable.appendChild(pageThead);
-        
-        // Adicionar linhas da página
-        const pageTbody = document.createElement('tbody');
-        for (let i = startRow; i < endRow; i++) {
-          const row = tbody.children[i - startRow].cloneNode(true);
-          pageTbody.appendChild(row);
+        // Adicionar estatísticas e barra de progresso na primeira página apenas
+        if (page === 0) {
+          pdf.setFontSize(12);
+          pdf.setTextColor(30, 41, 59);
+          pdf.text('Distribuição de Frequência', margin, 48);
+          
+          pdf.setFontSize(10);
+          pdf.setTextColor(71, 85, 105);
+          pdf.text(`Frequentes: ${stats.presentCount} alunos (${presentPercentage.toFixed(1)}%)`, margin, 55);
+          pdf.text(`Ausentes: ${stats.absentCount} alunos (${absentPercentage.toFixed(1)}%)`, margin + 80, 55);
+          
+          // Desenhar barra de progresso
+          const barY = 60;
+          const barHeight = 8;
+          const barWidth = contentWidth;
+          
+          // Fundo da barra
+          pdf.setFillColor(226, 232, 240);
+          pdf.roundedRect(margin, barY, barWidth, barHeight, 2, 2, 'F');
+          
+          if (stats.totalStudents > 0) {
+            // Barra de frequentes
+            const presentWidth = (presentPercentage / 100) * barWidth;
+            if (presentWidth > 0) {
+              pdf.setFillColor(34, 197, 94);
+              pdf.roundedRect(margin, barY, presentWidth, barHeight, 2, 2, 'F');
+              
+              // Texto da porcentagem na barra
+              if (presentPercentage > 8) {
+                pdf.setTextColor(255, 255, 255);
+                pdf.setFontSize(8);
+                pdf.setFont('helvetica', 'bold');
+                pdf.text(`${presentPercentage.toFixed(0)}%`, margin + 5, barY + 5.5);
+              }
+            }
+            
+            // Barra de ausentes
+            const absentWidth = (absentPercentage / 100) * barWidth;
+            if (absentWidth > 0) {
+              pdf.setFillColor(239, 68, 68);
+              pdf.roundedRect(margin + presentWidth, barY, absentWidth, barHeight, 2, 2, 'F');
+              
+              // Texto da porcentagem na barra
+              if (absentPercentage > 8) {
+                pdf.setTextColor(255, 255, 255);
+                pdf.setFontSize(8);
+                pdf.setFont('helvetica', 'bold');
+                pdf.text(`${absentPercentage.toFixed(0)}%`, margin + presentWidth + 5, barY + 5.5);
+              }
+            }
+          }
         }
-        pageTable.appendChild(pageTbody);
 
-        // Renderizar tabela da página
-        const pageDiv = document.createElement('div');
-        pageDiv.appendChild(pageTable);
-        document.body.appendChild(pageDiv);
-
-        const pageCanvas = await html2canvas(pageTable, {
-          scale: 2,
-          logging: false,
-          backgroundColor: '#ffffff',
-        });
-
-        const pageImgData = pageCanvas.toDataURL('image/png');
-        const pageImgHeight = (pageCanvas.height * contentWidth) / pageCanvas.width;
+        // Criar tabela apenas para a página atual
+        const startRow = page * Math.floor((availableHeight - (page === 0 ? 25 : 0)) / rowHeight);
+        const endRow = Math.min(startRow + Math.floor((availableHeight - (page === 0 ? 25 : 0)) / rowHeight), reportData.length);
         
-        pdf.addImage(pageImgData, 'PNG', margin, 45, contentWidth, pageImgHeight);
+        if (startRow < reportData.length) {
+          const pageTable = document.createElement('table');
+          pageTable.style.width = '100%';
+          pageTable.style.borderCollapse = 'collapse';
+          pageTable.style.fontSize = '9px';
+          
+          // Adicionar cabeçalho
+          const pageThead = document.createElement('thead');
+          const pageHeaderRow = headerRow.cloneNode(true);
+          pageThead.appendChild(pageHeaderRow);
+          pageTable.appendChild(pageThead);
+          
+          // Adicionar linhas da página
+          const pageTbody = document.createElement('tbody');
+          for (let i = startRow; i < endRow; i++) {
+            const row = tbody.children[i - startRow]?.cloneNode(true);
+            if (row) {
+              pageTbody.appendChild(row);
+            }
+          }
+          pageTable.appendChild(pageTbody);
 
-        document.body.removeChild(pageDiv);
+          // Renderizar tabela da página
+          const tempDiv = document.createElement('div');
+          tempDiv.style.position = 'absolute';
+          tempDiv.style.left = '-9999px';
+          tempDiv.style.top = '0';
+          tempDiv.style.width = `${contentWidth * 3.78}px`;
+          tempDiv.appendChild(pageTable);
+          document.body.appendChild(tempDiv);
+
+          const tableCanvas = await html2canvas(pageTable, {
+            scale: 2,
+            logging: false,
+            backgroundColor: '#ffffff',
+          });
+
+          const tableImgData = tableCanvas.toDataURL('image/png');
+          const tableImgHeight = (tableCanvas.height * contentWidth) / tableCanvas.width;
+          
+          // Posicionar tabela na página
+          const tableY = page === 0 ? 75 : 45;
+          pdf.addImage(tableImgData, 'PNG', margin, tableY, contentWidth, tableImgHeight);
+
+          document.body.removeChild(tempDiv);
+        }
       }
     } finally {
-      document.body.removeChild(tempDiv);
+      document.body.removeChild(pageContainer);
     }
 
     pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
