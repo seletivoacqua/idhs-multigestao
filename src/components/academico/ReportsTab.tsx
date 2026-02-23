@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Filter, FileSpreadsheet, FileText, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -35,6 +35,7 @@ interface ReportData {
   unitName: string;
   courseName: string;
   className: string;
+  moduleName?: string;
   classesTotal?: number;
   classesAttended?: number;
   attendancePercentage?: number;
@@ -117,7 +118,7 @@ export function ReportsTab() {
   };
 
   const debouncedFilterChange = useCallback(
-    debounce((newFilters) => {
+    debounce(() => {
       setPagination(prev => ({ ...prev, page: 1 }));
       generateReport();
     }, 800),
@@ -126,9 +127,9 @@ export function ReportsTab() {
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => {
-      const newFilters = { ...prev, [key]: value };
-      debouncedFilterChange(newFilters);
-      return newFilters;
+      const updated = { ...prev, [key]: value };
+      debouncedFilterChange();
+      return updated;
     });
   };
 
@@ -173,6 +174,7 @@ export function ReportsTab() {
           modality,
           total_classes,
           cycle_id,
+          module_id,
           courses!inner (
             name,
             modality
@@ -181,6 +183,9 @@ export function ReportsTab() {
             name,
             status,
             end_date
+          ),
+          course_modules (
+            name
           )
         `)
         .range(from, to);
@@ -284,19 +289,23 @@ export function ReportsTab() {
         const cls = classMap.get(cs.class_id);
         if (!cls) continue;
 
-        const student = cs.students;
-        
+        const student = cs.students as any;
+
         // Aplicar filtros adicionais
         if (filters.unitId && student.unit_id !== filters.unitId) continue;
         if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
 
-        const unitName = student.units?.name || 
-                        units.find(u => u.id === student.unit_id)?.name || 
+        const unitName = student.units?.name ||
+                        units.find(u => u.id === student.unit_id)?.name ||
                         'Não informado';
+
+        const clsCycles = cls.cycles as any;
+        const clsCourses = cls.courses as any;
+        const clsModules = cls.course_modules as any;
 
         // Determinar o status de exibição
         let displayStatus = '';
-        if (cls.cycles.status === 'active' && new Date() <= new Date(cls.cycles.end_date)) {
+        if (clsCycles.status === 'active' && new Date() <= new Date(clsCycles.end_date)) {
           displayStatus = 'Em Andamento';
         } else if (cs.current_status === 'aprovado') {
           displayStatus = 'Aprovado';
@@ -306,30 +315,33 @@ export function ReportsTab() {
           displayStatus = 'Pendente';
         }
 
+        const moduleName = clsModules?.name || '-';
+
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
           const attendances = attendanceMap.get(key) || [];
-          
+
           const attendedCount = attendances.length;
           const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
           allReportData.push({
             studentName: student.full_name,
             unitName,
-            courseName: cls.courses.name,
+            courseName: clsCourses.name,
             className: cls.name,
+            moduleName,
             classesTotal: cls.total_classes,
             classesAttended: attendedCount,
             attendancePercentage: percentage,
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cls.cycles.status,
-            cycleEndDate: cls.cycles.end_date,
+            cycleStatus: clsCycles.status,
+            cycleEndDate: clsCycles.end_date,
           });
         } else {
           const key = `${cls.id}_${student.id}`;
           const access = eadMap.get(key);
-          
+
           let accesses = [
             access?.access_date_1,
             access?.access_date_2,
@@ -349,13 +361,14 @@ export function ReportsTab() {
           allReportData.push({
             studentName: student.full_name,
             unitName,
-            courseName: cls.courses.name,
+            courseName: clsCourses.name,
             className: cls.name,
+            moduleName,
             lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cls.cycles.status,
-            cycleEndDate: cls.cycles.end_date,
+            cycleStatus: clsCycles.status,
+            cycleEndDate: clsCycles.end_date,
           });
         }
       }
@@ -400,43 +413,44 @@ export function ReportsTab() {
 
   const exportToXLSX = (data: ReportData[]) => {
     const headers = [
-      'Unidade', 
-      'Nome do Aluno', 
-      'Turma', 
+      'Unidade',
+      'Nome do Aluno',
+      'Turma',
       'Curso',
-      'Status do Ciclo',
-      'Data Fim do Ciclo'
+      'Módulo'
     ];
 
     if (data[0]?.classesTotal !== undefined) {
-      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
+      headers.push('Aulas', 'Assistidas', 'Frequência');
     } else {
       headers.push('Últimos Acessos');
     }
-    
-    headers.push('Situação');
+
+    headers.push('Ciclo', 'Situação');
 
     const rows = data.map((row) => {
       const base = [
-        row.unitName, 
-        row.studentName, 
-        row.className, 
+        row.unitName,
+        row.studentName,
+        row.className,
         row.courseName,
-        row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
-        new Date(row.cycleEndDate).toLocaleDateString('pt-BR')
+        row.moduleName || '-'
       ];
 
       if (row.classesTotal !== undefined) {
         base.push(
           row.classesTotal?.toString() || '',
           row.classesAttended?.toString() || '',
-          row.attendancePercentage?.toFixed(1) || ''
+          row.attendancePercentage?.toFixed(1) + '%' || ''
         );
       } else {
         base.push(row.lastAccesses?.join(', ') || '');
       }
 
-      base.push(row.displayStatus);
+      base.push(
+        row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
+        row.displayStatus
+      );
       return base;
     });
 
@@ -681,7 +695,6 @@ export function ReportsTab() {
         useCORS: true,
       });
 
-      const imgData = canvas.toDataURL('image/png');
       const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
       const availableHeight = pageHeight - 20;
@@ -997,12 +1010,15 @@ export function ReportsTab() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Situação
                 </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  Módulo
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex justify-center items-center space-x-2">
                       <Loader2 className="w-6 h-6 animate-spin text-green-500" />
                       <span>Carregando dados...</span>
@@ -1031,8 +1047,8 @@ export function ReportsTab() {
                     )}
                     <td className="px-6 py-3 text-sm text-slate-700">
                       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                        row.cycleStatus === 'active' 
-                          ? 'bg-green-100 text-green-700' 
+                        row.cycleStatus === 'active'
+                          ? 'bg-green-100 text-green-700'
                           : 'bg-slate-100 text-slate-700'
                       }`}>
                         {row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
@@ -1045,11 +1061,12 @@ export function ReportsTab() {
                         {row.displayStatus}
                       </span>
                     </td>
+                    <td className="px-6 py-3 text-sm text-slate-700">{row.moduleName || '-'}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
