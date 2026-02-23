@@ -5,40 +5,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoUrl from '../../assets/image.png';
-
-const getLogoBase64 = async (url: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-
-        if (!ctx) {
-          reject(new Error('Could not get canvas context'));
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0);
-        const dataURL = canvas.toDataURL('image/png');
-        resolve(dataURL);
-      } catch (error) {
-        reject(error);
-      }
-    };
-
-    img.onerror = () => {
-      reject(new Error('Failed to load image'));
-    };
-
-    img.src = url;
-  });
-};
 
 const debounce = <T extends (...args: any[]) => any>(func: T, wait: number) => {
   let timeout: NodeJS.Timeout | null = null;
@@ -522,14 +488,6 @@ export function ReportsTab() {
     setIsExporting(true);
 
     try {
-      let logoBase64String = '';
-      try {
-        logoBase64String = await getLogoBase64(logoUrl);
-      } catch (error) {
-        console.warn('Could not load logo, continuing without it', error);
-      }
-
-      // Criar um container temporário para o PDF
       const pdfContainer = document.createElement('div');
       pdfContainer.style.width = '1200px';
       pdfContainer.style.padding = '20px';
@@ -538,16 +496,6 @@ export function ReportsTab() {
       pdfContainer.style.position = 'absolute';
       pdfContainer.style.left = '-9999px';
       pdfContainer.style.top = '0';
-      
-      // Adicionar logo se disponível
-      if (logoBase64String) {
-        const logo = document.createElement('img');
-        logo.src = logoBase64String;
-        logo.style.width = '80px';
-        logo.style.height = 'auto';
-        logo.style.marginBottom = '20px';
-        pdfContainer.appendChild(logo);
-      }
 
       // Título
       const title = document.createElement('h1');
@@ -643,24 +591,15 @@ export function ReportsTab() {
 
       document.body.appendChild(pdfContainer);
 
-      // Gerar PDF com configurações melhoradas
       const canvas = await html2canvas(pdfContainer, {
         scale: 2,
         logging: false,
         backgroundColor: '#ffffff',
-        allowTaint: false,
-        useCORS: true,
+        allowTaint: true,
+        useCORS: false,
         windowWidth: 1200,
-        onclone: (clonedDoc) => {
-          // Garantir que todas as imagens carregaram
-          const images = clonedDoc.querySelectorAll('img');
-          return Promise.all(Array.from(images).map(img => {
-            if (img.complete) return Promise.resolve();
-            return new Promise((resolve) => {
-              img.onload = resolve;
-              img.onerror = resolve;
-            });
-          }));
+        ignoreElements: (element) => {
+          return element.tagName === 'IMG';
         }
       });
 
