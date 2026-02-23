@@ -174,8 +174,9 @@ export function ReportsTab() {
           modality,
           total_classes,
           cycle_id,
-          module_id,
+          course_id,
           courses!inner (
+            id,
             name,
             modality
           ),
@@ -183,9 +184,6 @@ export function ReportsTab() {
             name,
             status,
             end_date
-          ),
-          course_modules (
-            name
           )
         `)
         .range(from, to);
@@ -201,7 +199,25 @@ export function ReportsTab() {
         return;
       }
 
-      // 3. Buscar alunos matriculados com seus status
+      // 3. Buscar módulos dos cursos
+      const courseIds = [...new Set(classes.map(c => c.course_id))];
+      const { data: courseModules } = await supabase
+        .from('course_modules')
+        .select('id, course_id, name, order_number')
+        .in('course_id', courseIds)
+        .order('order_number');
+
+      const modulesMap = new Map();
+      if (courseModules) {
+        courseModules.forEach(module => {
+          if (!modulesMap.has(module.course_id)) {
+            modulesMap.set(module.course_id, []);
+          }
+          modulesMap.get(module.course_id).push(module.name);
+        });
+      }
+
+      // 4. Buscar alunos matriculados com seus status
       const classIds = classes.map(c => c.id);
       
       const { data: classStudents } = await supabase
@@ -228,7 +244,7 @@ export function ReportsTab() {
       const studentIds = classStudents.map(cs => cs.student_id);
       const uniqueStudentIds = [...new Set(studentIds)];
 
-      // 4. Buscar presenças de forma otimizada
+      // 5. Buscar presenças de forma otimizada
       let attendanceData: any[] = [];
       let eadAccessData: any[] = [];
 
@@ -265,7 +281,7 @@ export function ReportsTab() {
         })()
       ]);
 
-      // 5. Criar maps para acesso rápido
+      // 6. Criar maps para acesso rápido
       const attendanceMap = new Map();
       attendanceData.forEach(att => {
         const key = `${att.class_id}_${att.student_id}`;
@@ -281,7 +297,7 @@ export function ReportsTab() {
         eadMap.set(key, access);
       });
 
-      // 6. Processar dados
+      // 7. Processar dados
       const allReportData: ReportData[] = [];
       const classMap = new Map(classes.map(c => [c.id, c]));
 
@@ -301,7 +317,6 @@ export function ReportsTab() {
 
         const clsCycles = cls.cycles as any;
         const clsCourses = cls.courses as any;
-        const clsModules = cls.course_modules as any;
 
         // Determinar o status de exibição
         let displayStatus = '';
@@ -315,7 +330,8 @@ export function ReportsTab() {
           displayStatus = 'Pendente';
         }
 
-        const moduleName = clsModules?.name || '-';
+        const courseModulesList = modulesMap.get(cls.course_id) || [];
+        const moduleName = courseModulesList.length > 0 ? courseModulesList.join(', ') : '-';
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
