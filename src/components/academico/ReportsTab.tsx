@@ -21,6 +21,8 @@ interface Cycle {
 interface Class {
   id: string;
   name: string;
+  modality: string;
+  cycle_id: string;
 }
 
 interface ReportData {
@@ -28,6 +30,7 @@ interface ReportData {
   unitName: string;
   courseName: string;
   className: string;
+  classModality: string;
   classesTotal?: number;
   classesAttended?: number;
   attendancePercentage?: number;
@@ -36,6 +39,8 @@ interface ReportData {
   displayStatus: string;
   cycleStatus: string;
   cycleEndDate: string;
+  enrollmentType: string;
+  enrollmentDate: string;
 }
 
 interface PaginationState {
@@ -54,7 +59,7 @@ export function ReportsTab() {
   const [isExporting, setIsExporting] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({
     page: 1,
-    pageSize: 50,
+    pageSize: 100, // Aumentado para 100 registros por página
     total: 0,
     totalPages: 0,
   });
@@ -67,7 +72,7 @@ export function ReportsTab() {
     unitId: '',
     modality: 'all',
     studentName: '',
-    status: 'all', // Novo filtro por status
+    status: 'all',
   });
 
   const { user } = useAuth();
@@ -82,6 +87,9 @@ export function ReportsTab() {
     reprovadoCount: 0,
   });
 
+  // Cache para dados de unidades
+  const unitsMap = useRef<Map<string, string>>(new Map());
+
   useEffect(() => {
     loadInitialData();
     return () => {
@@ -95,13 +103,18 @@ export function ReportsTab() {
     if (!user) return;
 
     try {
+      // Carregar todos os dados iniciais em paralelo
       const [unitsRes, cyclesRes, classesRes] = await Promise.all([
         supabase.from('units').select('id, name').order('name'),
         supabase.from('cycles').select('id, name').order('created_at', { ascending: false }),
-        supabase.from('classes').select('id, name').order('name'),
+        supabase.from('classes').select('id, name, modality, cycle_id').order('name'),
       ]);
 
-      if (unitsRes.data) setUnits(unitsRes.data);
+      if (unitsRes.data) {
+        setUnits(unitsRes.data);
+        // Criar mapa de unidades para lookup rápido
+        unitsRes.data.forEach(unit => unitsMap.current.set(unit.id, unit.name));
+      }
       if (cyclesRes.data) setCycles(cyclesRes.data);
       if (classesRes.data) setClasses(classesRes.data);
     } catch (error) {
@@ -110,21 +123,22 @@ export function ReportsTab() {
   };
 
   const debouncedFilterChange = useCallback(
-    debounce((newFilters) => {
+    debounce(() => {
       setPagination(prev => ({ ...prev, page: 1 }));
       generateReport();
-    }, 800),
+    }, 500),
     []
   );
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => {
       const newFilters = { ...prev, [key]: value };
-      debouncedFilterChange(newFilters);
+      debouncedFilterChange();
       return newFilters;
     });
   };
 
+  // Função otimizada para gerar relatório usando uma única query
   const generateReport = async () => {
     if (!user) return;
 
@@ -136,160 +150,156 @@ export function ReportsTab() {
     setIsLoading(true);
 
     try {
-      // 1. Primeiro, obter o total de registros para paginação
-      let countQuery = supabase
-        .from('classes')
-        .select('id', { count: 'exact', head: true });
+      // Construir query base para class_students com joins
+      let query = supabase
+        .from('class_students')
+        .select(`
+          id,
+          enrollment_type,
+          enrollment_date,
+          current_status,
+          status_updated_at,
+          students!inner (
+            id,
+            full_name,
+            cpf,
+            unit_id
+          ),
+          classes!inner (
+            id,
+            name,
+            modality,
+            total_classes,
+            course_id,
+            cycle_id,
+            courses!inner (
+              name
+            ),
+            cycles!inner (
+              name,
+              status,
+              start_date,
+              end_date
+            )
+          )
+        `, { count: 'exact' });
 
-      if (filters.cycleId) countQuery = countQuery.eq('cycle_id', filters.cycleId);
-      if (filters.classId) countQuery = countQuery.eq('id', filters.classId);
-      if (filters.modality !== 'all') countQuery = countQuery.eq('modality', filters.modality);
+      // Aplicar filtros
+      if (filters.cycleId) {
+        query = query.eq('classes.cycle_id', filters.cycleId);
+      }
 
-      const { count: totalClasses } = await countQuery;
+      if (filters.classId) {
+        query = query.eq('class_id', filters.classId);
+      }
 
-      if (!totalClasses || totalClasses === 0) {
+      if (filters.unitId) {
+        query = query.eq('students.unit_id', filters.unitId);
+      }
+
+      if (filters.modality !== 'all') {
+        query = query.eq('classes.modality', filters.modality);
+      }
+
+      if (filters.studentName) {
+        query = query.ilike('students.full_name', `%${filters.studentName}%`);
+      }
+
+      if (filters.status !== 'all') {
+        query = query.eq('current_status', filters.status);
+      }
+
+      // Paginação
+      const from = (pagination.page - 1) * pagination.pageSize;
+      const to = from + pagination.pageSize - 1;
+      query = query.range(from, to).order('students.full_name');
+
+      const { data: classStudents, count, error } = await query;
+
+      if (error) {
+        console.error('Error loading report data:', error);
+        return;
+      }
+
+      if (!classStudents || classStudents.length === 0) {
         setReportData([]);
         setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
         setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
         return;
       }
 
-      // 2. Buscar apenas as turmas da página atual
-      const from = (pagination.page - 1) * pagination.pageSize;
-      const to = from + pagination.pageSize - 1;
+      // Coletar IDs para buscar dados adicionais (apenas se necessário e com filtros de data)
+      const needsAttendanceData = filters.startDate || filters.endDate;
+      const classIds = [...new Set(classStudents.map(cs => cs.classes.id))];
+      const studentIds = [...new Set(classStudents.map(cs => cs.students.id))];
 
-      let classesQuery = supabase
-        .from('classes')
-        .select(`
-          id,
-          name,
-          modality,
-          total_classes,
-          cycle_id,
-          courses!inner (
-            name,
-            modality
-          ),
-          cycles!inner (
-            name,
-            status,
-            end_date
-          )
-        `)
-        .range(from, to);
+      let attendanceMap = new Map();
+      let eadMap = new Map();
 
-      if (filters.cycleId) classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-      if (filters.classId) classesQuery = classesQuery.eq('id', filters.classId);
-      if (filters.modality !== 'all') classesQuery = classesQuery.eq('modality', filters.modality);
+      // Buscar dados adicionais apenas se necessário e em paralelo
+      if (needsAttendanceData) {
+        const videoconferenceClasses = classStudents.filter(cs => cs.classes.modality === 'VIDEOCONFERENCIA');
+        const eadClasses = classStudents.filter(cs => cs.classes.modality === 'EAD');
 
-      const { data: classes } = await classesQuery;
+        await Promise.all([
+          (async () => {
+            if (videoconferenceClasses.length > 0) {
+              let attQuery = supabase
+                .from('attendance')
+                .select('class_id, student_id, class_date')
+                .in('class_id', classIds)
+                .in('student_id', studentIds)
+                .eq('present', true);
 
-      if (!classes || classes.length === 0) {
-        setReportData([]);
-        return;
+              if (filters.startDate) attQuery = attQuery.gte('class_date', filters.startDate);
+              if (filters.endDate) attQuery = attQuery.lte('class_date', filters.endDate);
+
+              const { data } = await attQuery;
+              if (data) {
+                data.forEach(att => {
+                  const key = `${att.class_id}_${att.student_id}`;
+                  if (!attendanceMap.has(key)) {
+                    attendanceMap.set(key, []);
+                  }
+                  attendanceMap.get(key).push(att);
+                });
+              }
+            }
+          })(),
+          (async () => {
+            if (eadClasses.length > 0) {
+              let eadQuery = supabase
+                .from('ead_access')
+                .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
+                .in('class_id', classIds)
+                .in('student_id', studentIds);
+
+              const { data } = await eadQuery;
+              if (data) {
+                data.forEach(access => {
+                  const key = `${access.class_id}_${access.student_id}`;
+                  eadMap.set(key, access);
+                });
+              }
+            }
+          })()
+        ]);
       }
 
-      // 3. Buscar alunos matriculados com seus status
-      const classIds = classes.map(c => c.id);
-      
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select(`
-          student_id,
-          class_id,
-          current_status,
-          status_updated_at,
-          students!inner (
-            id,
-            full_name,
-            unit_id,
-            units (name)
-          )
-        `)
-        .in('class_id', classIds);
-
-      if (!classStudents) {
-        setReportData([]);
-        return;
-      }
-
-      const studentIds = classStudents.map(cs => cs.student_id);
-      const uniqueStudentIds = [...new Set(studentIds)];
-
-      // 4. Buscar presenças de forma otimizada
-      let attendanceData: any[] = [];
-      let eadAccessData: any[] = [];
-
-      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
-      const eadClasses = classes.filter(c => c.modality === 'EAD');
-
-      await Promise.all([
-        (async () => {
-          if (videoconferenceClasses.length > 0) {
-            let query = supabase
-              .from('attendance')
-              .select('class_id, student_id, class_date')
-              .in('class_id', classIds)
-              .in('student_id', uniqueStudentIds)
-              .eq('present', true);
-
-            if (filters.startDate) query = query.gte('class_date', filters.startDate);
-            if (filters.endDate) query = query.lte('class_date', filters.endDate);
-
-            const { data } = await query;
-            attendanceData = data || [];
-          }
-        })(),
-        (async () => {
-          if (eadClasses.length > 0) {
-            const { data } = await supabase
-              .from('ead_access')
-              .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
-              .in('class_id', classIds)
-              .in('student_id', uniqueStudentIds);
-
-            eadAccessData = data || [];
-          }
-        })()
-      ]);
-
-      // 5. Criar maps para acesso rápido
-      const attendanceMap = new Map();
-      attendanceData.forEach(att => {
-        const key = `${att.class_id}_${att.student_id}`;
-        if (!attendanceMap.has(key)) {
-          attendanceMap.set(key, []);
-        }
-        attendanceMap.get(key).push(att);
-      });
-
-      const eadMap = new Map();
-      eadAccessData.forEach(access => {
-        const key = `${access.class_id}_${access.student_id}`;
-        eadMap.set(key, access);
-      });
-
-      // 6. Processar dados
-      const allReportData: ReportData[] = [];
-      const classMap = new Map(classes.map(c => [c.id, c]));
+      // Processar dados
+      const processedData: ReportData[] = [];
+      const today = new Date().toISOString().split('T')[0];
 
       for (const cs of classStudents) {
-        const cls = classMap.get(cs.class_id);
-        if (!cls) continue;
-
+        const cls = cs.classes;
         const student = cs.students;
-        
-        // Aplicar filtros adicionais
-        if (filters.unitId && student.unit_id !== filters.unitId) continue;
-        if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
+        const cycle = cls.cycles;
 
-        const unitName = student.units?.name || 
-                        units.find(u => u.id === student.unit_id)?.name || 
-                        'Não informado';
-
-        // Determinar o status de exibição
+        // Determinar status de exibição
         let displayStatus = '';
-        if (cls.cycles.status === 'active' && new Date() <= new Date(cls.cycles.end_date)) {
+        const isCycleActive = cycle.status === 'active' && today <= cycle.end_date;
+
+        if (isCycleActive) {
           displayStatus = 'Em Andamento';
         } else if (cs.current_status === 'aprovado') {
           displayStatus = 'Aprovado';
@@ -299,77 +309,83 @@ export function ReportsTab() {
           displayStatus = 'Pendente';
         }
 
+        const unitName = unitsMap.current.get(student.unit_id) || 'Não informado';
+
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
           const attendances = attendanceMap.get(key) || [];
           
-          const attendedCount = attendances.length;
-          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
+          // Se não há filtros de data, não precisamos calcular presenças detalhadas
+          const attendedCount = needsAttendanceData ? attendances.length : 0;
+          const percentage = needsAttendanceData && cls.total_classes > 0 
+            ? (attendedCount / cls.total_classes) * 100 
+            : 0;
 
-          allReportData.push({
+          processedData.push({
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
             className: cls.name,
+            classModality: cls.modality,
             classesTotal: cls.total_classes,
             classesAttended: attendedCount,
             attendancePercentage: percentage,
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cls.cycles.status,
-            cycleEndDate: cls.cycles.end_date,
+            cycleStatus: cycle.status,
+            cycleEndDate: cycle.end_date,
+            enrollmentType: cs.enrollment_type,
+            enrollmentDate: cs.enrollment_date,
           });
         } else {
           const key = `${cls.id}_${student.id}`;
           const access = eadMap.get(key);
           
-          let accesses = [
-            access?.access_date_1,
-            access?.access_date_2,
-            access?.access_date_3,
-          ].filter(Boolean);
+          let accesses = [];
+          if (needsAttendanceData && access) {
+            accesses = [
+              access.access_date_1,
+              access.access_date_2,
+              access.access_date_3,
+            ].filter(Boolean);
 
-          if (filters.startDate || filters.endDate) {
-            accesses = accesses.filter((d) => {
-              if (!d) return false;
-              const accessDate = new Date(d);
-              if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
-              if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
-              return true;
-            });
+            if (filters.startDate || filters.endDate) {
+              accesses = accesses.filter((d) => {
+                if (!d) return false;
+                const accessDate = new Date(d);
+                if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
+                if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
+                return true;
+              });
+            }
           }
 
-          allReportData.push({
+          processedData.push({
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
             className: cls.name,
+            classModality: cls.modality,
             lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cls.cycles.status,
-            cycleEndDate: cls.cycles.end_date,
+            cycleStatus: cycle.status,
+            cycleEndDate: cycle.end_date,
+            enrollmentType: cs.enrollment_type,
+            enrollmentDate: cs.enrollment_date,
           });
         }
       }
 
-      // Aplicar filtro por status
-      const filteredData = filters.status === 'all' 
-        ? allReportData 
-        : allReportData.filter(d => d.currentStatus === filters.status);
-
-      setReportData(filteredData);
+      setReportData(processedData);
 
       // Calcular estatísticas
-      const emAndamentoCount = filteredData.filter(d => 
-        d.cycleStatus === 'active' && new Date() <= new Date(d.cycleEndDate)
-      ).length;
-      
-      const aprovadoCount = filteredData.filter(d => d.currentStatus === 'aprovado').length;
-      const reprovadoCount = filteredData.filter(d => d.currentStatus === 'reprovado').length;
+      const emAndamentoCount = processedData.filter(d => d.displayStatus === 'Em Andamento').length;
+      const aprovadoCount = processedData.filter(d => d.displayStatus === 'Aprovado').length;
+      const reprovadoCount = processedData.filter(d => d.displayStatus === 'Reprovado').length;
 
       setStats({
-        totalStudents: filteredData.length,
+        totalStudents: processedData.length,
         emAndamentoCount,
         aprovadoCount,
         reprovadoCount,
@@ -377,8 +393,8 @@ export function ReportsTab() {
 
       setPagination(prev => ({
         ...prev,
-        total: totalClasses,
-        totalPages: Math.ceil(totalClasses / prev.pageSize),
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / prev.pageSize),
       }));
 
     } catch (error: any) {
@@ -393,33 +409,38 @@ export function ReportsTab() {
 
   const exportToXLSX = (data: ReportData[]) => {
     const headers = [
-      'Unidade', 
-      'Nome do Aluno', 
-      'Turma', 
+      'Unidade',
+      'Nome do Aluno',
+      'Turma',
       'Curso',
+      'Modalidade',
+      'Tipo Matrícula',
+      'Data Matrícula',
       'Status do Ciclo',
-      'Data Fim do Ciclo'
+      'Data Fim do Ciclo',
+      'Situação'
     ];
 
-    if (data[0]?.classesTotal !== undefined) {
-      headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
+    if (data[0]?.classModality === 'VIDEOCONFERENCIA') {
+      headers.splice(9, 0, 'Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)');
     } else {
-      headers.push('Últimos Acessos');
+      headers.splice(9, 0, 'Últimos Acessos');
     }
-    
-    headers.push('Situação');
 
     const rows = data.map((row) => {
       const base = [
-        row.unitName, 
-        row.studentName, 
-        row.className, 
+        row.unitName,
+        row.studentName,
+        row.className,
         row.courseName,
+        row.classModality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+        row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
+        row.enrollmentDate ? new Date(row.enrollmentDate).toLocaleDateString('pt-BR') : '-',
         row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
-        new Date(row.cycleEndDate).toLocaleDateString('pt-BR')
+        new Date(row.cycleEndDate).toLocaleDateString('pt-BR'),
       ];
 
-      if (row.classesTotal !== undefined) {
+      if (row.classModality === 'VIDEOCONFERENCIA') {
         base.push(
           row.classesTotal?.toString() || '',
           row.classesAttended?.toString() || '',
@@ -661,13 +682,13 @@ export function ReportsTab() {
       const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
       tableClone.style.width = '100%';
       tableClone.style.borderCollapse = 'collapse';
-      tableClone.style.fontSize = '9px';
+      tableClone.style.fontSize = '8px';
 
       container.appendChild(tableClone);
       document.body.appendChild(container);
 
       const canvas = await html2canvas(container, {
-        scale: 2,
+        scale: 1.5,
         logging: false,
         backgroundColor: '#ffffff',
         allowTaint: true,
@@ -884,6 +905,18 @@ export function ReportsTab() {
             />
           </div>
         </div>
+
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={() => {
+              setPagination(prev => ({ ...prev, page: 1 }));
+              generateReport();
+            }}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          >
+            Gerar Relatório
+          </button>
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6">
@@ -911,43 +944,41 @@ export function ReportsTab() {
           </div>
         </div>
 
-        <div className="mb-2">
-          <div className="flex justify-between text-sm text-slate-600 mb-1">
-            <span>Distribuição por Situação</span>
-            <span>
-              Em Andamento: {((stats.emAndamentoCount / stats.totalStudents) * 100 || 0).toFixed(1)}% | 
-              Aprovados: {((stats.aprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}% | 
-              Reprovados: {((stats.reprovadoCount / stats.totalStudents) * 100 || 0).toFixed(1)}%
-            </span>
+        {stats.totalStudents > 0 && (
+          <div className="mb-2">
+            <div className="flex justify-between text-sm text-slate-600 mb-1">
+              <span>Distribuição por Situação</span>
+              <span>
+                Em Andamento: {((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(1)}% | 
+                Aprovados: {((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(1)}% | 
+                Reprovados: {((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(1)}%
+              </span>
+            </div>
+            <div className="w-full h-8 bg-slate-200 rounded-lg overflow-hidden flex">
+              <div
+                className="bg-blue-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
+                style={{ width: `${(stats.emAndamentoCount / stats.totalStudents) * 100}%` }}
+              >
+                {((stats.emAndamentoCount / stats.totalStudents) * 100) > 8 && 
+                  `${((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(0)}%`}
+              </div>
+              <div
+                className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
+                style={{ width: `${(stats.aprovadoCount / stats.totalStudents) * 100}%` }}
+              >
+                {((stats.aprovadoCount / stats.totalStudents) * 100) > 8 && 
+                  `${((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
+              </div>
+              <div
+                className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
+                style={{ width: `${(stats.reprovadoCount / stats.totalStudents) * 100}%` }}
+              >
+                {((stats.reprovadoCount / stats.totalStudents) * 100) > 8 && 
+                  `${((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
+              </div>
+            </div>
           </div>
-          <div className="w-full h-8 bg-slate-200 rounded-lg overflow-hidden flex">
-            {stats.totalStudents > 0 && (
-              <>
-                <div
-                  className="bg-blue-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                  style={{ width: `${(stats.emAndamentoCount / stats.totalStudents) * 100}%` }}
-                >
-                  {((stats.emAndamentoCount / stats.totalStudents) * 100) > 8 && 
-                    `${((stats.emAndamentoCount / stats.totalStudents) * 100).toFixed(0)}%`}
-                </div>
-                <div
-                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                  style={{ width: `${(stats.aprovadoCount / stats.totalStudents) * 100}%` }}
-                >
-                  {((stats.aprovadoCount / stats.totalStudents) * 100) > 8 && 
-                    `${((stats.aprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
-                </div>
-                <div
-                  className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-300"
-                  style={{ width: `${(stats.reprovadoCount / stats.totalStudents) * 100}%` }}
-                >
-                  {((stats.reprovadoCount / stats.totalStudents) * 100) > 8 && 
-                    `${((stats.reprovadoCount / stats.totalStudents) * 100).toFixed(0)}%`}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
@@ -955,39 +986,45 @@ export function ReportsTab() {
           <table ref={tableRef} className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Unidade
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  Nome do Aluno
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  Aluno
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Turma
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Curso
                 </th>
-                {reportData[0]?.classesTotal !== undefined ? (
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  Modalidade
+                </th>
+                {reportData[0]?.classModality === 'VIDEOCONFERENCIA' ? (
                   <>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Aulas
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                      Assistidas
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                      Assist.
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                       Frequência
                     </th>
                   </>
                 ) : (
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                    Últimos Acessos
+                  <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                    Acessos
                   </th>
                 )}
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                  Matrícula
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Ciclo
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   Situação
                 </th>
               </tr>
@@ -995,7 +1032,7 @@ export function ReportsTab() {
             <tbody className="divide-y divide-slate-200">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     <div className="flex justify-center items-center space-x-2">
                       <Loader2 className="w-6 h-6 animate-spin text-green-500" />
                       <span>Carregando dados...</span>
@@ -1005,44 +1042,64 @@ export function ReportsTab() {
               ) : reportData.length > 0 ? (
                 reportData.map((row, index) => (
                   <tr key={index} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
-                    <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
-                    <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
-                    <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
-                    {row.classesTotal !== undefined ? (
+                    <td className="px-4 py-2 text-xs text-slate-700">{row.unitName}</td>
+                    <td className="px-4 py-2 text-xs font-medium text-slate-800">{row.studentName}</td>
+                    <td className="px-4 py-2 text-xs text-slate-700">{row.className}</td>
+                    <td className="px-4 py-2 text-xs text-slate-700">{row.courseName}</td>
+                    <td className="px-4 py-2 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        row.classModality === 'VIDEOCONFERENCIA'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {row.classModality === 'VIDEOCONFERENCIA' ? 'VC' : 'EAD'}
+                      </span>
+                    </td>
+                    {row.classModality === 'VIDEOCONFERENCIA' ? (
                       <>
-                        <td className="px-6 py-3 text-sm text-slate-700">{row.classesTotal}</td>
-                        <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
-                        <td className="px-6 py-3 text-sm text-slate-700 font-medium">
-                          {row.attendancePercentage?.toFixed(1)}%
+                        <td className="px-4 py-2 text-xs text-slate-700">{row.classesTotal}</td>
+                        <td className="px-4 py-2 text-xs text-slate-700">{row.classesAttended}</td>
+                        <td className="px-4 py-2 text-xs font-medium">
+                          <span className={row.attendancePercentage && row.attendancePercentage >= 60 ? 'text-green-600' : 'text-red-600'}>
+                            {row.attendancePercentage?.toFixed(1)}%
+                          </span>
                         </td>
                       </>
                     ) : (
-                      <td className="px-6 py-3 text-sm text-slate-700">
+                      <td className="px-4 py-2 text-xs text-slate-700">
                         {row.lastAccesses?.length ? row.lastAccesses.join(', ') : '-'}
                       </td>
                     )}
-                    <td className="px-6 py-3 text-sm text-slate-700">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                    <td className="px-4 py-2 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        row.enrollmentType === 'exceptional'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {row.enrollmentType === 'exceptional' ? 'E' : 'R'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-xs">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                         row.cycleStatus === 'active' 
                           ? 'bg-green-100 text-green-700' 
                           : 'bg-slate-100 text-slate-700'
                       }`}>
-                        {row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
+                        {row.cycleStatus === 'active' ? 'Ativo' : 'Enc'}
                       </span>
                     </td>
-                    <td className="px-6 py-3">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(row.displayStatus)}`}
-                      >
-                        {row.displayStatus}
+                    <td className="px-4 py-2">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(row.displayStatus)}`}>
+                        {row.displayStatus === 'Em Andamento' ? 'And.' : 
+                         row.displayStatus === 'Aprovado' ? 'Aprov' : 
+                         row.displayStatus === 'Reprovado' ? 'Repr' : row.displayStatus}
                       </span>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
@@ -1052,27 +1109,27 @@ export function ReportsTab() {
         </div>
         
         {pagination.totalPages > 1 && !isLoading && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50">
-            <div className="text-sm text-slate-600">
-              Mostrando {((pagination.page - 1) * pagination.pageSize) + 1} a{' '}
+          <div className="flex items-center justify-between px-4 py-2 border-t border-slate-200 bg-slate-50">
+            <div className="text-xs text-slate-600">
+              {((pagination.page - 1) * pagination.pageSize) + 1} a{' '}
               {Math.min(pagination.page * pagination.pageSize, pagination.total)} de{' '}
-              {pagination.total} registros
+              {pagination.total}
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-1">
               <button
                 onClick={() => handlePageChange(pagination.page - 1)}
                 disabled={pagination.page === 1}
-                className="p-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="p-1 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="px-4 py-2 text-sm text-slate-600">
-                Página {pagination.page} de {pagination.totalPages}
+              <span className="px-3 py-1 text-xs text-slate-600">
+                {pagination.page}/{pagination.totalPages}
               </span>
               <button
                 onClick={() => handlePageChange(pagination.page + 1)}
                 disabled={pagination.page === pagination.totalPages}
-                className="p-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="p-1 rounded border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
