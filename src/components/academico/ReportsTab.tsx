@@ -91,7 +91,8 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('cycles')
       .select('id, name')
-        .order('created_at', { ascending: false });
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error loading cycles:', error);
@@ -107,6 +108,7 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('classes')
       .select('id, name')
+      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
@@ -123,7 +125,8 @@ export function ReportsTab() {
     let classesQuery = supabase
       .from('classes')
       .select('*, courses(name, modality)')
-    
+      .eq('user_id', user.id);
+
     if (filters.cycleId) {
       classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
     }
@@ -298,7 +301,7 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-const exportToPDF = async () => {
+ const exportToPDF = async () => {
   if (!reportRef.current) return;
 
   const pdf = new jsPDF({
@@ -309,10 +312,7 @@ const exportToPDF = async () => {
 
   const pageHeight = pdf.internal.pageSize.getHeight();
   const pageWidth = pdf.internal.pageSize.getWidth();
-  const margin = 10;
-  const contentWidth = pageWidth - (2 * margin);
 
-  // Configurações de cabeçalho
   const headerHeight = 45;
   const title = 'Relatório de Frequência';
   const date = new Date().toLocaleDateString('pt-BR', {
@@ -321,207 +321,126 @@ const exportToPDF = async () => {
     year: 'numeric'
   });
 
-  // Função auxiliar para calcular altura de uma linha (definida antes de ser usada)
-  const getRowHeight = async (row: HTMLElement, width: number): Promise<number> => {
-    const tempTable = document.createElement('table');
-    tempTable.style.width = '100%';
-    tempTable.style.fontSize = '10px';
-    tempTable.style.borderCollapse = 'collapse';
-    tempTable.style.position = 'absolute';
-    tempTable.style.left = '-9999px';
-    tempTable.style.top = '0';
-    tempTable.style.width = `${width * 3.78}px`;
+  const logoWidth = 20;
+  const logoHeight = 15;
+  const logoX = (pageWidth - logoWidth) / 2;
+  pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+
+  pdf.setFontSize(18);
+  pdf.text(title, pageWidth / 2, 25, { align: 'center' });
+
+  pdf.setFontSize(10);
+  pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
+
+  pdf.setFontSize(9);
+  let yPos = 38;
+  if (filters.cycleId) {
+    const cycle = cycles.find(c => c.id === filters.cycleId);
+    pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
+    yPos += 5;
+  }
+  if (filters.classId) {
+    const cls = classes.find(c => c.id === filters.classId);
+    pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
+    yPos += 5;
+  }
+  pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
+
+  const tableElement = reportRef.current.querySelector('table');
+  if (tableElement) {
+    // Clona a tabela para não modificar a original
+    const tableClone = tableElement.cloneNode(true) as HTMLElement;
     
-    const tbody = document.createElement('tbody');
-    tbody.appendChild(row.cloneNode(true));
-    tempTable.appendChild(tbody);
+    // Aplica estilos para garantir que a tabela seja renderizada corretamente
+    tableClone.style.width = '100%';
+    tableClone.style.fontSize = '10px';
     
-    document.body.appendChild(tempTable);
-    
+    // Cria um container temporário
+    const tempDiv = document.createElement('div');
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.top = '0';
+    tempDiv.style.width = `${pageWidth * 3.78}px`; // Converte mm para px (aprox)
+    tempDiv.appendChild(tableClone);
+    document.body.appendChild(tempDiv);
+
     try {
-      const canvas = await html2canvas(tempTable, {
-        scale: 1,
+      const canvas = await html2canvas(tableClone, {
+        scale: 2,
+        useCORS: true,
         logging: false,
+        allowTaint: true,
         backgroundColor: '#ffffff',
       });
+
+      const imgData = canvas.toDataURL('image/png');
+      const imgWidth = pageWidth - 20;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      // Altura disponível para conteúdo (considerando margens)
+      const availableHeight = pageHeight - headerHeight - 10;
       
-      return (canvas.height * width) / canvas.width;
-    } finally {
-      document.body.removeChild(tempTable);
-    }
-  };
+      // Se a imagem é maior que a página, dividir em partes
+      if (imgHeight > availableHeight) {
+        // Calcular quantas páginas serão necessárias
+        const numberOfPages = Math.ceil(imgHeight / availableHeight);
+        
+        for (let i = 0; i < numberOfPages; i++) {
+          // Adicionar nova página se não for a primeira
+          if (i > 0) {
+            pdf.addPage();
+          }
 
-  // Função para adicionar cabeçalho em cada página
-  const addHeader = (pageNum: number) => {
-    if (pageNum > 0) {
-      pdf.addPage();
-    }
-
-    const logoWidth = 20;
-    const logoHeight = 15;
-    const logoX = (pageWidth - logoWidth) / 2;
-    pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-
-    pdf.setFontSize(18);
-    pdf.text(title, pageWidth / 2, 25, { align: 'center' });
-
-    pdf.setFontSize(10);
-    pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
-
-    pdf.setFontSize(9);
-    let yPos = 38;
-    if (filters.cycleId) {
-      const cycle = cycles.find(c => c.id === filters.cycleId);
-      pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, yPos);
-      yPos += 5;
-    }
-    if (filters.classId) {
-      const cls = classes.find(c => c.id === filters.classId);
-      pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, yPos);
-      yPos += 5;
-    }
-    pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, yPos);
-  };
-
-  // Capturar a tabela
-  const tableElement = reportRef.current.querySelector('table');
-  if (!tableElement) return;
-
-  // Clonar a tabela para manipulação
-  const tableClone = tableElement.cloneNode(true) as HTMLTableElement;
-  
-  // Aplicar estilos para garantir renderização correta
-  tableClone.style.width = '100%';
-  tableClone.style.fontSize = '10px';
-  tableClone.style.borderCollapse = 'collapse';
-  
-  // Criar container temporário
-  const tempDiv = document.createElement('div');
-  tempDiv.style.position = 'absolute';
-  tempDiv.style.left = '-9999px';
-  tempDiv.style.top = '0';
-  tempDiv.style.width = `${contentWidth * 3.78}px`;
-  tempDiv.appendChild(tableClone);
-  document.body.appendChild(tempDiv);
-
-  try {
-    // Obter todas as linhas do corpo da tabela
-    const tbody = tableClone.querySelector('tbody');
-    if (!tbody) return;
-
-    const rows = Array.from(tbody.querySelectorAll('tr'));
-    const headerRow = tableClone.querySelector('thead tr');
-    
-    if (!headerRow) return;
-
-    // Calcular altura de cada linha antecipadamente
-    const rowHeights = await Promise.all(
-      rows.map(row => getRowHeight(row, contentWidth))
-    );
-
-    let currentPage = 0;
-    let currentY = headerHeight;
-    let startRow = 0;
-    let endRow = 0;
-
-    while (endRow < rows.length) {
-      let pageRows: HTMLElement[] = [];
-      let pageHeight_ = 0;
-      
-      // Acumular linhas que cabem na página atual
-      while (endRow < rows.length) {
-        const nextRowHeight = rowHeights[endRow];
-        if (currentY + pageHeight_ + nextRowHeight <= pageHeight - margin) {
-          pageRows.push(rows[endRow]);
-          pageHeight_ += nextRowHeight;
-          endRow++;
-        } else {
-          break;
+          // Adicionar cabeçalho em cada página
+          pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+          pdf.setFontSize(18);
+          pdf.text(title, pageWidth / 2, 25, { align: 'center' });
+          pdf.setFontSize(10);
+          pdf.text(`Gerado em: ${date}`, pageWidth / 2, 32, { align: 'center' });
+          pdf.setFontSize(9);
+          
+          // Reposicionar informações de filtros
+          let filterYPos = 38;
+          if (filters.cycleId) {
+            const cycle = cycles.find(c => c.id === filters.cycleId);
+            pdf.text(`Ciclo: ${cycle?.name || 'Todos'}`, 15, filterYPos);
+            filterYPos += 5;
+          }
+          if (filters.classId) {
+            const cls = classes.find(c => c.id === filters.classId);
+            pdf.text(`Turma: ${cls?.name || 'Todas'}`, 15, filterYPos);
+            filterYPos += 5;
+          }
+          pdf.text(`Total de Alunos: ${stats.totalStudents} | Frequentes: ${stats.presentCount} | Ausentes: ${stats.absentCount}`, 15, filterYPos);
+          
+          // Calcular a posição Y para esta parte da tabela
+          const startY = headerHeight;
+          
+          // Recortar a imagem para mostrar apenas a parte correspondente a esta página
+          const sourceY = i * (canvas.height / numberOfPages);
+          const sourceHeight = canvas.height / numberOfPages;
+          
+          // Criar um novo canvas apenas com a parte da página atual
+          const pageCanvas = document.createElement('canvas');
+          pageCanvas.width = canvas.width;
+          pageCanvas.height = sourceHeight;
+          const ctx = pageCanvas.getContext('2d');
+          ctx?.drawImage(canvas, 0, sourceY, canvas.width, sourceHeight, 0, 0, canvas.width, sourceHeight);
+          
+          const pageImgData = pageCanvas.toDataURL('image/png');
+          const pageImgHeight = (sourceHeight * imgWidth) / canvas.width;
+          
+          pdf.addImage(pageImgData, 'PNG', 10, startY, imgWidth, pageImgHeight);
         }
+      } else {
+        // Se a tabela cabe em uma página
+        pdf.addImage(imgData, 'PNG', 10, headerHeight, imgWidth, imgHeight);
       }
-
-      if (pageRows.length === 0 && endRow < rows.length) {
-        // Se uma linha não cabe sozinha na página, força ela a entrar
-        pageRows.push(rows[endRow]);
-        endRow++;
-      }
-
-      // Criar tabela para esta página
-      const pageTable = document.createElement('table');
-      pageTable.style.width = '100%';
-      pageTable.style.fontSize = '10px';
-      pageTable.style.borderCollapse = 'collapse';
-      
-      const pageThead = document.createElement('thead');
-      pageThead.appendChild(headerRow.cloneNode(true));
-      pageTable.appendChild(pageThead);
-      
-      const pageTbody = document.createElement('tbody');
-      pageRows.forEach(row => pageTbody.appendChild(row.cloneNode(true)));
-      pageTable.appendChild(pageTbody);
-
-      // Adicionar ao DOM temporário
-      const pageDiv = document.createElement('div');
-      pageDiv.appendChild(pageTable);
-      document.body.appendChild(pageDiv);
-
-      try {
-        // Renderizar tabela da página
-        const canvas = await html2canvas(pageTable, {
-          scale: 2,
-          useCORS: true,
-          logging: false,
-          allowTaint: true,
-          backgroundColor: '#ffffff',
-        });
-
-        addHeader(currentPage);
-        
-        const imgData = canvas.toDataURL('image/png');
-        const imgHeight = (canvas.height * contentWidth) / canvas.width;
-        
-        pdf.addImage(imgData, 'PNG', margin, currentY, contentWidth, imgHeight);
-        
-        currentPage++;
-      } finally {
-        pageDiv.remove();
-      }
+    } finally {
+      // Remover o elemento temporário
+      document.body.removeChild(tempDiv);
     }
-  } finally {
-    document.body.removeChild(tempDiv);
   }
-
-  pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
-};
-// Função auxiliar para calcular altura de uma linha
-const getRowHeight = async (row: HTMLElement, contentWidth: number): Promise<number> => {
-  const tempTable = document.createElement('table');
-  tempTable.style.width = '100%';
-  tempTable.style.fontSize = '10px';
-  tempTable.style.borderCollapse = 'collapse';
-  tempTable.style.position = 'absolute';
-  tempTable.style.left = '-9999px';
-  tempTable.style.top = '0';
-  tempTable.style.width = `${contentWidth * 3.78}px`;
-  
-  const tbody = document.createElement('tbody');
-  tbody.appendChild(row.cloneNode(true));
-  tempTable.appendChild(tbody);
-  
-  document.body.appendChild(tempTable);
-  
-  try {
-    const canvas = await html2canvas(tempTable, {
-      scale: 1,
-      logging: false,
-      backgroundColor: '#ffffff',
-    });
-    
-    return (canvas.height * contentWidth) / canvas.width;
-  } finally {
-    document.body.removeChild(tempTable);
-  }
-};
 
   pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
 };
