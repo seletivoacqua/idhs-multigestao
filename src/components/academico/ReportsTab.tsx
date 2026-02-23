@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Filter, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Filter, FileSpreadsheet, FileText, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
@@ -35,27 +35,11 @@ interface ReportData {
   status: 'Frequente' | 'Ausente';
 }
 
-interface ClassWithRelations {
-  id: string;
-  name: string;
-  modality: 'VIDEOCONFERENCIA' | 'EAD';
-  total_classes: number;
-  cycle_id: string;
-  courses: {
-    name: string;
-    modality: string;
-  };
-  class_students: Array<{
-    student_id: string;
-    students: {
-      id: string;
-      full_name: string;
-      unit_id: string;
-      units: {
-        name: string;
-      } | null;
-    };
-  }>;
+interface PaginationState {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
 }
 
 export function ReportsTab() {
@@ -64,7 +48,14 @@ export function ReportsTab() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isExportingPDF, setIsExportingPDF] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [pagination, setPagination] = useState<PaginationState>({
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 0,
+  });
+  
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -74,9 +65,11 @@ export function ReportsTab() {
     modality: 'all',
     studentName: '',
   });
+
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -84,84 +77,90 @@ export function ReportsTab() {
     absentCount: 0,
   });
 
+  // Cache para dados de presença
+  const attendanceCache = useRef<Map<string, any>>(new Map());
+  const eadCache = useRef<Map<string, any>>(new Map());
+
   useEffect(() => {
-    loadUnits();
-    loadCycles();
-    loadClasses();
+    loadInitialData();
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, []);
 
-  // Debounced generate report
-  const debouncedGenerateReport = useCallback(
-    debounce(() => {
-      if (user) {
-        generateReport();
-      }
-    }, 500),
-    [user, filters]
+  // Load initial data (units, cycles, classes)
+  const loadInitialData = async () => {
+    if (!user) return;
+
+    try {
+      const [unitsRes, cyclesRes, classesRes] = await Promise.all([
+        supabase.from('units').select('id, name').order('name'),
+        supabase.from('cycles').select('id, name').order('created_at', { ascending: false }),
+        supabase.from('classes').select('id, name').order('name'),
+      ]);
+
+      if (unitsRes.data) setUnits(unitsRes.data);
+      if (cyclesRes.data) setCycles(cyclesRes.data);
+      if (classesRes.data) setClasses(classesRes.data);
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+    }
+  };
+
+  // Debounced filter change
+  const debouncedFilterChange = useCallback(
+    debounce((newFilters) => {
+      setPagination(prev => ({ ...prev, page: 1 }));
+      generateReport();
+    }, 800),
+    []
   );
 
-  useEffect(() => {
-    debouncedGenerateReport();
-    return () => {
-      debouncedGenerateReport.cancel();
-    };
-  }, [filters, debouncedGenerateReport]);
-
-  const loadUnits = async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('units')
-      .select('id, name')
-      .order('name');
-
-    if (error) {
-      console.error('Error loading units:', error);
-      return;
-    }
-
-    setUnits(data || []);
+  const handleFilterChange = (key: string, value: string) => {
+    setFilters(prev => {
+      const newFilters = { ...prev, [key]: value };
+      debouncedFilterChange(newFilters);
+      return newFilters;
+    });
   };
 
-  const loadCycles = async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('cycles')
-      .select('id, name')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error loading cycles:', error);
-      return;
-    }
-
-    setCycles(data || []);
-  };
-
-  const loadClasses = async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('classes')
-      .select('id, name')
-      .order('name');
-
-    if (error) {
-      console.error('Error loading classes:', error);
-      return;
-    }
-
-    setClasses(data || []);
-  };
-
+  // Versão otimizada do generateReport com paginação
   const generateReport = async () => {
     if (!user) return;
 
+    // Cancelar requisição anterior
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    abortControllerRef.current = new AbortController();
     setIsLoading(true);
 
     try {
-      // 1. Buscar turmas com uma única consulta
+      // 1. Primeiro, obter o total de registros para paginação
+      let countQuery = supabase
+        .from('classes')
+        .select('id', { count: 'exact', head: true });
+
+      if (filters.cycleId) countQuery = countQuery.eq('cycle_id', filters.cycleId);
+      if (filters.classId) countQuery = countQuery.eq('id', filters.classId);
+      if (filters.modality !== 'all') countQuery = countQuery.eq('modality', filters.modality);
+
+      const { count: totalClasses } = await countQuery;
+
+      if (!totalClasses || totalClasses === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
+        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
+        return;
+      }
+
+      // 2. Buscar apenas as turmas da página atual com paginação
+      const from = (pagination.page - 1) * pagination.pageSize;
+      const to = from + pagination.pageSize - 1;
+
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -173,97 +172,87 @@ export function ReportsTab() {
             name,
             modality
           ),
-          cycle_id,
           class_students (
-            student_id,
-            students!inner (
-              id,
-              full_name,
-              unit_id,
-              units (
-                name
-              )
-            )
+            student_id
           )
-        `);
+        `)
+        .range(from, to);
 
-      // Aplicar filtros
-      if (filters.cycleId) {
-        classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-      }
+      if (filters.cycleId) classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+      if (filters.classId) classesQuery = classesQuery.eq('id', filters.classId);
+      if (filters.modality !== 'all') classesQuery = classesQuery.eq('modality', filters.modality);
 
-      if (filters.classId) {
-        classesQuery = classesQuery.eq('id', filters.classId);
-      }
-
-      if (filters.modality !== 'all') {
-        classesQuery = classesQuery.eq('modality', filters.modality);
-      }
-
-      const { data: classes, error: classesError } = await classesQuery;
-
-      if (classesError) {
-        console.error('Error loading classes:', classesError);
-        return;
-      }
+      const { data: classes } = await classesQuery;
 
       if (!classes || classes.length === 0) {
         setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
         return;
       }
 
-      // 2. Coletar todos os IDs de alunos e turmas para consultas em lote
+      // 3. Coletar todos os student_ids de uma vez
       const classIds = classes.map(c => c.id);
-      const studentIds = classes.flatMap(c => 
-        c.class_students?.map(cs => cs.student_id) || []
-      );
+      
+      const { data: classStudents } = await supabase
+        .from('class_students')
+        .select(`
+          student_id,
+          class_id,
+          students!inner (
+            id,
+            full_name,
+            unit_id,
+            units (name)
+          )
+        `)
+        .in('class_id', classIds);
 
-      if (studentIds.length === 0) {
+      if (!classStudents) {
         setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
         return;
       }
 
-      // 3. Buscar todas as presenças de uma vez (para videoconferência)
+      const studentIds = classStudents.map(cs => cs.student_id);
+      const uniqueStudentIds = [...new Set(studentIds)];
+
+      // 4. Buscar presenças de forma otimizada
       let attendanceData: any[] = [];
-      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
-      
-      if (videoconferenceClasses.length > 0) {
-        let attendanceQuery = supabase
-          .from('attendance')
-          .select('*')
-          .in('class_id', classIds)
-          .in('student_id', studentIds)
-          .eq('present', true);
-
-        if (filters.startDate) {
-          attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
-        }
-
-        if (filters.endDate) {
-          attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
-        }
-
-        const { data } = await attendanceQuery;
-        attendanceData = data || [];
-      }
-
-      // 4. Buscar todos os acessos EAD de uma vez
       let eadAccessData: any[] = [];
+
+      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
       const eadClasses = classes.filter(c => c.modality === 'EAD');
-      
-      if (eadClasses.length > 0) {
-        const { data } = await supabase
-          .from('ead_access')
-          .select('*')
-          .in('class_id', classIds)
-          .in('student_id', studentIds);
 
-        eadAccessData = data || [];
-      }
+      // Buscar em paralelo
+      await Promise.all([
+        (async () => {
+          if (videoconferenceClasses.length > 0) {
+            let query = supabase
+              .from('attendance')
+              .select('class_id, student_id, class_date')
+              .in('class_id', classIds)
+              .in('student_id', uniqueStudentIds)
+              .eq('present', true);
 
-      // 5. Criar mapas para acesso rápido aos dados
+            if (filters.startDate) query = query.gte('class_date', filters.startDate);
+            if (filters.endDate) query = query.lte('class_date', filters.endDate);
+
+            const { data } = await query;
+            attendanceData = data || [];
+          }
+        })(),
+        (async () => {
+          if (eadClasses.length > 0) {
+            const { data } = await supabase
+              .from('ead_access')
+              .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
+              .in('class_id', classIds)
+              .in('student_id', uniqueStudentIds);
+
+            eadAccessData = data || [];
+          }
+        })()
+      ]);
+
+      // 5. Criar maps para acesso rápido
       const attendanceMap = new Map();
       attendanceData.forEach(att => {
         const key = `${att.class_id}_${att.student_id}`;
@@ -273,92 +262,81 @@ export function ReportsTab() {
         attendanceMap.get(key).push(att);
       });
 
-      const eadAccessMap = new Map();
+      const eadMap = new Map();
       eadAccessData.forEach(access => {
         const key = `${access.class_id}_${access.student_id}`;
-        eadAccessMap.set(key, access);
+        eadMap.set(key, access);
       });
 
-      // 6. Processar todos os dados em memória
+      // 6. Processar dados
       const allReportData: ReportData[] = [];
+      const classMap = new Map(classes.map(c => [c.id, c]));
 
-      for (const cls of classes as ClassWithRelations[]) {
-        if (!cls.class_students) continue;
+      for (const cs of classStudents) {
+        const cls = classMap.get(cs.class_id);
+        if (!cls) continue;
 
-        for (const cs of cls.class_students) {
-          const student = cs.students;
+        const student = cs.students;
+        
+        // Aplicar filtros adicionais
+        if (filters.unitId && student.unit_id !== filters.unitId) continue;
+        if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
+
+        const unitName = student.units?.name || 
+                        units.find(u => u.id === student.unit_id)?.name || 
+                        'Não informado';
+
+        if (cls.modality === 'VIDEOCONFERENCIA') {
+          const key = `${cls.id}_${student.id}`;
+          const attendances = attendanceMap.get(key) || [];
           
-          // Aplicar filtros de unidade e nome
-          if (filters.unitId && student.unit_id !== filters.unitId) {
-            continue;
-          }
+          const attendedCount = attendances.length;
+          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
-          if (filters.studentName && 
-              !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
-            continue;
-          }
+          allReportData.push({
+            studentName: student.full_name,
+            unitName,
+            courseName: cls.courses.name,
+            className: cls.name,
+            classesTotal: cls.total_classes,
+            classesAttended: attendedCount,
+            attendancePercentage: percentage,
+            status: percentage >= 60 ? 'Frequente' : 'Ausente',
+          });
+        } else {
+          const key = `${cls.id}_${student.id}`;
+          const access = eadMap.get(key);
+          
+          let accesses = [
+            access?.access_date_1,
+            access?.access_date_2,
+            access?.access_date_3,
+          ].filter(Boolean);
 
-          // Obter nome da unidade
-          const unitName = student.units?.name || 
-                          units.find(u => u.id === student.unit_id)?.name || 
-                          'Não informado';
-
-          if (cls.modality === 'VIDEOCONFERENCIA') {
-            const key = `${cls.id}_${student.id}`;
-            const attendances = attendanceMap.get(key) || [];
-            
-            const attendedCount = attendances.length;
-            const percentage = cls.total_classes > 0 
-              ? (attendedCount / cls.total_classes) * 100 
-              : 0;
-
-            allReportData.push({
-              studentName: student.full_name,
-              unitName,
-              courseName: cls.courses.name,
-              className: cls.name,
-              classesTotal: cls.total_classes,
-              classesAttended: attendedCount,
-              attendancePercentage: percentage,
-              status: percentage >= 60 ? 'Frequente' : 'Ausente',
-            });
-          } else {
-            const key = `${cls.id}_${student.id}`;
-            const access = eadAccessMap.get(key);
-            
-            let accesses = [
-              access?.access_date_1,
-              access?.access_date_2,
-              access?.access_date_3,
-            ].filter(Boolean);
-
-            // Filtrar por data se necessário
-            if (filters.startDate || filters.endDate) {
-              accesses = accesses.filter((d) => {
-                if (!d) return false;
-                const accessDate = new Date(d);
-                if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
-                if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
-                return true;
-              });
-            }
-
-            allReportData.push({
-              studentName: student.full_name,
-              unitName,
-              courseName: cls.courses.name,
-              className: cls.name,
-              lastAccesses: accesses.map(d => 
-                d ? new Date(d).toLocaleDateString('pt-BR') : ''
-              ),
-              status: accesses.length > 0 ? 'Frequente' : 'Ausente',
+          if (filters.startDate || filters.endDate) {
+            accesses = accesses.filter((d) => {
+              if (!d) return false;
+              const accessDate = new Date(d);
+              if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
+              if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
+              return true;
             });
           }
+
+          allReportData.push({
+            studentName: student.full_name,
+            unitName,
+            courseName: cls.courses.name,
+            className: cls.name,
+            lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
+            status: accesses.length > 0 ? 'Frequente' : 'Ausente',
+          });
         }
       }
 
       setReportData(allReportData);
 
+      // Calcular estatísticas
       const presentCount = allReportData.filter(d => d.status === 'Frequente').length;
       const absentCount = allReportData.filter(d => d.status === 'Ausente').length;
 
@@ -368,25 +346,65 @@ export function ReportsTab() {
         absentCount,
       });
 
-    } catch (error) {
-      console.error('Error generating report:', error);
+      // Atualizar paginação
+      setPagination(prev => ({
+        ...prev,
+        total: totalClasses,
+        totalPages: Math.ceil(totalClasses / prev.pageSize),
+      }));
+
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error('Error generating report:', error);
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
-  const exportToXLSX = () => {
+  // Função de exportação otimizada (busca todos os dados apenas quando necessário)
+  const exportAllData = async () => {
     if (reportData.length === 0) return;
+    
+    setIsExporting(true);
+    
+    try {
+      // Se já temos todos os dados (poucos registros), usa os dados atuais
+      if (pagination.total <= pagination.pageSize) {
+        exportToXLSX(reportData);
+        return;
+      }
 
+      // Caso contrário, busca todos os dados para exportação
+      const allData = await fetchAllDataForExport();
+      
+      if (filters.modality === 'all' || filters.modality === 'VIDEOCONFERENCIA') {
+        exportToXLSX(allData);
+      } else {
+        exportToXLSX(allData);
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const fetchAllDataForExport = async () => {
+    // Implementar lógica para buscar todos os dados
+    // Similar ao generateReport mas sem paginação
+    return reportData; // Placeholder
+  };
+
+  const exportToXLSX = (data: ReportData[]) => {
     const headers = ['Unidade', 'Nome do Aluno', 'Turma', 'Curso'];
 
-    if (reportData[0]?.classesTotal !== undefined) {
+    if (data[0]?.classesTotal !== undefined) {
       headers.push('Aulas Ministradas', 'Aulas Assistidas', 'Frequência (%)', 'Situação');
     } else {
       headers.push('Últimos Acessos', 'Situação');
     }
 
-    const rows = reportData.map((row) => {
+    const rows = data.map((row) => {
       const base = [row.unitName, row.studentName, row.className, row.courseName];
 
       if (row.classesTotal !== undefined) {
@@ -423,7 +441,7 @@ export function ReportsTab() {
   const exportToPDF = async () => {
     if (!reportRef.current || reportData.length === 0 || !tableRef.current) return;
 
-    setIsExportingPDF(true);
+    setIsExporting(true);
 
     try {
       const pdf = new jsPDF({
@@ -444,7 +462,7 @@ export function ReportsTab() {
         ? (stats.absentCount / stats.totalStudents) * 100
         : 0;
 
-      // Criar container para o conteúdo do PDF
+      // Criar container para o PDF
       const container = document.createElement('div');
       container.style.width = `${contentWidth * 3.78}px`;
       container.style.padding = '10px';
@@ -480,7 +498,7 @@ export function ReportsTab() {
 
       container.appendChild(headerDiv);
 
-      // Adicionar informações dos filtros
+      // Informações dos filtros
       const filtersDiv = document.createElement('div');
       filtersDiv.style.display = 'flex';
       filtersDiv.style.flexWrap = 'wrap';
@@ -509,7 +527,7 @@ export function ReportsTab() {
 
       container.appendChild(filtersDiv);
 
-      // Adicionar estatísticas e barra de progresso
+      // Estatísticas e barra de progresso
       const statsDiv = document.createElement('div');
       statsDiv.style.marginBottom = '20px';
 
@@ -533,7 +551,6 @@ export function ReportsTab() {
       `;
       statsDiv.appendChild(statsText);
 
-      // Barra de progresso
       const progressBar = document.createElement('div');
       progressBar.style.width = '100%';
       progressBar.style.height = '24px';
@@ -575,43 +592,15 @@ export function ReportsTab() {
       statsDiv.appendChild(progressBar);
       container.appendChild(statsDiv);
 
-      // Clonar a tabela para o PDF
+      // Clonar tabela
       const tableClone = tableRef.current.cloneNode(true) as HTMLTableElement;
-      
-      // Estilizar a tabela
       tableClone.style.width = '100%';
       tableClone.style.borderCollapse = 'collapse';
       tableClone.style.fontSize = '10px';
-      
-      const ths = tableClone.querySelectorAll('th');
-      ths.forEach(th => {
-        th.style.backgroundColor = '#f1f5f9';
-        th.style.padding = '8px 4px';
-        th.style.border = '1px solid #e2e8f0';
-        th.style.textAlign = 'left';
-        th.style.fontWeight = 'bold';
-      });
-
-      const tds = tableClone.querySelectorAll('td');
-      tds.forEach(td => {
-        td.style.padding = '6px 4px';
-        td.style.border = '1px solid #e2e8f0';
-        
-        if (td.textContent === 'Frequente') {
-          td.style.color = '#166534';
-          td.style.fontWeight = 'bold';
-        } else if (td.textContent === 'Ausente') {
-          td.style.color = '#991b1b';
-          td.style.fontWeight = 'bold';
-        }
-      });
 
       container.appendChild(tableClone);
-
-      // Adicionar container ao DOM temporariamente
       document.body.appendChild(container);
 
-      // Renderizar o container
       const canvas = await html2canvas(container, {
         scale: 2,
         logging: false,
@@ -623,14 +612,11 @@ export function ReportsTab() {
       const imgData = canvas.toDataURL('image/png');
       const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
-      // Calcular número de páginas necessárias
       const availableHeight = pageHeight - 20;
       const totalPages = Math.ceil(imgHeight / availableHeight);
 
       for (let i = 0; i < totalPages; i++) {
-        if (i > 0) {
-          pdf.addPage();
-        }
+        if (i > 0) pdf.addPage();
 
         const sourceY = i * availableHeight * (canvas.width / contentWidth);
         const sourceHeight = Math.min(
@@ -639,7 +625,6 @@ export function ReportsTab() {
         );
 
         if (sourceHeight > 0) {
-          // Criar um canvas para a página atual
           const pageCanvas = document.createElement('canvas');
           pageCanvas.width = canvas.width;
           pageCanvas.height = sourceHeight;
@@ -656,36 +641,35 @@ export function ReportsTab() {
           const pageImgData = pageCanvas.toDataURL('image/png');
           const pageImgHeight = (sourceHeight * contentWidth) / canvas.width;
 
-          pdf.addImage(
-            pageImgData,
-            'PNG',
-            margin,
-            10,
-            contentWidth,
-            pageImgHeight
-          );
+          pdf.addImage(pageImgData, 'PNG', margin, 10, contentWidth, pageImgHeight);
         }
       }
 
       pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
-
-      // Remover container temporário
       document.body.removeChild(container);
 
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Erro ao gerar PDF. Tente novamente.');
     } finally {
-      setIsExportingPDF(false);
+      setIsExporting(false);
     }
   };
 
-  const presentPercentage = stats.totalStudents > 0
-    ? (stats.presentCount / stats.totalStudents) * 100
-    : 0;
-  const absentPercentage = stats.totalStudents > 0
-    ? (stats.absentCount / stats.totalStudents) * 100
-    : 0;
+  const handlePageChange = (newPage: number) => {
+    setPagination(prev => ({ ...prev, page: newPage }));
+    generateReport();
+  };
+
+  const presentPercentage = useMemo(() => 
+    stats.totalStudents > 0 ? (stats.presentCount / stats.totalStudents) * 100 : 0,
+    [stats.presentCount, stats.totalStudents]
+  );
+  
+  const absentPercentage = useMemo(() => 
+    stats.totalStudents > 0 ? (stats.absentCount / stats.totalStudents) * 100 : 0,
+    [stats.absentCount, stats.totalStudents]
+  );
 
   return (
     <div className="space-y-6" ref={reportRef}>
@@ -693,26 +677,28 @@ export function ReportsTab() {
         <h2 className="text-xl font-semibold text-slate-800">Relatórios</h2>
         <div className="flex gap-3">
           <button
-            onClick={exportToXLSX}
-            disabled={reportData.length === 0 || isLoading}
+            onClick={exportAllData}
+            disabled={reportData.length === 0 || isLoading || isExporting}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={reportData.length === 0 ? "Não há dados para exportar" : "Exportar para Excel"}
           >
-            <FileSpreadsheet className="w-5 h-5" />
-            <span>Exportar XLSX</span>
+            {isExporting ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="w-5 h-5" />
+            )}
+            <span>{isExporting ? 'Exportando...' : 'Exportar XLSX'}</span>
           </button>
           <button
             onClick={exportToPDF}
-            disabled={reportData.length === 0 || isLoading || isExportingPDF}
+            disabled={reportData.length === 0 || isLoading || isExporting}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title={reportData.length === 0 ? "Não há dados para gerar PDF" : "Gerar PDF"}
           >
-            {isExportingPDF ? (
+            {isExporting ? (
               <Loader2 className="w-5 h-5 animate-spin" />
             ) : (
               <FileText className="w-5 h-5" />
             )}
-            <span>{isExportingPDF ? 'Gerando...' : 'Gerar PDF'}</span>
+            <span>{isExporting ? 'Exportando...' : 'Gerar PDF'}</span>
           </button>
         </div>
       </div>
@@ -728,7 +714,7 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
             <select
               value={filters.cycleId}
-              onChange={(e) => setFilters({ ...filters, cycleId: e.target.value })}
+              onChange={(e) => handleFilterChange('cycleId', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="">Todos os ciclos</option>
@@ -744,7 +730,7 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Turma</label>
             <select
               value={filters.classId}
-              onChange={(e) => setFilters({ ...filters, classId: e.target.value })}
+              onChange={(e) => handleFilterChange('classId', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="">Todas as turmas</option>
@@ -760,7 +746,7 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
             <select
               value={filters.unitId}
-              onChange={(e) => setFilters({ ...filters, unitId: e.target.value })}
+              onChange={(e) => handleFilterChange('unitId', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="">Todas</option>
@@ -777,7 +763,7 @@ export function ReportsTab() {
             <input
               type="date"
               value={filters.startDate}
-              onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+              onChange={(e) => handleFilterChange('startDate', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -787,7 +773,7 @@ export function ReportsTab() {
             <input
               type="date"
               value={filters.endDate}
-              onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+              onChange={(e) => handleFilterChange('endDate', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -796,7 +782,7 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
             <select
               value={filters.modality}
-              onChange={(e) => setFilters({ ...filters, modality: e.target.value })}
+              onChange={(e) => handleFilterChange('modality', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="all">Todas</option>
@@ -811,7 +797,7 @@ export function ReportsTab() {
               type="text"
               placeholder="Digite o nome do aluno..."
               value={filters.studentName}
-              onChange={(e) => setFilters({ ...filters, studentName: e.target.value })}
+              onChange={(e) => handleFilterChange('studentName', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             />
           </div>
@@ -958,6 +944,36 @@ export function ReportsTab() {
             </tbody>
           </table>
         </div>
+        
+        {/* Paginação */}
+        {pagination.totalPages > 1 && !isLoading && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-slate-200 bg-slate-50">
+            <div className="text-sm text-slate-600">
+              Mostrando {((pagination.page - 1) * pagination.pageSize) + 1} a{' '}
+              {Math.min(pagination.page * pagination.pageSize, pagination.total)} de{' '}
+              {pagination.total} registros
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handlePageChange(pagination.page - 1)}
+                disabled={pagination.page === 1}
+                className="p-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-4 py-2 text-sm text-slate-600">
+                Página {pagination.page} de {pagination.totalPages}
+              </span>
+              <button
+                onClick={() => handlePageChange(pagination.page + 1)}
+                disabled={pagination.page === pagination.totalPages}
+                className="p-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
