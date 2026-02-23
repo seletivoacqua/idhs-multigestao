@@ -596,11 +596,8 @@ export function ReportsTab() {
         logging: false,
         backgroundColor: '#ffffff',
         allowTaint: true,
-        useCORS: false,
+        useCORS: true,
         windowWidth: 1200,
-        ignoreElements: (element) => {
-          return element.tagName === 'IMG';
-        }
       });
 
       const imgData = canvas.toDataURL('image/png');
@@ -615,20 +612,33 @@ export function ReportsTab() {
       const margin = 10;
       const contentWidth = pageWidth - 2 * margin;
 
+      // Adicionar logo no topo da primeira página
+      const logoWidth = 20;
+      const logoHeight = 15;
+      const logoX = (pageWidth - logoWidth) / 2;
+      pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+
       const imgHeight = (canvas.height * contentWidth) / canvas.width;
       let heightLeft = imgHeight;
       let position = 0;
 
+      // Ajustar posição inicial para não sobrepor o logo
+      const contentStartY = margin + 20;
+
       // Adicionar primeira página
-      pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight - 2 * margin;
+      pdf.addImage(imgData, 'PNG', margin, contentStartY + position, contentWidth, imgHeight, undefined, 'FAST');
+      heightLeft -= pageHeight - contentStartY - margin;
 
       // Adicionar páginas adicionais se necessário
       while (heightLeft > 0) {
         position = heightLeft - imgHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', margin, margin + position, contentWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight - 2 * margin;
+
+        // Adicionar logo em cada página
+        pdf.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+
+        pdf.addImage(imgData, 'PNG', margin, contentStartY + position, contentWidth, imgHeight, undefined, 'FAST');
+        heightLeft -= pageHeight - contentStartY - margin;
       }
 
       pdf.save(`relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
