@@ -92,7 +92,7 @@ async function updateStudentStatus(classId: string, studentId: string, classData
     const today = new Date().toISOString().split('T')[0];
     const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
 
-    let currentStatus = 'em_andamento';
+    let currentStatus = studentData?.current_status || 'matriculado';
 
     // Se o ciclo não estiver mais ativo, calcular status final
     if (!isCycleActive) {
@@ -1077,7 +1077,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       student_id: studentId,
       enrollment_type: enrollmentType,
       enrollment_date: enrollmentDate,
-      current_status: 'em_andamento',
+      current_status: 'matriculado',
       status_updated_at: new Date().toISOString(),
     }));
 

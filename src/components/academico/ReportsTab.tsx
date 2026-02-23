@@ -150,28 +150,7 @@ export function ReportsTab() {
     setIsLoading(true);
 
     try {
-      // 1. Primeiro, obter o total de registros para paginação
-      let countQuery = supabase
-        .from('classes')
-        .select('id', { count: 'exact', head: true });
-
-      if (filters.cycleId) countQuery = countQuery.eq('cycle_id', filters.cycleId);
-      if (filters.classId) countQuery = countQuery.eq('id', filters.classId);
-      if (filters.modality !== 'all') countQuery = countQuery.eq('modality', filters.modality);
-
-      const { count: totalClasses } = await countQuery;
-
-      if (!totalClasses || totalClasses === 0) {
-        setReportData([]);
-        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
-        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
-        return;
-      }
-
-      // 2. Buscar apenas as turmas da página atual com paginação
-      const from = (pagination.page - 1) * pagination.pageSize;
-      const to = from + pagination.pageSize - 1;
-
+      // Buscar turmas com limite para performance
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -179,31 +158,27 @@ export function ReportsTab() {
           name,
           modality,
           total_classes,
-          courses!inner (
-            name,
-            modality
-          ),
-          class_students (
-            student_id
-          )
+          courses!inner (name)
         `)
-        .range(from, to);
+        .limit(100);
 
       if (filters.cycleId) classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
       if (filters.classId) classesQuery = classesQuery.eq('id', filters.classId);
       if (filters.modality !== 'all') classesQuery = classesQuery.eq('modality', filters.modality);
 
-      const { data: classes } = await classesQuery;
+      const { data: classes, error: classesError } = await classesQuery;
 
-      if (!classes || classes.length === 0) {
+      if (classesError || !classes || classes.length === 0) {
         setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
+        setPagination(prev => ({ ...prev, total: 0, totalPages: 1 }));
         return;
       }
 
-      // 3. Coletar todos os student_ids de uma vez
       const classIds = classes.map(c => c.id);
-      
-      const { data: classStudents } = await supabase
+
+      // Buscar alunos matriculados com filtros
+      let studentsQuery = supabase
         .from('class_students')
         .select(`
           student_id,
@@ -217,50 +192,60 @@ export function ReportsTab() {
         `)
         .in('class_id', classIds);
 
-      if (!classStudents) {
+      if (filters.unitId) {
+        studentsQuery = studentsQuery.eq('students.unit_id', filters.unitId);
+      }
+
+      const { data: classStudents, error: studentsError } = await studentsQuery;
+
+      if (studentsError || !classStudents || classStudents.length === 0) {
         setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
         return;
       }
 
-      const studentIds = classStudents.map(cs => cs.student_id);
-      const uniqueStudentIds = [...new Set(studentIds)];
+      // Aplicar filtro de nome do aluno no frontend (mais rápido que no backend)
+      const filteredStudents = filters.studentName
+        ? classStudents.filter(cs =>
+            cs.students.full_name.toLowerCase().includes(filters.studentName.toLowerCase())
+          )
+        : classStudents;
 
-      // 4. Buscar presenças de forma otimizada
-      let attendanceData: any[] = [];
-      let eadAccessData: any[] = [];
+      if (filteredStudents.length === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, presentCount: 0, absentCount: 0 });
+        return;
+      }
 
-      const videoconferenceClasses = classes.filter(c => c.modality === 'VIDEOCONFERENCIA');
-      const eadClasses = classes.filter(c => c.modality === 'EAD');
+      const studentIds = [...new Set(filteredStudents.map(cs => cs.student_id))];
+      const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
+      const eadClassIds = classes.filter(c => c.modality === 'EAD').map(c => c.id);
 
-      // Buscar em paralelo
-      await Promise.all([
-        (async () => {
-          if (videoconferenceClasses.length > 0) {
-            let query = supabase
-              .from('attendance')
-              .select('class_id, student_id, class_date')
-              .in('class_id', classIds)
-              .in('student_id', uniqueStudentIds)
-              .eq('present', true);
+      // Buscar dados de presença em paralelo, apenas para as turmas necessárias
+      const [attendanceData, eadAccessData] = await Promise.all([
+        videoClassIds.length > 0 ? (async () => {
+          let query = supabase
+            .from('attendance')
+            .select('class_id, student_id, status')
+            .in('class_id', videoClassIds)
+            .in('student_id', studentIds)
+            .eq('status', 'present');
 
-            if (filters.startDate) query = query.gte('class_date', filters.startDate);
-            if (filters.endDate) query = query.lte('class_date', filters.endDate);
+          if (filters.startDate) query = query.gte('class_date', filters.startDate);
+          if (filters.endDate) query = query.lte('class_date', filters.endDate);
 
-            const { data } = await query;
-            attendanceData = data || [];
-          }
-        })(),
-        (async () => {
-          if (eadClasses.length > 0) {
-            const { data } = await supabase
-              .from('ead_access')
-              .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
-              .in('class_id', classIds)
-              .in('student_id', uniqueStudentIds);
+          const { data } = await query;
+          return data || [];
+        })() : Promise.resolve([]),
 
-            eadAccessData = data || [];
-          }
-        })()
+        eadClassIds.length > 0 ? (async () => {
+          const { data } = await supabase
+            .from('ead_class_access')
+            .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
+            .in('class_id', eadClassIds)
+            .in('student_id', studentIds);
+          return data || [];
+        })() : Promise.resolve([])
       ]);
 
       // 5. Criar maps para acesso rápido
@@ -279,32 +264,24 @@ export function ReportsTab() {
         eadMap.set(key, access);
       });
 
-      // 6. Processar dados
-      const allReportData: ReportData[] = [];
+      // Criar maps para acesso rápido
       const classMap = new Map(classes.map(c => [c.id, c]));
 
-      for (const cs of classStudents) {
+      // Processar dados de forma otimizada
+      const allReportData: ReportData[] = filteredStudents.map(cs => {
         const cls = classMap.get(cs.class_id);
-        if (!cls) continue;
+        if (!cls) return null;
 
         const student = cs.students;
-        
-        // Aplicar filtros adicionais
-        if (filters.unitId && student.unit_id !== filters.unitId) continue;
-        if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
-
-        const unitName = student.units?.name || 
-                        units.find(u => u.id === student.unit_id)?.name || 
-                        'Não informado';
+        const unitName = student.units?.name || 'Não informado';
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}_${student.id}`;
           const attendances = attendanceMap.get(key) || [];
-          
           const attendedCount = attendances.length;
           const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
 
-          allReportData.push({
+          return {
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
@@ -313,11 +290,11 @@ export function ReportsTab() {
             classesAttended: attendedCount,
             attendancePercentage: percentage,
             status: percentage >= 60 ? 'Frequente' : 'Ausente',
-          });
+          } as ReportData;
         } else {
           const key = `${cls.id}_${student.id}`;
           const access = eadMap.get(key);
-          
+
           let accesses = [
             access?.access_date_1,
             access?.access_date_2,
@@ -334,34 +311,32 @@ export function ReportsTab() {
             });
           }
 
-          allReportData.push({
+          return {
             studentName: student.full_name,
             unitName,
             courseName: cls.courses.name,
             className: cls.name,
             lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
             status: accesses.length > 0 ? 'Frequente' : 'Ausente',
-          });
+          } as ReportData;
         }
-      }
+      }).filter(Boolean) as ReportData[];
 
       setReportData(allReportData);
 
-      // Calcular estatísticas
-      const presentCount = allReportData.filter(d => d.status === 'Frequente').length;
-      const absentCount = allReportData.filter(d => d.status === 'Ausente').length;
+      // Calcular estatísticas de forma otimizada
+      const presentCount = allReportData.reduce((count, d) => count + (d.status === 'Frequente' ? 1 : 0), 0);
 
       setStats({
         totalStudents: allReportData.length,
         presentCount,
-        absentCount,
+        absentCount: allReportData.length - presentCount,
       });
 
-      // Atualizar paginação
       setPagination(prev => ({
         ...prev,
-        total: totalClasses,
-        totalPages: Math.ceil(totalClasses / prev.pageSize),
+        total: allReportData.length,
+        totalPages: 1,
       }));
 
     } catch (error: any) {
