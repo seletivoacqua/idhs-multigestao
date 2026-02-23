@@ -9,5 +9,4 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-}
 export type UserModule = 'financeiro' | 'academico';
