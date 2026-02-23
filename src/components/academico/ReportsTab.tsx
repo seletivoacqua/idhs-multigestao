@@ -7,7 +7,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
 
-// Implementação manual do debounce (removendo dependência do lodash)
+// Implementação manual do debounce
 function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number
@@ -38,6 +38,7 @@ interface Class {
 }
 
 interface ReportData {
+  studentId: string;
   studentName: string;
   unitName: string;
   courseName: string;
@@ -99,8 +100,10 @@ export function ReportsTab() {
     reprovadoCount: 0,
   });
 
-  // Cache para dados de unidades
+  // Cache para dados
   const unitsMap = useRef<Map<string, string>>(new Map());
+  const coursesMap = useRef<Map<string, string>>(new Map());
+  const cyclesMap = useRef<Map<string, { status: string; end_date: string }>>(new Map());
 
   useEffect(() => {
     loadInitialData();
@@ -115,26 +118,36 @@ export function ReportsTab() {
     if (!user) return;
 
     try {
-      // Carregar todos os dados iniciais em paralelo
-      const [unitsRes, cyclesRes, classesRes] = await Promise.all([
+      // Carregar dados iniciais em paralelo
+      const [unitsRes, cyclesRes, classesRes, coursesRes] = await Promise.all([
         supabase.from('units').select('id, name').order('name'),
-        supabase.from('cycles').select('id, name').order('created_at', { ascending: false }),
-        supabase.from('classes').select('id, name, modality, cycle_id').order('name'),
+        supabase.from('cycles').select('id, name, status, end_date').order('created_at', { ascending: false }),
+        supabase.from('classes').select('id, name, modality, cycle_id, course_id').order('name'),
+        supabase.from('courses').select('id, name'),
       ]);
 
       if (unitsRes.data) {
         setUnits(unitsRes.data);
-        // Criar mapa de unidades para lookup rápido
         unitsRes.data.forEach(unit => unitsMap.current.set(unit.id, unit.name));
       }
-      if (cyclesRes.data) setCycles(cyclesRes.data);
+      
+      if (cyclesRes.data) {
+        setCycles(cyclesRes.data);
+        cyclesRes.data.forEach(cycle => 
+          cyclesMap.current.set(cycle.id, { status: cycle.status, end_date: cycle.end_date })
+        );
+      }
+      
       if (classesRes.data) setClasses(classesRes.data);
+      
+      if (coursesRes.data) {
+        coursesRes.data.forEach(course => coursesMap.current.set(course.id, course.name));
+      }
     } catch (error) {
       console.error('Error loading initial data:', error);
     }
   };
 
-  // Debounce manual
   const debouncedFilterChange = useCallback(
     debounce(() => {
       setPagination(prev => ({ ...prev, page: 1 }));
@@ -151,7 +164,6 @@ export function ReportsTab() {
     });
   };
 
-  // Função para limpar filtros
   const handleClearFilters = () => {
     setFilters({
       startDate: '',
@@ -167,6 +179,7 @@ export function ReportsTab() {
     generateReport();
   };
 
+  // Função para buscar alunos com filtros - abordagem mais simples e confiável
   const generateReport = async () => {
     if (!user) return;
 
@@ -178,74 +191,67 @@ export function ReportsTab() {
     setIsLoading(true);
 
     try {
-      // Construir query base para class_students com joins
-      let query = supabase
+      // 1. Primeiro, buscar os IDs das turmas que atendem aos filtros
+      let classQuery = supabase
+        .from('classes')
+        .select('id, cycle_id, modality, total_classes, course_id, name');
+
+      if (filters.cycleId) {
+        classQuery = classQuery.eq('cycle_id', filters.cycleId);
+      }
+
+      if (filters.classId) {
+        classQuery = classQuery.eq('id', filters.classId);
+      }
+
+      if (filters.modality !== 'all') {
+        classQuery = classQuery.eq('modality', filters.modality);
+      }
+
+      const { data: filteredClasses, error: classError } = await classQuery;
+
+      if (classError) {
+        console.error('Error loading classes:', classError);
+        return;
+      }
+
+      if (!filteredClasses || filteredClasses.length === 0) {
+        setReportData([]);
+        setStats({ totalStudents: 0, emAndamentoCount: 0, aprovadoCount: 0, reprovadoCount: 0 });
+        setPagination(prev => ({ ...prev, total: 0, totalPages: 0 }));
+        return;
+      }
+
+      const classIds = filteredClasses.map(c => c.id);
+
+      // 2. Buscar alunos matriculados nessas turmas
+      let studentQuery = supabase
         .from('class_students')
         .select(`
           id,
           enrollment_type,
           enrollment_date,
           current_status,
-          status_updated_at,
-          students!inner (
+          class_id,
+          student_id,
+          students (
             id,
             full_name,
-            cpf,
             unit_id
-          ),
-          classes!inner (
-            id,
-            name,
-            modality,
-            total_classes,
-            course_id,
-            cycle_id,
-            courses!inner (
-              name
-            ),
-            cycles!inner (
-              name,
-              status,
-              start_date,
-              end_date
-            )
           )
-        `, { count: 'exact' });
+        `)
+        .in('class_id', classIds);
 
-      // Aplicar filtros
-      if (filters.cycleId) {
-        query = query.eq('classes.cycle_id', filters.cycleId);
-      }
-
-      if (filters.classId) {
-        query = query.eq('class_id', filters.classId);
-      }
-
-      if (filters.unitId) {
-        query = query.eq('students.unit_id', filters.unitId);
-      }
-
-      if (filters.modality !== 'all') {
-        query = query.eq('classes.modality', filters.modality);
-      }
-
-      if (filters.studentName) {
-        query = query.ilike('students.full_name', `%${filters.studentName}%`);
-      }
-
+      // Aplicar filtro de status se necessário
       if (filters.status !== 'all') {
-        query = query.eq('current_status', filters.status);
+        studentQuery = studentQuery.eq('current_status', filters.status);
       }
 
-      // Paginação
-      const from = (pagination.page - 1) * pagination.pageSize;
-      const to = from + pagination.pageSize - 1;
-      query = query.range(from, to).order('students.full_name');
+      const { data: classStudents, error: studentsError, count } = await studentQuery
+        .range((pagination.page - 1) * pagination.pageSize, pagination.page * pagination.pageSize - 1);
 
-      const { data: classStudents, count, error } = await query;
-
-      if (error) {
-        console.error('Error loading report data:', error);
+      if (studentsError) {
+        console.error('Error loading students:', studentsError);
         return;
       }
 
@@ -256,18 +262,105 @@ export function ReportsTab() {
         return;
       }
 
-      // Processar dados - sem buscar attendance/ead adicional se não houver filtros de data
+      // 3. Filtrar por nome do aluno e unidade (precisa ser feito em memória)
+      let filteredStudents = classStudents;
+
+      if (filters.studentName) {
+        const searchTerm = filters.studentName.toLowerCase();
+        filteredStudents = filteredStudents.filter(cs => 
+          cs.students?.full_name?.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      if (filters.unitId) {
+        filteredStudents = filteredStudents.filter(cs => 
+          cs.students?.unit_id === filters.unitId
+        );
+      }
+
+      // 4. Buscar dados de presença apenas se necessário
+      const needsAttendanceData = filters.startDate || filters.endDate;
+      let attendanceMap = new Map();
+      let eadMap = new Map();
+
+      if (needsAttendanceData) {
+        const videoconferenceClassIds = filteredClasses
+          .filter(c => c.modality === 'VIDEOCONFERENCIA')
+          .map(c => c.id);
+        
+        const eadClassIds = filteredClasses
+          .filter(c => c.modality === 'EAD')
+          .map(c => c.id);
+
+        const studentIds = filteredStudents.map(cs => cs.student_id);
+
+        await Promise.all([
+          (async () => {
+            if (videoconferenceClassIds.length > 0 && studentIds.length > 0) {
+              let attQuery = supabase
+                .from('attendance')
+                .select('class_id, student_id, class_date')
+                .in('class_id', videoconferenceClassIds)
+                .in('student_id', studentIds)
+                .eq('present', true);
+
+              if (filters.startDate) {
+                attQuery = attQuery.gte('class_date', filters.startDate);
+              }
+              if (filters.endDate) {
+                attQuery = attQuery.lte('class_date', filters.endDate);
+              }
+
+              const { data } = await attQuery;
+              if (data) {
+                data.forEach(att => {
+                  const key = `${att.class_id}_${att.student_id}`;
+                  if (!attendanceMap.has(key)) {
+                    attendanceMap.set(key, []);
+                  }
+                  attendanceMap.get(key).push(att);
+                });
+              }
+            }
+          })(),
+          (async () => {
+            if (eadClassIds.length > 0 && studentIds.length > 0) {
+              let eadQuery = supabase
+                .from('ead_access')
+                .select('class_id, student_id, access_date_1, access_date_2, access_date_3')
+                .in('class_id', eadClassIds)
+                .in('student_id', studentIds);
+
+              const { data } = await eadQuery;
+              if (data) {
+                data.forEach(access => {
+                  const key = `${access.class_id}_${access.student_id}`;
+                  eadMap.set(key, access);
+                });
+              }
+            }
+          })()
+        ]);
+      }
+
+      // 5. Processar dados
       const processedData: ReportData[] = [];
       const today = new Date().toISOString().split('T')[0];
 
-      for (const cs of classStudents) {
-        const cls = cs.classes;
-        const student = cs.students;
-        const cycle = cls.cycles;
+      // Criar mapas para lookup rápido
+      const classMap = new Map(filteredClasses.map(c => [c.id, c]));
+
+      for (const cs of filteredStudents) {
+        const cls = classMap.get(cs.class_id);
+        if (!cls || !cs.students) continue;
+
+        const cycleInfo = cyclesMap.current.get(cls.cycle_id) || { status: 'unknown', end_date: '' };
+        const unitName = unitsMap.current.get(cs.students.unit_id) || 'Não informado';
+        const courseName = coursesMap.current.get(cls.course_id) || 'Não informado';
 
         // Determinar status de exibição
         let displayStatus = '';
-        const isCycleActive = cycle.status === 'active' && today <= cycle.end_date;
+        const isCycleActive = cycleInfo.status === 'active' && today <= cycleInfo.end_date;
 
         if (isCycleActive) {
           displayStatus = 'Em Andamento';
@@ -279,42 +372,73 @@ export function ReportsTab() {
           displayStatus = 'Pendente';
         }
 
-        const unitName = unitsMap.current.get(student.unit_id) || 'Não informado';
-
         if (cls.modality === 'VIDEOCONFERENCIA') {
+          const key = `${cls.id}_${cs.student_id}`;
+          const attendances = attendanceMap.get(key) || [];
+          
+          const attendedCount = attendances.length;
+          const percentage = cls.total_classes > 0 ? (attendedCount / cls.total_classes) * 100 : 0;
+
           processedData.push({
-            studentName: student.full_name,
+            studentId: cs.students.id,
+            studentName: cs.students.full_name,
             unitName,
-            courseName: cls.courses.name,
+            courseName,
             className: cls.name,
             classModality: cls.modality,
             classesTotal: cls.total_classes,
-            classesAttended: 0, // Não calculamos sem filtros de data
-            attendancePercentage: 0,
+            classesAttended: attendedCount,
+            attendancePercentage: percentage,
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cycle.status,
-            cycleEndDate: cycle.end_date,
+            cycleStatus: cycleInfo.status,
+            cycleEndDate: cycleInfo.end_date,
             enrollmentType: cs.enrollment_type,
             enrollmentDate: cs.enrollment_date,
           });
         } else {
+          const key = `${cls.id}_${cs.student_id}`;
+          const access = eadMap.get(key);
+          
+          let accesses: string[] = [];
+          if (access) {
+            accesses = [
+              access.access_date_1,
+              access.access_date_2,
+              access.access_date_3,
+            ].filter(Boolean);
+
+            if (filters.startDate || filters.endDate) {
+              accesses = accesses.filter((d) => {
+                if (!d) return false;
+                const accessDate = new Date(d);
+                if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
+                if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
+                return true;
+              });
+            }
+          }
+
           processedData.push({
-            studentName: student.full_name,
+            studentId: cs.students.id,
+            studentName: cs.students.full_name,
             unitName,
-            courseName: cls.courses.name,
+            courseName,
             className: cls.name,
             classModality: cls.modality,
-            lastAccesses: [], // Não buscamos sem filtros de data
+            lastAccesses: accesses.map(d => d ? new Date(d).toLocaleDateString('pt-BR') : ''),
             currentStatus: cs.current_status || 'em_andamento',
             displayStatus,
-            cycleStatus: cycle.status,
-            cycleEndDate: cycle.end_date,
+            cycleStatus: cycleInfo.status,
+            cycleEndDate: cycleInfo.end_date,
             enrollmentType: cs.enrollment_type,
             enrollmentDate: cs.enrollment_date,
           });
         }
       }
+
+      // Ordenar por nome do aluno em memória
+      processedData.sort((a, b) => a.studentName.localeCompare(b.studentName));
 
       setReportData(processedData);
 
@@ -338,56 +462,11 @@ export function ReportsTab() {
 
     } catch (error: any) {
       if (error.name !== 'AbortError') {
-        console.error('Error generating report:', error);
+        console.error('Error loading report data:', error);
       }
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
-    }
-  };
-
-  // Versão detalhada do relatório (com dados de presença)
-  const generateDetailedReport = async () => {
-    if (!user || reportData.length === 0) return;
-    
-    setIsExporting(true);
-    
-    try {
-      // Buscar dados detalhados apenas para exportação
-      const classIds = [...new Set(reportData.map(r => r.className))]; // Isso precisaria ser ajustado
-      const studentNames = reportData.map(r => r.studentName);
-      
-      // Buscar dados de attendance para videoconferência
-      const { data: attendanceData } = await supabase
-        .from('attendance')
-        .select(`
-          class_id,
-          student_id,
-          class_date,
-          classes!inner (
-            name,
-            courses!inner (
-              name
-            )
-          ),
-          students!inner (
-            full_name,
-            units!inner (
-              name
-            )
-          )
-        `)
-        .in('classes.name', classIds)
-        .in('students.full_name', studentNames)
-        .eq('present', true);
-
-      // Processar dados detalhados para exportação
-      // ... lógica para exportação detalhada
-      
-    } catch (error) {
-      console.error('Error generating detailed report:', error);
-    } finally {
-      setIsExporting(false);
     }
   };
 
@@ -1031,7 +1110,7 @@ export function ReportsTab() {
                 </tr>
               ) : reportData.length > 0 ? (
                 reportData.map((row, index) => (
-                  <tr key={index} className="hover:bg-slate-50 transition-colors">
+                  <tr key={`${row.studentId}-${row.className}-${index}`} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-2 text-xs text-slate-700">{row.unitName}</td>
                     <td className="px-4 py-2 text-xs font-medium text-slate-800">{row.studentName}</td>
                     <td className="px-4 py-2 text-xs text-slate-700">{row.className}</td>
