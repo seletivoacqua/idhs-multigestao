@@ -24,6 +24,7 @@ interface FixedExpense {
   name: string;
   amount: number;
   method: string;
+  fornecedor: string;
   description: string;
   active: boolean;
   pagamento_realizado: boolean;
