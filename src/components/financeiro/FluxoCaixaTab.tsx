@@ -24,11 +24,18 @@ interface FixedExpense {
   name: string;
   amount: number;
   method: string;
-  fornecedor: string;
   description: string;
   active: boolean;
   pagamento_realizado: boolean;
 }
+
+// Função para formatar valores como moeda brasileira (R$)
+const formatCurrency = (value: number): string => {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  }).format(value);
+};
 
 // Função auxiliar para formatar data ISO (YYYY-MM-DD) para DD/MM/YYYY
 const formatDate = (isoDate: string): string => {
@@ -436,7 +443,7 @@ export function FluxoCaixaTab() {
               ) : (
                 <div className="flex items-center gap-2">
                   <p className="text-2xl font-bold text-slate-700">
-                    R$ {initialBalance.toFixed(2)}
+                    {formatCurrency(initialBalance)}
                   </p>
                   <button
                     onClick={() => setEditingInitialBalance(true)}
@@ -455,7 +462,7 @@ export function FluxoCaixaTab() {
             <div>
               <p className="text-sm text-green-600 font-medium">Receitas</p>
               <p className="text-2xl font-bold text-green-700">
-                R$ {totalIncome.toFixed(2)}
+                {formatCurrency(totalIncome)}
               </p>
             </div>
             <TrendingUp className="w-8 h-8 text-green-600" />
@@ -467,7 +474,7 @@ export function FluxoCaixaTab() {
             <div>
               <p className="text-sm text-red-600 font-medium">Despesas</p>
               <p className="text-2xl font-bold text-red-700">
-                R$ {totalExpense.toFixed(2)}
+                {formatCurrency(totalExpense)}
               </p>
             </div>
             <TrendingDown className="w-8 h-8 text-red-600" />
@@ -479,7 +486,7 @@ export function FluxoCaixaTab() {
             <div>
               <p className={`text-sm ${balance >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo Final</p>
               <p className={`text-2xl font-bold ${balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
-                R$ {balance.toFixed(2)}
+                {formatCurrency(balance)}
               </p>
             </div>
             <Filter className={`w-8 h-8 ${balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
@@ -533,7 +540,6 @@ export function FluxoCaixaTab() {
             </button>
           </form>
 
-          {/* Lista de despesas fixas com rolagem vertical */}
           <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
             {fixedExpenses.map((expense) => (
               <div
@@ -545,7 +551,7 @@ export function FluxoCaixaTab() {
                     {expense.name}
                   </p>
                   <p className="text-sm text-slate-500">
-                    R$ {expense.amount.toFixed(2)} - {expense.method}
+                    {formatCurrency(expense.amount)} - {expense.method}
                   </p>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -575,7 +581,6 @@ export function FluxoCaixaTab() {
         </div>
       )}
 
-      {/* Tabela de transações com rolagem vertical */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full">
@@ -621,7 +626,7 @@ export function FluxoCaixaTab() {
                   <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
                     transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
                   }`}>
-                    R$ {Number(transaction.amount).toFixed(2)}
+                    {formatCurrency(Number(transaction.amount))}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center space-x-3">
