@@ -25,12 +25,12 @@ interface Class {
 interface ReportData {
   unitName: string;
   studentName: string;
-  courseName: string;
-  modality: string;               // NOVO
-  classesAttended: number;         // AULAS ASSISTIDAS (sempre presente)
-  accesses: string;                // ACESSOS (formatado como string)
-  frequency: string;               // FREQUENCIA (ex: "75%", "Sim/Não", etc.)
-  status: 'Frequente' | 'Ausente'; // mantido para consistência
+  className: string;
+  modality: string;
+  classesAttended: number;
+  accesses: string;
+  frequency: string;
+  status: 'Frequente' | 'Ausente';
 }
 
 export function ReportsTab() {
@@ -171,7 +171,6 @@ export function ReportsTab() {
           }
         }
 
-        // Inicializa variáveis
         let classesAttended = 0;
         let accessesArray: string[] = [];
         let frequency = '';
@@ -200,9 +199,6 @@ export function ReportsTab() {
           const percentage = cls.total_classes > 0 ? (classesAttended / cls.total_classes) * 100 : 0;
           frequency = `${percentage.toFixed(1)}%`;
           status = percentage >= 60 ? 'Frequente' : 'Ausente';
-
-          // Para videoconferência, acessos não se aplicam (ou poderiam ser opcionais)
-          accessesArray = [];
         } else {
           // EAD – busca acessos
           const { data: accessData } = await supabase
@@ -223,23 +219,24 @@ export function ReportsTab() {
           if (filters.startDate || filters.endDate) {
             accessesArray = accessesArray.filter((d) => {
               if (!d) return false;
-              const accessDate = new Date(d.split('/').reverse().join('-')); // converte de volta para Date
+              const [day, month, year] = d.split('/').map(Number);
+              const accessDate = new Date(year, month - 1, day);
               if (filters.startDate && accessDate < new Date(filters.startDate)) return false;
               if (filters.endDate && accessDate > new Date(filters.endDate)) return false;
               return true;
             });
           }
 
-          // Para EAD, consideramos que o aluno é frequente se tiver pelo menos um acesso no período
-          classesAttended = accessesArray.length; // opcional, pode ser tratado como "acessos realizados"
-          frequency = accessesArray.length > 0 ? 'Sim' : 'Não'; // ou outra lógica
-          status = accessesArray.length > 0 ? 'Frequente' : 'Ausente';
+          classesAttended = accessesArray.length;
+          const percentage = cls.total_classes > 0 ? (classesAttended / cls.total_classes) * 100 : 0;
+          frequency = `${percentage.toFixed(1)}%`;
+          status = percentage >= 60 ? 'Frequente' : 'Ausente';
         }
 
         allReportData.push({
           unitName,
           studentName: cs.students.full_name,
-          courseName: cls.courses.name,
+          className: cls.name,
           modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
           classesAttended,
           accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
@@ -264,12 +261,12 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['UNIDADE', 'ALUNO', 'CURSO', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
+    const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
 
     const rows = reportData.map((row) => [
       row.unitName,
       row.studentName,
-      row.courseName,
+      row.className,
       row.modality,
       row.classesAttended.toString(),
       row.accesses,
@@ -369,7 +366,7 @@ export function ReportsTab() {
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
     
-    const headers = ['UNIDADE', 'ALUNO', 'CURSO', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
+    const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA'];
 
     headers.forEach(headerText => {
       const th = document.createElement('th');
@@ -393,7 +390,7 @@ export function ReportsTab() {
       const cells = [
         row.unitName,
         row.studentName,
-        row.courseName,
+        row.className,
         row.modality,
         row.classesAttended.toString(),
         row.accesses,
@@ -406,8 +403,6 @@ export function ReportsTab() {
         td.style.padding = '6px 4px';
         td.style.border = '1px solid #e2e8f0';
         td.style.fontSize = '9px';
-        
-        // Opcional: destaque para status
         tr.appendChild(td);
       });
       
@@ -468,7 +463,6 @@ export function ReportsTab() {
       const totalPages = Math.ceil(imgHeight / availableHeight);
       
       // Altura aproximada de cada linha da tabela
-      const tableStartY = 95; // Posição Y onde a tabela começa (após cabeçalho e barra)
       const rowHeight = 8; // Altura aproximada de cada linha em mm
 
       for (let page = 0; page < totalPages; page++) {
@@ -808,7 +802,7 @@ export function ReportsTab() {
                   ALUNO
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
-                  CURSO
+                  TURMA
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase tracking-wider">
                   MODALIDADE
@@ -829,7 +823,7 @@ export function ReportsTab() {
                 <tr key={index} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-3 text-sm text-slate-700">{row.unitName}</td>
                   <td className="px-6 py-3 text-sm font-medium text-slate-800">{row.studentName}</td>
-                  <td className="px-6 py-3 text-sm text-slate-700">{row.courseName}</td>
+                  <td className="px-6 py-3 text-sm text-slate-700">{row.className}</td>
                   <td className="px-6 py-3 text-sm text-slate-700">{row.modality}</td>
                   <td className="px-6 py-3 text-sm text-slate-700">{row.classesAttended}</td>
                   <td className="px-6 py-3 text-sm text-slate-700">{row.accesses}</td>
