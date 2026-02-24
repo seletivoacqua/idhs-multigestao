@@ -18,15 +18,6 @@ interface Cycle {
   name: string;
   start_date: string;
   end_date: string;
-  status: string;
-}
-
-interface Course {
-  id: string;
-  name: string;
-  modality: string;
-  teacher_name: string;
-  workload: number;
 }
 
 interface Class {
@@ -36,27 +27,6 @@ interface Class {
   class_time: string;
   total_classes: number;
   modality: string;
-  status: string;
-  course_id: string;
-  cycle_id: string;
-  course: Course;
-  cycle: Cycle;
-}
-
-interface Student {
-  id: string;
-  full_name: string;
-  cpf: string;
-  unit_id: string;
-}
-
-interface ClassStudent {
-  id: string;
-  class_id: string;
-  student_id: string;
-  enrollment_type: string;
-  current_status: string;
-  students: Student;
 }
 
 interface ReportData {
@@ -78,7 +48,6 @@ export function ReportsTab() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
-  const [courses, setCourses] = useState<Course[]>([]);
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({
@@ -113,26 +82,19 @@ export function ReportsTab() {
     }
   }, [user]);
 
-  // Carregar cursos
-  useEffect(() => {
-    if (user) {
-      loadCourses();
-    }
-  }, [user]);
-
-  // Carregar turmas quando os filtros de ciclo e modalidade mudarem
+  // Carregar classes
   useEffect(() => {
     if (user) {
       loadClasses();
     }
-  }, [user, filters.cycleId, filters.modality]);
+  }, [user]);
 
   // Gerar relatório quando os filtros mudarem
   useEffect(() => {
     if (user) {
       generateReport();
     }
-  }, [filters, user, units, classes]);
+  }, [filters, user]);
 
   const loadUnits = async () => {
     if (!user) return;
@@ -140,7 +102,6 @@ export function ReportsTab() {
     const { data, error } = await supabase
       .from('units')
       .select('id, name, municipality')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
@@ -156,10 +117,8 @@ export function ReportsTab() {
 
     const { data, error } = await supabase
       .from('cycles')
-      .select('id, name, start_date, end_date, status')
-      .eq('user_id', user.id)
-      .eq('status', 'active')
-      .order('start_date', { ascending: false });
+      .select('id, name, start_date, end_date')
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error loading cycles:', error);
@@ -169,260 +128,212 @@ export function ReportsTab() {
     setCycles(data || []);
   };
 
-  const loadCourses = async () => {
-    if (!user) return;
-
-    const { data, error } = await supabase
-      .from('courses')
-      .select('id, name, modality, teacher_name, workload')
-      .eq('user_id', user.id);
-
-    if (error) {
-      console.error('Error loading courses:', error);
-      return;
-    }
-
-    setCourses(data || []);
-  };
-
   const loadClasses = async () => {
     if (!user) return;
 
-    try {
-      let query = supabase
-        .from('classes')
-        .select(`
-          id,
-          name,
-          day_of_week,
-          class_time,
-          total_classes,
-          modality,
-          status,
-          course_id,
-          cycle_id,
-          course:courses (
-            id,
-            name,
-            modality,
-            teacher_name,
-            workload
-          ),
-          cycle:cycles (
-            id,
-            name,
-            start_date,
-            end_date,
-            status
-          )
-        `)
-        .eq('user_id', user.id)
-        .eq('status', 'active');
+    const { data, error } = await supabase
+      .from('classes')
+      .select('id, name, day_of_week, class_time, total_classes, modality')
+      .order('name');
 
-      if (filters.cycleId) {
-        query = query.eq('cycle_id', filters.cycleId);
-      }
-
-      if (filters.modality !== 'all') {
-        query = query.eq('modality', filters.modality);
-      }
-
-      const { data, error } = await query.order('name');
-
-      if (error) {
-        console.error('Error loading classes:', error);
-        return;
-      }
-
-      // Filtrar apenas as turmas que têm ciclo e curso
-      const validClasses = (data || []).filter(cls => cls.cycle && cls.course);
-      setClasses(validClasses as Class[]);
-      
-    } catch (error) {
-      console.error('Error in loadClasses:', error);
-    }
-  };
-
-  const generateReport = async () => {
-    if (!user || classes.length === 0) {
-      setReportData([]);
+    if (error) {
+      console.error('Error loading classes:', error);
       return;
     }
 
+    setClasses(data || []);
+  };
+
+  const generateReport = async () => {
+    if (!user) return;
+
     setLoading(true);
 
-    try {
-      const allReportData: ReportData[] = [];
+    // Buscar classes com os filtros aplicados
+    let classesQuery = supabase
+      .from('classes')
+      .select(`
+        *,
+        courses (
+          name,
+          modality
+        ),
+        cycles (
+          id,
+          name,
+          start_date,
+          end_date
+        )
+      `);
 
-      for (const cls of classes) {
-        // Buscar alunos da turma
-        const { data: classStudents, error: studentsError } = await supabase
-          .from('class_students')
-          .select(`
+    if (filters.cycleId) {
+      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+    }
+
+    if (filters.classId) {
+      classesQuery = classesQuery.eq('id', filters.classId);
+    }
+
+    if (filters.modality !== 'all') {
+      classesQuery = classesQuery.eq('modality', filters.modality);
+    }
+
+    const { data: classes, error: classesError } = await classesQuery;
+
+    if (classesError) {
+      console.error('Error loading classes:', classesError);
+      setLoading(false);
+      return;
+    }
+
+    const allReportData: ReportData[] = [];
+
+    for (const cls of classes || []) {
+      // Buscar alunos da turma
+      const { data: classStudents } = await supabase
+        .from('class_students')
+        .select(`
+          *,
+          students (
             id,
-            class_id,
-            student_id,
-            enrollment_type,
-            current_status,
-            students:students (
+            full_name,
+            cpf,
+            unit_id,
+            units (
               id,
-              full_name,
-              cpf,
-              unit_id
+              name,
+              municipality
             )
-          `)
-          .eq('class_id', cls.id);
+          )
+        `)
+        .eq('class_id', cls.id);
 
-        if (studentsError) {
-          console.error('Error loading class students:', studentsError);
+      if (!classStudents) continue;
+
+      for (const cs of classStudents) {
+        // Filtrar por unidade
+        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
           continue;
         }
 
-        if (!classStudents) continue;
-
-        for (const cs of classStudents) {
-          const student = cs.students as unknown as Student;
-
-          // Filtrar por unidade
-          if (filters.unitId && student.unit_id !== filters.unitId) {
-            continue;
-          }
-
-          // Filtrar por nome do aluno
-          if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
-            continue;
-          }
-
-          // Buscar nome da unidade
-          let unitName = 'Não informado';
-          if (student.unit_id) {
-            const unit = units.find(u => u.id === student.unit_id);
-            unitName = unit ? unit.name : 'Não informado';
-          }
-
-          let classesAttended = 0;
-          let accessesArray: string[] = [];
-          let frequency = '';
-          let frequencyValue = 0;
-          let status: 'Frequente' | 'Ausente' = 'Ausente';
-
-          if (cls.modality === 'VIDEOCONFERENCIA') {
-            // Buscar attendance para videoconferência
-            let attendanceQuery = supabase
-              .from('attendance')
-              .select('class_date, class_number, present')
-              .eq('class_id', cls.id)
-              .eq('student_id', student.id)
-              .eq('present', true);
-
-            if (filters.startDate) {
-              attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
-            }
-
-            if (filters.endDate) {
-              attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
-            }
-
-            const { data: attendanceData } = await attendanceQuery;
-
-            classesAttended = attendanceData?.length || 0;
-
-            // Calcular total de aulas no período
-            let totalClassesInPeriod = cls.total_classes;
-            if (filters.startDate && filters.endDate) {
-              const { data: totalClassesData } = await supabase
-                .from('attendance')
-                .select('class_number')
-                .eq('class_id', cls.id)
-                .gte('class_date', filters.startDate)
-                .lte('class_date', filters.endDate)
-                .order('class_number');
-
-              if (totalClassesData) {
-                const uniqueClasses = new Set(totalClassesData.map(a => a.class_number));
-                totalClassesInPeriod = uniqueClasses.size;
-              }
-            }
-
-            frequencyValue = totalClassesInPeriod > 0 ? (classesAttended / totalClassesInPeriod) * 100 : 0;
-            frequency = `${frequencyValue.toFixed(1)}%`;
-            status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
-          } else {
-            // Buscar acessos EAD
-            const { data: accessData } = await supabase
-              .from('ead_access')
-              .select('access_date_1, access_date_2, access_date_3')
-              .eq('class_id', cls.id)
-              .eq('student_id', student.id)
-              .maybeSingle();
-
-            // Array com as datas de acesso
-            const allAccesses = [
-              accessData?.access_date_1,
-              accessData?.access_date_2,
-              accessData?.access_date_3,
-            ];
-
-            // Filtrar acessos por período se necessário
-            if (filters.startDate || filters.endDate) {
-              const start = filters.startDate ? new Date(filters.startDate) : null;
-              const end = filters.endDate ? new Date(filters.endDate) : null;
-
-              accessesArray = allAccesses
-                .filter(date => date !== null)
-                .filter(date => {
-                  const accessDate = new Date(date);
-                  if (start && accessDate < start) return false;
-                  if (end && accessDate > end) return false;
-                  return true;
-                })
-                .map(date => new Date(date).toLocaleDateString('pt-BR'));
-            } else {
-              accessesArray = allAccesses
-                .filter(date => date !== null)
-                .map(date => new Date(date).toLocaleDateString('pt-BR'));
-            }
-
-            classesAttended = accessesArray.length;
-            
-            // Calcular frequência baseada nos 3 acessos possíveis
-            frequencyValue = (classesAttended / 3) * 100;
-            frequency = `${frequencyValue.toFixed(1)}%`;
-            status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
-          }
-
-          allReportData.push({
-            unitName,
-            studentName: student.full_name,
-            studentCpf: student.cpf,
-            className: cls.name,
-            cycleName: cls.cycle?.name || 'Sem ciclo',
-            modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
-            classesAttended,
-            accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
-            frequency,
-            frequencyValue,
-            status,
-            totalClasses: cls.total_classes,
-          });
+        // Filtrar por nome do aluno
+        if (filters.studentName && !cs.students?.full_name?.toLowerCase().includes(filters.studentName.toLowerCase())) {
+          continue;
         }
+
+        // Buscar nome da unidade
+        let unitName = 'Não informado';
+        if (cs.students?.unit_id) {
+          const unit = units.find(u => u.id === cs.students.unit_id);
+          if (unit) {
+            unitName = unit.name;
+          } else if (cs.students.units) {
+            unitName = cs.students.units.name || 'Não informado';
+          }
+        }
+
+        let classesAttended = 0;
+        let accessesArray: string[] = [];
+        let frequency = '';
+        let frequencyValue = 0;
+        let status: 'Frequente' | 'Ausente' = 'Ausente';
+
+        if (cls.modality === 'VIDEOCONFERENCIA') {
+          // Buscar attendance para videoconferência
+          let attendanceQuery = supabase
+            .from('attendance')
+            .select('*')
+            .eq('class_id', cls.id)
+            .eq('student_id', cs.student_id)
+            .eq('present', true);
+
+          if (filters.startDate) {
+            attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
+          }
+
+          if (filters.endDate) {
+            attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
+          }
+
+          const { data: attendanceData } = await attendanceQuery;
+
+          classesAttended = attendanceData?.length || 0;
+          frequencyValue = cls.total_classes > 0 ? (classesAttended / cls.total_classes) * 100 : 0;
+          frequency = `${frequencyValue.toFixed(1)}%`;
+          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+        } else {
+          // Buscar acessos EAD
+          const { data: accessData } = await supabase
+            .from('ead_access')
+            .select('*')
+            .eq('class_id', cls.id)
+            .eq('student_id', cs.student_id)
+            .maybeSingle();
+
+          // Array com as datas de acesso
+          const allAccesses = [
+            accessData?.access_date_1,
+            accessData?.access_date_2,
+            accessData?.access_date_3,
+          ];
+
+          // Filtrar acessos por período se necessário
+          if (filters.startDate || filters.endDate) {
+            const start = filters.startDate ? new Date(filters.startDate) : null;
+            const end = filters.endDate ? new Date(filters.endDate) : null;
+
+            accessesArray = allAccesses
+              .filter(date => date !== null)
+              .filter(date => {
+                const accessDate = new Date(date);
+                if (start && accessDate < start) return false;
+                if (end && accessDate > end) return false;
+                return true;
+              })
+              .map(date => new Date(date).toLocaleDateString('pt-BR'));
+          } else {
+            accessesArray = allAccesses
+              .filter(date => date !== null)
+              .map(date => new Date(date).toLocaleDateString('pt-BR'));
+          }
+
+          classesAttended = accessesArray.length;
+          
+          // Calcular frequência baseada nos 3 acessos possíveis
+          frequencyValue = (classesAttended / 3) * 100;
+          frequency = `${frequencyValue.toFixed(1)}%`;
+          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+        }
+
+        allReportData.push({
+          unitName,
+          studentName: cs.students?.full_name || 'Nome não informado',
+          studentCpf: cs.students?.cpf || '',
+          className: cls.name,
+          cycleName: cls.cycles?.name || 'Sem ciclo',
+          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+          classesAttended,
+          accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
+          frequency,
+          frequencyValue,
+          status,
+          totalClasses: cls.total_classes,
+        });
       }
-
-      setReportData(allReportData);
-
-      const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
-      const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
-
-      setStats({
-        totalStudents: allReportData.length,
-        presentCount,
-        absentCount,
-      });
-    } catch (error) {
-      console.error('Error generating report:', error);
-    } finally {
-      setLoading(false);
     }
+
+    setReportData(allReportData);
+
+    const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
+    const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
+
+    setStats({
+      totalStudents: allReportData.length,
+      presentCount,
+      absentCount,
+    });
+
+    setLoading(false);
   };
 
   const handleFilterChange = (key: string, value: string) => {
@@ -798,16 +709,13 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
             <select
               value={filters.cycleId}
-              onChange={(e) => {
-                handleFilterChange('cycleId', e.target.value);
-                handleFilterChange('classId', ''); // Resetar turma ao mudar ciclo
-              }}
+              onChange={(e) => handleFilterChange('cycleId', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="">Todos os ciclos</option>
               {cycles.map((cycle) => (
                 <option key={cycle.id} value={cycle.id}>
-                  {cycle.name} ({new Date(cycle.start_date).toLocaleDateString('pt-BR')} - {new Date(cycle.end_date).toLocaleDateString('pt-BR')})
+                  {cycle.name}
                 </option>
               ))}
             </select>
@@ -820,7 +728,7 @@ export function ReportsTab() {
               onChange={(e) => handleFilterChange('unitId', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
-              <option value="">Todas as unidades</option>
+              <option value="">Todas</option>
               {units.map((unit) => (
                 <option key={unit.id} value={unit.id}>
                   {unit.name} - {unit.municipality}
@@ -839,8 +747,7 @@ export function ReportsTab() {
               <option value="">Todas as turmas</option>
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>
-                  {cls.name} - {cls.course?.name} ({cls.day_of_week} {cls.class_time})
-                  {cls.cycle && ` - ${cls.cycle.name}`}
+                  {cls.name} ({cls.day_of_week} {cls.class_time})
                 </option>
               ))}
             </select>
@@ -850,10 +757,7 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
             <select
               value={filters.modality}
-              onChange={(e) => {
-                handleFilterChange('modality', e.target.value);
-                handleFilterChange('classId', ''); // Resetar turma ao mudar modalidade
-              }}
+              onChange={(e) => handleFilterChange('modality', e.target.value)}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="all">Todas</option>
@@ -883,7 +787,7 @@ export function ReportsTab() {
           </div>
 
           <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Aluno</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Nome do Aluno</label>
             <input
               type="text"
               placeholder="Digite o nome do aluno..."
@@ -1029,13 +933,6 @@ export function ReportsTab() {
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
-                  </td>
-                </tr>
-              )}
-              {loading && (
-                <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
-                    Carregando dados...
                   </td>
                 </tr>
               )}
