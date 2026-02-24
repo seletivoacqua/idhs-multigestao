@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2 } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -34,6 +34,8 @@ export function ControlePagamentoTab() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
+  const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
+  const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const { user } = useAuth();
 
   // Função utilitária para formatar datas sem problemas de fuso horário
@@ -319,6 +321,43 @@ export function ControlePagamentoTab() {
     window.open(documentUrl, '_blank');
   };
 
+  const handleEditPaymentDate = (invoice: Invoice) => {
+    setEditingPaymentDate(invoice.id);
+    setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
+  };
+
+  const handleSavePaymentDate = async (invoiceId: string) => {
+    if (!tempPaymentDate) {
+      alert('Por favor, selecione uma data de pagamento');
+      return;
+    }
+
+    const paymentDateISO = createISODate(tempPaymentDate);
+
+    const { error } = await supabase
+      .from('invoices')
+      .update({
+        payment_date: paymentDateISO,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', invoiceId);
+
+    if (error) {
+      console.error('Error updating payment date:', error);
+      alert('Erro ao atualizar data de pagamento');
+      return;
+    }
+
+    setEditingPaymentDate(null);
+    setTempPaymentDate('');
+    loadInvoices();
+  };
+
+  const handleCancelEditPaymentDate = () => {
+    setEditingPaymentDate(null);
+    setTempPaymentDate('');
+  };
+
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'PAGO':
@@ -464,7 +503,41 @@ export function ControlePagamentoTab() {
                     {formatDate(invoice.due_date)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {formatDate(invoice.payment_date)}
+                    {editingPaymentDate === invoice.id ? (
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="date"
+                          value={tempPaymentDate}
+                          onChange={(e) => setTempPaymentDate(e.target.value)}
+                          className="px-2 py-1 border border-slate-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={() => handleSavePaymentDate(invoice.id)}
+                          className="text-green-600 hover:text-green-800 text-xs font-medium"
+                        >
+                          Salvar
+                        </button>
+                        <button
+                          onClick={handleCancelEditPaymentDate}
+                          className="text-red-600 hover:text-red-800 text-xs font-medium"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-2">
+                        <span>{formatDate(invoice.payment_date)}</span>
+                        {invoice.payment_status === 'PAGO' && (
+                          <button
+                            onClick={() => handleEditPaymentDate(invoice)}
+                            className="text-blue-600 hover:text-blue-800"
+                            title="Editar data de pagamento"
+                          >
+                            <Edit className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
                     R$ {Number(invoice.net_value).toFixed(2)}

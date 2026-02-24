@@ -60,6 +60,9 @@ export function FluxoCaixaTab() {
   const [initialBalanceInput, setInitialBalanceInput] = useState('0');
   const { user } = useAuth();
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 30;
+
   const [formData, setFormData] = useState({
     type: 'income' as 'income' | 'expense',
     amount: '',
@@ -67,7 +70,7 @@ export function FluxoCaixaTab() {
     category: '',
     subcategoria: '',
     description: '',
-    transaction_date: new Date().toISOString().split('T')[0],
+    transaction_date: filterMonth + '-01',
     fonte_pagadora: 'Instituto Acqua',
     fornecedor: '',
     com_nota: false,
@@ -85,6 +88,14 @@ export function FluxoCaixaTab() {
     loadTransactions();
     loadFixedExpenses();
     loadInitialBalance();
+    setCurrentPage(1);
+  }, [filterMonth]);
+
+  useEffect(() => {
+    setFormData(prev => ({
+      ...prev,
+      transaction_date: filterMonth + '-01'
+    }));
   }, [filterMonth]);
 
   const loadInitialBalance = async () => {
@@ -247,7 +258,7 @@ export function FluxoCaixaTab() {
       category: '',
       subcategoria: '',
       description: '',
-      transaction_date: new Date().toISOString().split('T')[0],
+      transaction_date: filterMonth + '-01',
       fonte_pagadora: 'Instituto Acqua',
       fornecedor: '',
       com_nota: false,
@@ -361,6 +372,94 @@ export function FluxoCaixaTab() {
     if (filterType === 'all') return true;
     return t.type === filterType;
   });
+
+  const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+
+  const goToPage = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+
+    const pages = [];
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    if (startPage > 1) {
+      pages.push(
+        <button
+          key={1}
+          onClick={() => goToPage(1)}
+          className="px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 text-sm"
+        >
+          1
+        </button>
+      );
+      if (startPage > 2) {
+        pages.push(<span key="ellipsis1" className="px-2">...</span>);
+      }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      pages.push(
+        <button
+          key={i}
+          onClick={() => goToPage(i)}
+          className={`px-3 py-1 rounded text-sm ${
+            currentPage === i
+              ? 'bg-blue-600 text-white'
+              : 'border border-slate-300 hover:bg-slate-100'
+          }`}
+        >
+          {i}
+        </button>
+      );
+    }
+
+    if (endPage < totalPages) {
+      if (endPage < totalPages - 1) {
+        pages.push(<span key="ellipsis2" className="px-2">...</span>);
+      }
+      pages.push(
+        <button
+          key={totalPages}
+          onClick={() => goToPage(totalPages)}
+          className="px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 text-sm"
+        >
+          {totalPages}
+        </button>
+      );
+    }
+
+    return (
+      <div className="flex items-center justify-center space-x-2 mt-4">
+        <button
+          onClick={() => goToPage(currentPage - 1)}
+          disabled={currentPage === 1}
+          className="px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+        >
+          Anterior
+        </button>
+        {pages}
+        <button
+          onClick={() => goToPage(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          className="px-3 py-1 rounded border border-slate-300 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+        >
+          Próxima
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -597,7 +696,7 @@ export function FluxoCaixaTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredTransactions.map((transaction) => (
+              {paginatedTransactions.map((transaction) => (
                 <tr key={transaction.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
                     {formatDate(transaction.transaction_date)}
@@ -656,6 +755,7 @@ export function FluxoCaixaTab() {
             </tbody>
           </table>
         </div>
+        {renderPagination()}
       </div>
 
       {showAddModal && (
