@@ -18,6 +18,7 @@ interface Cycle {
   name: string;
   start_date: string;
   end_date: string;
+  status: string;
 }
 
 interface Course {
@@ -25,6 +26,7 @@ interface Course {
   name: string;
   modality: string;
   teacher_name: string;
+  workload: number;
 }
 
 interface Class {
@@ -34,6 +36,9 @@ interface Class {
   class_time: string;
   total_classes: number;
   modality: string;
+  status: string;
+  course_id: string;
+  cycle_id: string;
   course: Course;
   cycle: Cycle;
 }
@@ -43,21 +48,15 @@ interface Student {
   full_name: string;
   cpf: string;
   unit_id: string;
-  unit?: Unit;
 }
 
-interface Attendance {
+interface ClassStudent {
+  id: string;
   class_id: string;
   student_id: string;
-  present: boolean;
-  class_date: string;
-  class_number: number;
-}
-
-interface EadAccess {
-  access_date_1: string | null;
-  access_date_2: string | null;
-  access_date_3: string | null;
+  enrollment_type: string;
+  current_status: string;
+  students: Student;
 }
 
 interface ReportData {
@@ -65,6 +64,7 @@ interface ReportData {
   studentName: string;
   studentCpf: string;
   className: string;
+  cycleName: string;
   modality: string;
   classesAttended: number;
   accesses: string;
@@ -80,6 +80,7 @@ export function ReportsTab() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [reportData, setReportData] = useState<ReportData[]>([]);
+  const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -98,20 +99,40 @@ export function ReportsTab() {
     absentCount: 0,
   });
 
+  // Carregar unidades
   useEffect(() => {
     if (user) {
       loadUnits();
+    }
+  }, [user]);
+
+  // Carregar ciclos
+  useEffect(() => {
+    if (user) {
       loadCycles();
-      loadClasses();
+    }
+  }, [user]);
+
+  // Carregar cursos
+  useEffect(() => {
+    if (user) {
       loadCourses();
     }
   }, [user]);
 
+  // Carregar turmas quando os filtros de ciclo e modalidade mudarem
+  useEffect(() => {
+    if (user) {
+      loadClasses();
+    }
+  }, [user, filters.cycleId, filters.modality]);
+
+  // Gerar relatório quando os filtros mudarem
   useEffect(() => {
     if (user) {
       generateReport();
     }
-  }, [filters, user]);
+  }, [filters, user, units, classes]);
 
   const loadUnits = async () => {
     if (!user) return;
@@ -135,7 +156,7 @@ export function ReportsTab() {
 
     const { data, error } = await supabase
       .from('cycles')
-      .select('id, name, start_date, end_date')
+      .select('id, name, start_date, end_date, status')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .order('start_date', { ascending: false });
@@ -153,7 +174,7 @@ export function ReportsTab() {
 
     const { data, error } = await supabase
       .from('courses')
-      .select('id, name, modality, teacher_name')
+      .select('id, name, modality, teacher_name, workload')
       .eq('user_id', user.id);
 
     if (error) {
@@ -167,219 +188,241 @@ export function ReportsTab() {
   const loadClasses = async () => {
     if (!user) return;
 
-    let query = supabase
-      .from('classes')
-      .select(`
-        id, 
-        name, 
-        day_of_week, 
-        class_time, 
-        total_classes, 
-        modality,
-        course:courses (
+    try {
+      let query = supabase
+        .from('classes')
+        .select(`
           id,
           name,
+          day_of_week,
+          class_time,
+          total_classes,
           modality,
-          teacher_name
-        ),
-        cycle:cycles (
-          id,
-          name,
-          start_date,
-          end_date
-        )
-      `)
-      .eq('user_id', user.id)
-      .eq('status', 'active');
+          status,
+          course_id,
+          cycle_id,
+          course:courses (
+            id,
+            name,
+            modality,
+            teacher_name,
+            workload
+          ),
+          cycle:cycles (
+            id,
+            name,
+            start_date,
+            end_date,
+            status
+          )
+        `)
+        .eq('user_id', user.id)
+        .eq('status', 'active');
 
-    if (filters.cycleId) {
-      query = query.eq('cycle_id', filters.cycleId);
+      if (filters.cycleId) {
+        query = query.eq('cycle_id', filters.cycleId);
+      }
+
+      if (filters.modality !== 'all') {
+        query = query.eq('modality', filters.modality);
+      }
+
+      const { data, error } = await query.order('name');
+
+      if (error) {
+        console.error('Error loading classes:', error);
+        return;
+      }
+
+      // Filtrar apenas as turmas que têm ciclo e curso
+      const validClasses = (data || []).filter(cls => cls.cycle && cls.course);
+      setClasses(validClasses as Class[]);
+      
+    } catch (error) {
+      console.error('Error in loadClasses:', error);
     }
-
-    if (filters.modality !== 'all') {
-      query = query.eq('modality', filters.modality);
-    }
-
-    const { data, error } = await query.order('name');
-
-    if (error) {
-      console.error('Error loading classes:', error);
-      return;
-    }
-
-    setClasses(data || []);
   };
 
   const generateReport = async () => {
-    if (!user) return;
-
-    // Recarregar classes com os filtros atuais
-    await loadClasses();
-
-    const allReportData: ReportData[] = [];
-
-    for (const cls of classes) {
-      // Buscar alunos da turma
-      let classStudentsQuery = supabase
-        .from('class_students')
-        .select(`
-          id,
-          student_id,
-          enrollment_type,
-          current_status,
-          students:students (
-            id,
-            full_name,
-            cpf,
-            unit_id
-          )
-        `)
-        .eq('class_id', cls.id);
-
-      const { data: classStudents, error: studentsError } = await classStudentsQuery;
-
-      if (studentsError || !classStudents) {
-        console.error('Error loading class students:', studentsError);
-        continue;
-      }
-
-      for (const cs of classStudents) {
-        const student = cs.students as any;
-
-        // Filtrar por unidade
-        if (filters.unitId && student.unit_id !== filters.unitId) {
-          continue;
-        }
-
-        // Filtrar por nome do aluno
-        if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
-          continue;
-        }
-
-        // Buscar nome da unidade
-        let unitName = 'Não informado';
-        if (student.unit_id) {
-          const unit = units.find(u => u.id === student.unit_id);
-          unitName = unit ? unit.name : 'Não informado';
-        }
-
-        let classesAttended = 0;
-        let accessesArray: string[] = [];
-        let frequency = '';
-        let frequencyValue = 0;
-        let status: 'Frequente' | 'Ausente' = 'Ausente';
-
-        if (cls.modality === 'VIDEOCONFERENCIA') {
-          // Buscar attendance para videoconferência
-          let attendanceQuery = supabase
-            .from('attendance')
-            .select('class_date, class_number, present')
-            .eq('class_id', cls.id)
-            .eq('student_id', student.id)
-            .eq('present', true);
-
-          if (filters.startDate) {
-            attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
-          }
-
-          if (filters.endDate) {
-            attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
-          }
-
-          const { data: attendanceData } = await attendanceQuery;
-
-          classesAttended = attendanceData?.length || 0;
-
-          // Calcular total de aulas no período
-          let totalClassesInPeriod = cls.total_classes;
-          if (filters.startDate && filters.endDate) {
-            const { data: totalClassesData } = await supabase
-              .from('attendance')
-              .select('class_number')
-              .eq('class_id', cls.id)
-              .gte('class_date', filters.startDate)
-              .lte('class_date', filters.endDate)
-              .order('class_number');
-
-            if (totalClassesData) {
-              const uniqueClasses = new Set(totalClassesData.map(a => a.class_number));
-              totalClassesInPeriod = uniqueClasses.size;
-            }
-          }
-
-          frequencyValue = totalClassesInPeriod > 0 ? (classesAttended / totalClassesInPeriod) * 100 : 0;
-          frequency = `${frequencyValue.toFixed(1)}%`;
-          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
-        } else {
-          // Buscar acessos EAD
-          const { data: accessData } = await supabase
-            .from('ead_access')
-            .select('access_date_1, access_date_2, access_date_3')
-            .eq('class_id', cls.id)
-            .eq('student_id', student.id)
-            .maybeSingle();
-
-          // Array com as datas de acesso
-          const allAccesses = [
-            accessData?.access_date_1,
-            accessData?.access_date_2,
-            accessData?.access_date_3,
-          ];
-
-          // Filtrar acessos por período se necessário
-          if (filters.startDate || filters.endDate) {
-            const start = filters.startDate ? new Date(filters.startDate) : null;
-            const end = filters.endDate ? new Date(filters.endDate) : null;
-
-            accessesArray = allAccesses
-              .filter(date => date !== null)
-              .filter(date => {
-                const accessDate = new Date(date);
-                if (start && accessDate < start) return false;
-                if (end && accessDate > end) return false;
-                return true;
-              })
-              .map(date => new Date(date).toLocaleDateString('pt-BR'));
-          } else {
-            accessesArray = allAccesses
-              .filter(date => date !== null)
-              .map(date => new Date(date).toLocaleDateString('pt-BR'));
-          }
-
-          classesAttended = accessesArray.length;
-          
-          // Calcular frequência baseada nos 3 acessos possíveis
-          frequencyValue = (classesAttended / 3) * 100;
-          frequency = `${frequencyValue.toFixed(1)}%`;
-          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
-        }
-
-        allReportData.push({
-          unitName,
-          studentName: student.full_name,
-          studentCpf: student.cpf,
-          className: cls.name,
-          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
-          classesAttended,
-          accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
-          frequency,
-          frequencyValue,
-          status,
-          totalClasses: cls.total_classes,
-        });
-      }
+    if (!user || classes.length === 0) {
+      setReportData([]);
+      return;
     }
 
-    setReportData(allReportData);
+    setLoading(true);
 
-    const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
-    const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
+    try {
+      const allReportData: ReportData[] = [];
 
-    setStats({
-      totalStudents: allReportData.length,
-      presentCount,
-      absentCount,
-    });
+      for (const cls of classes) {
+        // Buscar alunos da turma
+        const { data: classStudents, error: studentsError } = await supabase
+          .from('class_students')
+          .select(`
+            id,
+            class_id,
+            student_id,
+            enrollment_type,
+            current_status,
+            students:students (
+              id,
+              full_name,
+              cpf,
+              unit_id
+            )
+          `)
+          .eq('class_id', cls.id);
+
+        if (studentsError) {
+          console.error('Error loading class students:', studentsError);
+          continue;
+        }
+
+        if (!classStudents) continue;
+
+        for (const cs of classStudents) {
+          const student = cs.students as unknown as Student;
+
+          // Filtrar por unidade
+          if (filters.unitId && student.unit_id !== filters.unitId) {
+            continue;
+          }
+
+          // Filtrar por nome do aluno
+          if (filters.studentName && !student.full_name.toLowerCase().includes(filters.studentName.toLowerCase())) {
+            continue;
+          }
+
+          // Buscar nome da unidade
+          let unitName = 'Não informado';
+          if (student.unit_id) {
+            const unit = units.find(u => u.id === student.unit_id);
+            unitName = unit ? unit.name : 'Não informado';
+          }
+
+          let classesAttended = 0;
+          let accessesArray: string[] = [];
+          let frequency = '';
+          let frequencyValue = 0;
+          let status: 'Frequente' | 'Ausente' = 'Ausente';
+
+          if (cls.modality === 'VIDEOCONFERENCIA') {
+            // Buscar attendance para videoconferência
+            let attendanceQuery = supabase
+              .from('attendance')
+              .select('class_date, class_number, present')
+              .eq('class_id', cls.id)
+              .eq('student_id', student.id)
+              .eq('present', true);
+
+            if (filters.startDate) {
+              attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
+            }
+
+            if (filters.endDate) {
+              attendanceQuery = attendanceQuery.lte('class_date', filters.endDate);
+            }
+
+            const { data: attendanceData } = await attendanceQuery;
+
+            classesAttended = attendanceData?.length || 0;
+
+            // Calcular total de aulas no período
+            let totalClassesInPeriod = cls.total_classes;
+            if (filters.startDate && filters.endDate) {
+              const { data: totalClassesData } = await supabase
+                .from('attendance')
+                .select('class_number')
+                .eq('class_id', cls.id)
+                .gte('class_date', filters.startDate)
+                .lte('class_date', filters.endDate)
+                .order('class_number');
+
+              if (totalClassesData) {
+                const uniqueClasses = new Set(totalClassesData.map(a => a.class_number));
+                totalClassesInPeriod = uniqueClasses.size;
+              }
+            }
+
+            frequencyValue = totalClassesInPeriod > 0 ? (classesAttended / totalClassesInPeriod) * 100 : 0;
+            frequency = `${frequencyValue.toFixed(1)}%`;
+            status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+          } else {
+            // Buscar acessos EAD
+            const { data: accessData } = await supabase
+              .from('ead_access')
+              .select('access_date_1, access_date_2, access_date_3')
+              .eq('class_id', cls.id)
+              .eq('student_id', student.id)
+              .maybeSingle();
+
+            // Array com as datas de acesso
+            const allAccesses = [
+              accessData?.access_date_1,
+              accessData?.access_date_2,
+              accessData?.access_date_3,
+            ];
+
+            // Filtrar acessos por período se necessário
+            if (filters.startDate || filters.endDate) {
+              const start = filters.startDate ? new Date(filters.startDate) : null;
+              const end = filters.endDate ? new Date(filters.endDate) : null;
+
+              accessesArray = allAccesses
+                .filter(date => date !== null)
+                .filter(date => {
+                  const accessDate = new Date(date);
+                  if (start && accessDate < start) return false;
+                  if (end && accessDate > end) return false;
+                  return true;
+                })
+                .map(date => new Date(date).toLocaleDateString('pt-BR'));
+            } else {
+              accessesArray = allAccesses
+                .filter(date => date !== null)
+                .map(date => new Date(date).toLocaleDateString('pt-BR'));
+            }
+
+            classesAttended = accessesArray.length;
+            
+            // Calcular frequência baseada nos 3 acessos possíveis
+            frequencyValue = (classesAttended / 3) * 100;
+            frequency = `${frequencyValue.toFixed(1)}%`;
+            status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+          }
+
+          allReportData.push({
+            unitName,
+            studentName: student.full_name,
+            studentCpf: student.cpf,
+            className: cls.name,
+            cycleName: cls.cycle?.name || 'Sem ciclo',
+            modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+            classesAttended,
+            accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
+            frequency,
+            frequencyValue,
+            status,
+            totalClasses: cls.total_classes,
+          });
+        }
+      }
+
+      setReportData(allReportData);
+
+      const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
+      const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
+
+      setStats({
+        totalStudents: allReportData.length,
+        presentCount,
+        absentCount,
+      });
+    } catch (error) {
+      console.error('Error generating report:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleFilterChange = (key: string, value: string) => {
@@ -389,13 +432,14 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA', 'STATUS'];
+    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS ASSISTIDAS', 'ACESSOS', 'FREQUENCIA', 'STATUS'];
 
     const rows = reportData.map((row) => [
       row.unitName,
       row.studentName,
       row.studentCpf,
       row.className,
+      row.cycleName,
       row.modality,
       row.classesAttended.toString(),
       row.accesses,
@@ -454,7 +498,7 @@ export function ReportsTab() {
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       
-      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'MODALIDADE', 'AULAS', 'ACESSOS', 'FREQ.'];
+      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS', 'ACESSOS', 'FREQ.'];
 
       headers.forEach(headerText => {
         const th = document.createElement('th');
@@ -481,6 +525,7 @@ export function ReportsTab() {
           row.unitName,
           row.studentName,
           row.className,
+          row.cycleName,
           row.modality,
           row.classesAttended.toString(),
           row.accesses,
@@ -496,7 +541,7 @@ export function ReportsTab() {
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
           
           // Alinhar números ao centro
-          if (idx >= 4) {
+          if (idx >= 5) {
             td.style.textAlign = 'center';
           }
           
@@ -510,8 +555,8 @@ export function ReportsTab() {
       return tableElement;
     };
 
-    // Calcular número de linhas por página (aproximadamente 20 linhas por página para dar espaço à barra)
-    const rowsPerPage = 20;
+    // Calcular número de linhas por página
+    const rowsPerPage = 18;
     const totalPages = Math.ceil(reportData.length / rowsPerPage);
 
     for (let page = 0; page < totalPages; page++) {
@@ -577,7 +622,6 @@ export function ReportsTab() {
       
       // Cards de estatísticas
       pdf.setFillColor(59, 130, 246);
-      pdf.setDrawColor(37, 99, 235);
       pdf.roundedRect(margin, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
@@ -588,22 +632,18 @@ export function ReportsTab() {
       pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
       
       pdf.setFillColor(34, 197, 94);
-      pdf.setDrawColor(22, 163, 74);
       pdf.roundedRect(margin + 55, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.setFont('helvetica', 'normal');
       pdf.text('Frequentes', margin + 60, yPos + 5);
       pdf.setFontSize(10);
       pdf.setFont('helvetica', 'bold');
       pdf.text(stats.presentCount.toString(), margin + 60, yPos + 11);
       
       pdf.setFillColor(239, 68, 68);
-      pdf.setDrawColor(220, 38, 38);
       pdf.roundedRect(margin + 110, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.setFont('helvetica', 'normal');
       pdf.text('Ausentes', margin + 115, yPos + 5);
       pdf.setFontSize(10);
       pdf.setFont('helvetica', 'bold');
@@ -627,7 +667,7 @@ export function ReportsTab() {
       pdf.setTextColor(239, 68, 68);
       pdf.text(`Ausentes: ${stats.absentCount} (${absentPercentage.toFixed(1)}%)`, margin + 80, yPos + 4);
       
-      // Fundo da barra (cinza claro)
+      // Fundo da barra
       yPos += 8;
       const barHeight = 10;
       pdf.setFillColor(226, 232, 240);
@@ -638,12 +678,11 @@ export function ReportsTab() {
         const presentWidth = (presentPercentage / 100) * contentWidth;
         const absentWidth = (absentPercentage / 100) * contentWidth;
         
-        // Barra de frequentes (verde)
+        // Barra de frequentes
         if (presentWidth > 0) {
           pdf.setFillColor(34, 197, 94);
           pdf.roundedRect(margin, yPos, presentWidth, barHeight, 3, 3, 'F');
           
-          // Adicionar porcentagem na barra se houver espaço
           if (presentWidth > 20) {
             pdf.setTextColor(255, 255, 255);
             pdf.setFontSize(7);
@@ -652,12 +691,11 @@ export function ReportsTab() {
           }
         }
         
-        // Barra de ausentes (vermelha)
+        // Barra de ausentes
         if (absentWidth > 0) {
           pdf.setFillColor(239, 68, 68);
           pdf.roundedRect(margin + presentWidth, yPos, absentWidth, barHeight, 3, 3, 'F');
           
-          // Adicionar porcentagem na barra se houver espaço
           if (absentWidth > 20) {
             pdf.setTextColor(255, 255, 255);
             pdf.setFontSize(7);
@@ -701,7 +739,7 @@ export function ReportsTab() {
         document.body.removeChild(tempDiv);
       }
 
-      // Adicionar rodapé com numeração de página
+      // Adicionar rodapé
       pdf.setFontSize(8);
       pdf.setTextColor(148, 163, 184);
       pdf.text(
@@ -712,7 +750,6 @@ export function ReportsTab() {
       );
     }
 
-    // Salvar PDF
     pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
@@ -733,7 +770,7 @@ export function ReportsTab() {
         <div className="flex gap-3">
           <button
             onClick={exportToXLSX}
-            disabled={reportData.length === 0}
+            disabled={reportData.length === 0 || loading}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileSpreadsheet className="w-5 h-5" />
@@ -741,7 +778,7 @@ export function ReportsTab() {
           </button>
           <button
             onClick={exportToPDF}
-            disabled={reportData.length === 0}
+            disabled={reportData.length === 0 || loading}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <FileText className="w-5 h-5" />
@@ -761,13 +798,16 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
             <select
               value={filters.cycleId}
-              onChange={(e) => handleFilterChange('cycleId', e.target.value)}
+              onChange={(e) => {
+                handleFilterChange('cycleId', e.target.value);
+                handleFilterChange('classId', ''); // Resetar turma ao mudar ciclo
+              }}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="">Todos os ciclos</option>
               {cycles.map((cycle) => (
                 <option key={cycle.id} value={cycle.id}>
-                  {cycle.name}
+                  {cycle.name} ({new Date(cycle.start_date).toLocaleDateString('pt-BR')} - {new Date(cycle.end_date).toLocaleDateString('pt-BR')})
                 </option>
               ))}
             </select>
@@ -800,6 +840,7 @@ export function ReportsTab() {
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>
                   {cls.name} - {cls.course?.name} ({cls.day_of_week} {cls.class_time})
+                  {cls.cycle && ` - ${cls.cycle.name}`}
                 </option>
               ))}
             </select>
@@ -809,7 +850,10 @@ export function ReportsTab() {
             <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
             <select
               value={filters.modality}
-              onChange={(e) => handleFilterChange('modality', e.target.value)}
+              onChange={(e) => {
+                handleFilterChange('modality', e.target.value);
+                handleFilterChange('classId', ''); // Resetar turma ao mudar modalidade
+              }}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
             >
               <option value="all">Todas</option>
@@ -911,7 +955,7 @@ export function ReportsTab() {
               </>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
-                Sem dados para exibir
+                {loading ? 'Carregando...' : 'Sem dados para exibir'}
               </div>
             )}
           </div>
@@ -940,6 +984,9 @@ export function ReportsTab() {
                   TURMA
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                  CICLO
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
                   MODALIDADE
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
@@ -962,6 +1009,7 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm text-slate-700">{row.unitName}</td>
                   <td className="px-4 py-2 text-sm font-medium text-slate-800">{row.studentName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
                   <td className="px-4 py-2 text-sm text-center text-slate-700">{row.classesAttended}</td>
                   <td className="px-4 py-2 text-sm text-center text-slate-700">{row.accesses}</td>
@@ -977,10 +1025,17 @@ export function ReportsTab() {
                   </td>
                 </tr>
               ))}
-              {reportData.length === 0 && (
+              {reportData.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
+                  </td>
+                </tr>
+              )}
+              {loading && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                    Carregando dados...
                   </td>
                 </tr>
               )}
