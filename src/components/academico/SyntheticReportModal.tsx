@@ -41,6 +41,19 @@ interface VideoConferenceReportData {
   frequency: string;
 }
 
+interface CombinedReportData {
+  studentName: string;
+  courseName: string;
+  modality: string;
+  access1?: string;
+  access2?: string;
+  access3?: string;
+  status?: string;
+  classesGiven?: number;
+  classesAttended?: number;
+  frequency?: string;
+}
+
 export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalProps) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -53,6 +66,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
   });
   const [eadData, setEadData] = useState<EADReportData[]>([]);
   const [videoData, setVideoData] = useState<VideoConferenceReportData[]>([]);
+  const [combinedData, setCombinedData] = useState<CombinedReportData[]>([]);
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -64,11 +78,11 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
   }, [user, isOpen]);
 
   useEffect(() => {
-    if (filters.modality) {
+    if (filters.modality && filters.modality !== 'ALL') {
       const filtered = courses.filter(c => c.modality === filters.modality);
       setFilteredCourses(filtered);
     } else {
-      setFilteredCourses([]);
+      setFilteredCourses(courses);
     }
   }, [filters.modality, courses]);
 
@@ -91,14 +105,16 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
   };
 
   const generateReport = async () => {
-    if (!filters.modality || !filters.courseId) {
-      alert('Selecione a modalidade e o curso para gerar o relatório');
+    if (!filters.modality) {
+      alert('Selecione a modalidade para gerar o relatório');
       return;
     }
 
     setLoading(true);
 
-    if (filters.modality === 'EAD') {
+    if (filters.modality === 'ALL') {
+      await generateAllModalitiesReport();
+    } else if (filters.modality === 'EAD') {
       await generateEADReport();
     } else if (filters.modality === 'VIDEOCONFERENCIA') {
       await generateVideoConferenceReport();
@@ -119,8 +135,11 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
           name
         )
       `)
-      .eq('modality', 'EAD')
-      .eq('course_id', filters.courseId);
+      .eq('modality', 'EAD');
+
+    if (filters.courseId && filters.courseId !== 'ALL') {
+      classesQuery = classesQuery.eq('course_id', filters.courseId);
+    }
 
     const { data: classes } = await classesQuery;
     const reportData: EADReportData[] = [];
@@ -196,6 +215,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
 
     setEadData(reportData);
     setVideoData([]);
+    setCombinedData([]);
   };
 
   const generateVideoConferenceReport = async () => {
@@ -211,8 +231,11 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
           name
         )
       `)
-      .eq('modality', 'VIDEOCONFERENCIA')
-      .eq('course_id', filters.courseId);
+      .eq('modality', 'VIDEOCONFERENCIA');
+
+    if (filters.courseId && filters.courseId !== 'ALL') {
+      classesQuery = classesQuery.eq('course_id', filters.courseId);
+    }
 
     const { data: classes } = await classesQuery;
     const reportData: VideoConferenceReportData[] = [];
@@ -259,6 +282,127 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
 
     setVideoData(reportData);
     setEadData([]);
+    setCombinedData([]);
+  };
+
+  const generateAllModalitiesReport = async () => {
+    let classesQuery = supabase
+      .from('classes')
+      .select(`
+        id,
+        name,
+        total_classes,
+        modality,
+        course_id,
+        courses (
+          id,
+          name
+        )
+      `);
+
+    if (filters.courseId && filters.courseId !== 'ALL') {
+      classesQuery = classesQuery.eq('course_id', filters.courseId);
+    }
+
+    const { data: classes } = await classesQuery;
+    const reportData: CombinedReportData[] = [];
+
+    for (const cls of classes || []) {
+      const { data: classStudents } = await supabase
+        .from('class_students')
+        .select(`
+          student_id,
+          students (
+            id,
+            full_name,
+            unit_id
+          )
+        `)
+        .eq('class_id', cls.id);
+
+      for (const cs of classStudents || []) {
+        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
+          continue;
+        }
+
+        if (cls.modality === 'EAD') {
+          const { data: accessData } = await supabase
+            .from('ead_access')
+            .select('*')
+            .eq('class_id', cls.id)
+            .eq('student_id', cs.student_id)
+            .maybeSingle();
+
+          const access1 = accessData?.access_date_1
+            ? new Date(accessData.access_date_1).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : '';
+
+          const access2 = accessData?.access_date_2
+            ? new Date(accessData.access_date_2).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : '';
+
+          const access3 = accessData?.access_date_3
+            ? new Date(accessData.access_date_3).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : '';
+
+          const accessCount = [access1, access2, access3].filter(a => a !== '').length;
+          const status = accessCount >= 2 ? 'FREQUENTE' : 'AUSENTE';
+
+          reportData.push({
+            studentName: cs.students?.full_name || '',
+            courseName: cls.courses?.name || '',
+            modality: 'EAD 24h',
+            access1,
+            access2,
+            access3,
+            status,
+          });
+        } else if (cls.modality === 'VIDEOCONFERENCIA') {
+          const { data: attendanceData } = await supabase
+            .from('attendance')
+            .select('*')
+            .eq('class_id', cls.id)
+            .eq('student_id', cs.student_id)
+            .eq('present', true);
+
+          const classesAttended = attendanceData?.length || 0;
+          const frequencyValue = cls.total_classes > 0
+            ? (classesAttended / cls.total_classes) * 100
+            : 0;
+
+          reportData.push({
+            studentName: cs.students?.full_name || '',
+            courseName: cls.courses?.name || '',
+            modality: 'Videoconferência',
+            classesGiven: cls.total_classes,
+            classesAttended,
+            frequency: `${frequencyValue.toFixed(0)}%`,
+          });
+        }
+      }
+    }
+
+    setCombinedData(reportData);
+    setEadData([]);
+    setVideoData([]);
   };
 
   const exportToXLSX = () => {
@@ -291,6 +435,25 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Relatório Videoconferência');
       XLSX.writeFile(workbook, `relatorio_sintetico_video_${new Date().toISOString().split('T')[0]}.xlsx`);
+    } else if (filters.modality === 'ALL' && combinedData.length > 0) {
+      const headers = ['ALUNO', 'CURSO', 'MODALIDADE', 'ACESSO 1', 'ACESSO 2', 'ACESSO 3', 'SITUAÇÃO', 'AULAS MINISTRADAS', 'AULAS ASSISTIDAS', '% FREQUÊNCIA'];
+      const rows = combinedData.map((row) => [
+        row.studentName,
+        row.courseName,
+        row.modality,
+        row.access1 || '-',
+        row.access2 || '-',
+        row.access3 || '-',
+        row.status || '-',
+        row.classesGiven ? `${row.classesGiven}/16` : '-',
+        row.classesAttended?.toString() || '-',
+        row.frequency || '-',
+      ]);
+
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Relatório Completo');
+      XLSX.writeFile(workbook, `relatorio_sintetico_completo_${new Date().toISOString().split('T')[0]}.xlsx`);
     }
   };
 
@@ -440,7 +603,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
 
   if (!isOpen) return null;
 
-  const hasData = eadData.length > 0 || videoData.length > 0;
+  const hasData = eadData.length > 0 || videoData.length > 0 || combinedData.length > 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -487,6 +650,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="">Selecione...</option>
+                  <option value="ALL">Todas as Modalidades</option>
                   <option value="EAD">EAD 24h</option>
                   <option value="VIDEOCONFERENCIA">Videoconferência</option>
                 </select>
@@ -501,6 +665,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Selecione...</option>
+                  <option value="ALL">Todos os Cursos</option>
                   {filteredCourses.map((course) => (
                     <option key={course.id} value={course.id}>
                       {course.name}
@@ -512,7 +677,7 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
 
             <button
               onClick={generateReport}
-              disabled={loading || !filters.modality || !filters.courseId}
+              disabled={loading || !filters.modality}
               className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
               {loading ? 'Gerando...' : 'Gerar Relatório'}
@@ -613,6 +778,62 @@ export function SyntheticReportModal({ isOpen, onClose }: SyntheticReportModalPr
                               <td className="px-4 py-3 text-sm text-center text-slate-800 border border-slate-200">{row.classesGiven}/16</td>
                               <td className="px-4 py-3 text-sm text-center text-slate-800 border border-slate-200">{row.classesAttended}</td>
                               <td className="px-4 py-3 text-sm text-center font-bold text-slate-900 border border-slate-200">{row.frequency}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {filters.modality === 'ALL' && combinedData.length > 0 && (
+                    <table className="w-full">
+                      <thead className="bg-blue-600 text-white">
+                        <tr>
+                          <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider border border-blue-700">
+                            ALUNO
+                          </th>
+                          <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider border border-blue-700">
+                            CURSO
+                          </th>
+                          <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider border border-blue-700">
+                            MODALIDADE
+                          </th>
+                          <th className="px-4 py-3 text-center text-xs font-bold uppercase tracking-wider border border-blue-700">
+                            DADOS
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {combinedData.map((row, index) => {
+                          let bgColor = 'bg-white';
+                          if (row.status === 'AUSENTE') {
+                            bgColor = 'bg-red-100';
+                          } else if (row.status === 'FREQUENTE') {
+                            bgColor = 'bg-green-100';
+                          } else if (row.frequency) {
+                            const freqValue = parseFloat(row.frequency);
+                            bgColor = freqValue < 60 ? 'bg-red-100' : freqValue >= 90 ? 'bg-green-100' : 'bg-white';
+                          }
+
+                          return (
+                            <tr key={index} className={bgColor}>
+                              <td className="px-4 py-3 text-sm text-slate-800 border border-slate-200">{row.studentName}</td>
+                              <td className="px-4 py-3 text-sm text-slate-800 border border-slate-200">{row.courseName}</td>
+                              <td className="px-4 py-3 text-sm text-center text-slate-800 border border-slate-200">{row.modality}</td>
+                              <td className="px-4 py-3 text-sm text-slate-800 border border-slate-200">
+                                {row.modality === 'EAD 24h' ? (
+                                  <div className="space-y-1">
+                                    <div><strong>Acessos:</strong> {row.access1 || '-'} | {row.access2 || '-'} | {row.access3 || '-'}</div>
+                                    <div><strong>Situação:</strong> {row.status}</div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    <div><strong>Aulas Ministradas:</strong> {row.classesGiven}/16</div>
+                                    <div><strong>Aulas Assistidas:</strong> {row.classesAttended}</div>
+                                    <div><strong>Frequência:</strong> {row.frequency}</div>
+                                  </div>
+                                )}
+                              </td>
                             </tr>
                           );
                         })}
