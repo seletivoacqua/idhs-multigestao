@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { Filter, FileSpreadsheet, FileText } from 'lucide-react';
+import { Filter, FileSpreadsheet, FileText, FileBarChart } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
+import { SyntheticReportModal } from './SyntheticReportModal';
 
 interface Unit {
   id: string;
@@ -61,6 +62,7 @@ export function ReportsTab() {
   });
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
+  const [isSyntheticModalOpen, setIsSyntheticModalOpen] = useState(false);
 
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -680,6 +682,13 @@ export function ReportsTab() {
         </div>
         <div className="flex gap-3">
           <button
+            onClick={() => setIsSyntheticModalOpen(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            <FileBarChart className="w-5 h-5" />
+            <span>Relatório Sintético</span>
+          </button>
+          <button
             onClick={exportToXLSX}
             disabled={reportData.length === 0 || loading}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -697,6 +706,11 @@ export function ReportsTab() {
           </button>
         </div>
       </div>
+
+      <SyntheticReportModal
+        isOpen={isSyntheticModalOpen}
+        onClose={() => setIsSyntheticModalOpen(false)}
+      />
 
       <div className="bg-white border border-slate-200 rounded-lg p-6">
         <div className="flex items-center space-x-2 mb-4">
