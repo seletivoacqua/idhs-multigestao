@@ -2003,33 +2003,61 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   };
 
   const handleSaveAttendance = async () => {
-    if (!validateAttendance()) return;
+  if (!validateAttendance()) return;
 
-    if (!confirm('Salvar frequência para esta aula?')) return;
+  try {
+    // 🔥 1. RECALCULA NA HORA (não confia no state)
+    const { data: existingClasses } = await supabase
+      .from('attendance')
+      .select('class_number')
+      .eq('class_id', classData.id);
 
+    const classNumbers = existingClasses?.map(a => a.class_number) || [];
+    const maxClassNumber = classNumbers.length > 0 ? Math.max(...classNumbers) : 0;
+    const proximaAula = maxClassNumber + 1;
+    
+    console.log('🔍 Diagnóstico:', {
+      classNumbers,
+      maxClassNumber,
+      proximaAula,
+      classNumberState: classNumber
+    });
+
+    // 2. USA O VALOR RECALCULADO
+    const classNumberCorreto = proximaAula;
+
+    // 3. SALVA COM O NÚMERO CORRETO
     for (const student of students) {
       const present = attendance[student.student_id] || false;
 
-      await supabase.from('attendance').upsert(
-        [
-          {
+      const { error } = await supabase
+        .from('attendance')
+        .upsert(
+          [{
             class_id: classData.id,
             student_id: student.student_id,
-            class_number: classNumber,
+            class_number: classNumberCorreto, // ← VALOR CONFIÁVEL
             class_date: classDate,
             present,
-          },
-        ],
-        { onConflict: 'class_id,student_id,class_date' } // Mudado para usar class_date em vez de class_number
-      );
+          }],
+          { onConflict: 'class_id,student_id,class_number' }
+        );
 
-      // NÃO atualizar status durante o ciclo
+      if (error) throw error;
     }
 
-    alert('Frequência registrada com sucesso!');
+    alert(`Frequência da aula ${classNumberCorreto} registrada com sucesso!`);
     setAttendance({});
     onUpdate();
-  };
+    
+    // 4. ATUALIZA O STATE COM O VALOR CORRETO
+    setClassNumber(classNumberCorreto + 1);
+    
+  } catch (error: any) {
+    console.error('Erro ao salvar:', error);
+    alert(`Erro: ${error.message}`);
+  }
+};
 
   const handleViewDetails = (student: any) => {
     setSelectedStudent(student);
