@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { Plus, Calendar, Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye, Award, User, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
@@ -59,8 +58,74 @@ function validateEADAccess(access_date_1: string | null, access_date_2: string |
   return uniqueMonths.size === 3;
 }
 
-// Função para calcular e atualizar o status do aluno no banco
-async function updateStudentStatus(classId: string, studentId: string, classData?: any, studentData?: any) {
+// Função para contar aulas já realizadas
+async function getTotalClassesGiven(classId: string): Promise<number> {
+  const { data } = await supabase
+    .from('attendance')
+    .select('class_number')
+    .eq('class_id', classId);
+
+  if (!data) return 0;
+  
+  const uniqueClasses = [...new Set(data.map(a => a.class_number))];
+  return uniqueClasses.length;
+}
+
+// Função para calcular frequência corretamente
+async function calculateAttendancePercentage(classId: string, studentId: string, enrollmentDate?: string | null): Promise<{ percentage: number; presentCount: number; totalClassesGiven: number; isProportional: boolean }> {
+  // Contar total de aulas realizadas
+  const totalClassesGiven = await getTotalClassesGiven(classId);
+  
+  if (totalClassesGiven === 0) {
+    return { percentage: 0, presentCount: 0, totalClassesGiven: 0, isProportional: false };
+  }
+
+  // Buscar presenças do aluno
+  let query = supabase
+    .from('attendance')
+    .select('*', { count: 'exact', head: true })
+    .eq('class_id', classId)
+    .eq('student_id', studentId)
+    .eq('present', true);
+
+  // Se for matrícula excepcional, contar apenas presenças após a matrícula
+  const isProportional = !!enrollmentDate;
+  if (enrollmentDate) {
+    query = query.gte('class_date', enrollmentDate);
+  }
+
+  const { count } = await query;
+  const presentCount = count || 0;
+
+  // Calcular porcentagem baseada nas aulas realizadas APÓS a matrícula (se for o caso)
+  let classesToConsider = totalClassesGiven;
+  
+  if (enrollmentDate) {
+    // Contar quantas aulas foram realizadas após a matrícula
+    const { data: classesAfterEnrollment } = await supabase
+      .from('attendance')
+      .select('class_date')
+      .eq('class_id', classId)
+      .gte('class_date', enrollmentDate);
+
+    if (classesAfterEnrollment) {
+      const uniqueDatesAfterEnrollment = [...new Set(classesAfterEnrollment.map(a => a.class_date))];
+      classesToConsider = uniqueDatesAfterEnrollment.length;
+    }
+  }
+
+  const percentage = classesToConsider > 0 ? (presentCount / classesToConsider) * 100 : 0;
+
+  return {
+    percentage,
+    presentCount,
+    totalClassesGiven: classesToConsider,
+    isProportional
+  };
+}
+
+// Função para calcular e atualizar o status do aluno no banco (APENAS no encerramento)
+async function updateStudentStatusOnClose(classId: string, studentId: string, classData?: any, studentData?: any) {
   try {
     // Buscar dados se não fornecidos
     if (!classData) {
@@ -92,53 +157,43 @@ async function updateStudentStatus(classId: string, studentId: string, classData
     const today = new Date().toISOString().split('T')[0];
     const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
 
-    let currentStatus = 'em_andamento';
-
-    // Se o ciclo não estiver mais ativo, calcular status final
-    if (!isCycleActive) {
-      if (classData.modality === 'VIDEOCONFERENCIA') {
-        // Calcular frequência para videoconferência
-        let totalClasses = classData.total_classes;
-        let presentCount = 0;
-
-        const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
-        const isExceptional = studentData?.enrollment_type === 'exceptional' && enrollmentDate > cycleData?.start_date;
-
-        // Buscar presenças
-        let query = supabase
-          .from('attendance')
-          .select('*', { count: 'exact', head: true })
-          .eq('class_id', classId)
-          .eq('student_id', studentId)
-          .eq('present', true);
-
-        if (isExceptional && enrollmentDate) {
-          query = query.gte('class_date', enrollmentDate);
-        }
-
-        const { count } = await query;
-        presentCount = count || 0;
-
-        const percentage = totalClasses > 0 ? (presentCount / totalClasses) * 100 : 0;
-        currentStatus = percentage >= 60 ? 'aprovado' : 'reprovado';
-      } else {
-        // Validar EAD
-        const { data: accessData } = await supabase
-          .from('ead_access')
-          .select('*')
-          .eq('class_id', classId)
-          .eq('student_id', studentId)
-          .single();
-
-        const isPresent = validateEADAccess(
-          accessData?.access_date_1,
-          accessData?.access_date_2,
-          accessData?.access_date_3
-        );
-
-        currentStatus = isPresent ? 'aprovado' : 'reprovado';
-      }
+    // Se o ciclo ainda estiver ativo, não calcular status final
+    if (isCycleActive) {
+      return 'em_andamento';
     }
+
+    let currentStatus = 'em_andamento';
+    let isApproved = false;
+
+    if (classData.modality === 'VIDEOCONFERENCIA') {
+      // Calcular frequência para videoconferência
+      const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
+      const isExceptional = studentData?.enrollment_type === 'exceptional' && enrollmentDate > cycleData?.start_date;
+      
+      const { percentage } = await calculateAttendancePercentage(
+        classId, 
+        studentId, 
+        isExceptional ? enrollmentDate : null
+      );
+      
+      isApproved = percentage >= 60;
+    } else {
+      // Validar EAD
+      const { data: accessData } = await supabase
+        .from('ead_access')
+        .select('*')
+        .eq('class_id', classId)
+        .eq('student_id', studentId)
+        .single();
+
+      isApproved = validateEADAccess(
+        accessData?.access_date_1,
+        accessData?.access_date_2,
+        accessData?.access_date_3
+      );
+    }
+
+    currentStatus = isApproved ? 'aprovado' : 'reprovado';
 
     // Atualizar status no banco
     await supabase
@@ -157,14 +212,25 @@ async function updateStudentStatus(classId: string, studentId: string, classData
   }
 }
 
-// Função para atualizar status de todos os alunos de uma turma
-async function updateAllStudentsStatus(classId: string) {
+// Função para atualizar status de todos os alunos de uma turma (APENAS no encerramento)
+async function updateAllStudentsStatusOnClose(classId: string) {
   try {
+    // Verificar se todas as aulas foram dadas
+    const totalClassesGiven = await getTotalClassesGiven(classId);
+    
     const { data: classData } = await supabase
       .from('classes')
       .select('*, cycles(*)')
       .eq('id', classId)
       .single();
+
+    if (totalClassesGiven < classData.total_classes) {
+      const confirm = window.confirm(
+        `Atenção: Foram dadas apenas ${totalClassesGiven} de ${classData.total_classes} aulas. ` +
+        `Deseja encerrar mesmo assim? Os alunos serão avaliados com base nas aulas realizadas.`
+      );
+      if (!confirm) return;
+    }
 
     const { data: students } = await supabase
       .from('class_students')
@@ -174,7 +240,7 @@ async function updateAllStudentsStatus(classId: string) {
     if (!students) return;
 
     for (const student of students) {
-      await updateStudentStatus(classId, student.student_id, classData, student);
+      await updateStudentStatusOnClose(classId, student.student_id, classData, student);
     }
   } catch (error) {
     console.error('Error updating all students status:', error);
@@ -301,13 +367,13 @@ export function CyclesTab() {
 
     const { data: classes } = await supabase
       .from('classes')
-      .select('id, modality')
+      .select('id, modality, total_classes')
       .eq('cycle_id', cycleId);
 
     if (classes) {
       for (const cls of classes) {
         // Atualizar status de todos os alunos antes de fechar a turma
-        await updateAllStudentsStatus(cls.id);
+        await updateAllStudentsStatusOnClose(cls.id);
         
         const { error } = await supabase
           .from('classes')
@@ -722,7 +788,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
                     </div>
                     <div className="flex items-center space-x-2">
                       <CheckSquare className="w-4 h-4" />
-                      <span>{cls.total_classes} aulas no ciclo</span>
+                      <span>{cls.total_classes} aulas previstas no ciclo</span>
                     </div>
                   </>
                 )}
@@ -899,12 +965,14 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [cycleStatus, setCycleStatus] = useState<string>('');
+  const [totalClassesGiven, setTotalClassesGiven] = useState<number>(0);
   const { user } = useAuth();
 
   useEffect(() => {
     loadCycleData();
     loadClassStudents();
     loadAvailableStudents();
+    loadTotalClassesGiven();
   }, []);
 
   const loadCycleData = async () => {
@@ -926,6 +994,11 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     }
   };
 
+  const loadTotalClassesGiven = async () => {
+    const total = await getTotalClassesGiven(classData.id);
+    setTotalClassesGiven(total);
+  };
+
   const loadClassStudents = async () => {
     const { data, error } = await supabase
       .from('class_students')
@@ -940,62 +1013,22 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     if (classData.modality === 'VIDEOCONFERENCIA') {
       const studentsWithAttendance = await Promise.all(
         (data || []).map(async (cs) => {
-          let totalClasses = classData.total_classes;
-          let adjustedPresentCount = 0;
-          let isProportionalCalculation = false;
-
           const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
-          const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
-
-          if (isEnrolledAfterCycleStart) {
-            isProportionalCalculation = true;
-
-            const { data: allClassDates } = await supabase
-              .from('attendance')
-              .select('class_date')
-              .eq('class_id', classData.id)
-              .order('class_date');
-
-            if (allClassDates && allClassDates.length > 0) {
-              const uniqueClassDates = [...new Set(allClassDates.map(a => a.class_date))];
-
-              const classesAfterEnrollment = uniqueClassDates.filter(
-                (date) => date >= enrollmentDate
-              );
-              totalClasses = classesAfterEnrollment.length || classData.total_classes;
-
-              const { count: presentAfterEnrollment } = await supabase
-                .from('attendance')
-                .select('*', { count: 'exact', head: true })
-                .eq('class_id', classData.id)
-                .eq('student_id', cs.student_id)
-                .eq('present', true)
-                .gte('class_date', enrollmentDate);
-
-              adjustedPresentCount = presentAfterEnrollment || 0;
-            } else {
-              adjustedPresentCount = 0;
-              totalClasses = classData.total_classes;
-            }
-          } else {
-            const { count: presentCount } = await supabase
-              .from('attendance')
-              .select('*', { count: 'exact', head: true })
-              .eq('class_id', classData.id)
-              .eq('student_id', cs.student_id)
-              .eq('present', true);
-
-            adjustedPresentCount = presentCount || 0;
-          }
-
-          const percentage = totalClasses > 0 ? (adjustedPresentCount / totalClasses) * 100 : 0;
+          const isExceptional = cs.enrollment_type === 'exceptional' && enrollmentDate > cycleStartDate;
+          
+          const { percentage, presentCount, totalClassesGiven: totalClasses, isProportional } = 
+            await calculateAttendancePercentage(
+              classData.id, 
+              cs.student_id, 
+              isExceptional ? enrollmentDate : null
+            );
 
           return {
             ...cs,
-            attendanceCount: adjustedPresentCount,
+            attendanceCount: presentCount,
             attendancePercentage: percentage,
             totalClasses,
-            isProportionalCalculation,
+            isProportionalCalculation: isProportional,
           };
         })
       );
@@ -1126,8 +1159,15 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const handleCloseClass = async () => {
     if (!confirm('Tem certeza que deseja encerrar esta turma? Esta ação não pode ser desfeita.')) return;
 
+    // Verificar se há aulas dadas
+    if (totalClassesGiven === 0) {
+      if (!confirm('Nenhuma aula foi registrada para esta turma. Deseja encerrar mesmo assim?')) {
+        return;
+      }
+    }
+
     // Atualizar status de todos os alunos antes de fechar
-    await updateAllStudentsStatus(classData.id);
+    await updateAllStudentsStatusOnClose(classData.id);
 
     const { error } = await supabase
       .from('classes')
@@ -1505,7 +1545,11 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
               <VideoconferenciaAttendance
                 classData={classData}
                 students={students}
-                onUpdate={loadClassStudents}
+                onUpdate={() => {
+                  loadClassStudents();
+                  loadTotalClassesGiven();
+                }}
+                totalClassesGiven={totalClassesGiven}
               />
             </div>
           )}
@@ -1534,6 +1578,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                     <p className="text-2xl font-bold text-amber-800">{classData.total_classes}</p>
                   </div>
                   <div>
+                    <p className="text-sm text-amber-700">Aulas realizadas</p>
+                    <p className="text-2xl font-bold text-amber-800">{totalClassesGiven}</p>
+                  </div>
+                  <div>
                     <p className="text-sm text-amber-700">Status do Ciclo</p>
                     <p className="text-2xl font-bold text-amber-800">
                       {cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
@@ -1545,8 +1593,16 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                   <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <p className="text-sm text-blue-800">
                       <strong>⚠️ Atenção:</strong> Este ciclo ainda está ativo. 
-                      As situações abaixo são baseadas na frequência atual, 
+                      As situações abaixo são baseadas na frequência atual ({totalClassesGiven} de {classData.total_classes} aulas realizadas), 
                       mas podem mudar até o encerramento do ciclo.
+                    </p>
+                  </div>
+                )}
+
+                {totalClassesGiven < classData.total_classes && cycleStatus === 'active' && (
+                  <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800">
+                      <strong>📌 Aulas pendentes:</strong> Faltam {classData.total_classes - totalClassesGiven} aulas para completar o ciclo.
                     </p>
                   </div>
                 )}
@@ -1650,13 +1706,18 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                               {classData.modality === 'VIDEOCONFERENCIA' ? (
                                 <div className="flex flex-col">
                                   <span className="font-medium">
-                                    {student.attendanceCount} de {student.totalClasses || classData.total_classes} aulas
+                                    {student.attendanceCount} de {student.totalClasses || totalClassesGiven} aulas
                                   </span>
                                   <span className="text-xs text-slate-500">
                                     {student.isProportionalCalculation && student.enrollment_date
                                       ? `Matrícula: ${new Date(student.enrollment_date).toLocaleDateString('pt-BR')}`
                                       : 'Presenças registradas'}
                                   </span>
+                                  {totalClassesGiven < classData.total_classes && cycleStatus === 'active' && (
+                                    <span className="text-xs text-blue-500 mt-1">
+                                      {classData.total_classes - totalClassesGiven} aulas restantes
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="flex flex-col">
@@ -1720,12 +1781,20 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                     </button>
                     <p className="text-sm text-slate-500 text-center mt-3">
                       Ao encerrar a turma, as situações dos alunos serão calculadas definitivamente
+                      {totalClassesGiven < classData.total_classes && (
+                        <span className="block text-yellow-600 font-medium mt-1">
+                          ⚠️ Apenas {totalClassesGiven} de {classData.total_classes} aulas foram realizadas
+                        </span>
+                      )}
                     </p>
                   </>
                 ) : (
                   <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-center">
                     <p className="text-green-800 font-medium">
                       ✅ Ciclo encerrado - todas as situações estão consolidadas
+                    </p>
+                    <p className="text-sm text-green-600 mt-1">
+                      Total de aulas realizadas: {totalClassesGiven} de {classData.total_classes}
                     </p>
                   </div>
                 )}
@@ -1863,21 +1932,80 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   );
 }
 
-function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
-  const [classNumber, setClassNumber] = useState(1);
+function VideoconferenciaAttendance({ classData, students, onUpdate, totalClassesGiven }: any) {
+  const [classNumber, setClassNumber] = useState(totalClassesGiven + 1);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendance, setAttendance] = useState<Record<string, boolean>>({});
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Validar se a data está dentro do ciclo (será passado via props)
+  const [cycleStartDate, setCycleStartDate] = useState<string>('');
+  const [cycleEndDate, setCycleEndDate] = useState<string>('');
+
+  useEffect(() => {
+    loadCycleDates();
+    setClassNumber(totalClassesGiven + 1);
+  }, [totalClassesGiven]);
+
+  const loadCycleDates = async () => {
+    const { data } = await supabase
+      .from('cycles')
+      .select('start_date, end_date')
+      .eq('id', classData.cycle_id)
+      .single();
+
+    if (data) {
+      setCycleStartDate(data.start_date);
+      setCycleEndDate(data.end_date);
+    }
+  };
+
+  const validateAttendance = (): boolean => {
+    setValidationError(null);
+
+    // Validar número da aula
+    if (classNumber < 1 || classNumber > classData.total_classes) {
+      setValidationError(`Número da aula deve estar entre 1 e ${classData.total_classes}`);
+      return false;
+    }
+
+    // Validar data
+    if (!classDate) {
+      setValidationError('Selecione uma data para a aula');
+      return false;
+    }
+
+    if (cycleStartDate && classDate < cycleStartDate) {
+      setValidationError('Data da aula não pode ser anterior ao início do ciclo');
+      return false;
+    }
+
+    if (cycleEndDate && classDate > cycleEndDate) {
+      setValidationError('Data da aula não pode ser posterior ao fim do ciclo');
+      return false;
+    }
+
+    // Validar se já existe frequência para esta aula
+    const existingClass = students.some((s: any) => 
+      s.attendanceRecords?.some((r: any) => r.class_number === classNumber)
+    );
+
+    if (existingClass) {
+      if (!confirm(`Aula ${classNumber} já possui registros. Deseja sobrescrever?`)) {
+        return false;
+      }
+    }
+
+    return true;
+  };
 
   const handleSaveAttendance = async () => {
-    if (!confirm('Salvar frequência para esta aula?')) return;
+    if (!validateAttendance()) return;
 
-    if (!classDate) {
-      alert('Por favor, selecione uma data para a aula');
-      return;
-    }
+    if (!confirm('Salvar frequência para esta aula?')) return;
 
     for (const student of students) {
       const present = attendance[student.student_id] || false;
@@ -1892,11 +2020,10 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
             present,
           },
         ],
-        { onConflict: 'class_id,student_id,class_number' }
+        { onConflict: 'class_id,student_id,class_date' } // Mudado para usar class_date em vez de class_number
       );
 
-      // Atualizar status do aluno após registrar presença
-      await updateStudentStatus(classData.id, student.student_id, classData, student);
+      // NÃO atualizar status durante o ciclo
     }
 
     alert('Frequência registrada com sucesso!');
@@ -1917,6 +2044,18 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
 
   return (
     <>
+      {validationError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-sm text-red-600">{validationError}</p>
+        </div>
+      )}
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <p className="text-sm text-blue-800">
+          <strong>📊 Aulas realizadas:</strong> {totalClassesGiven} de {classData.total_classes}
+        </p>
+      </div>
+
       <div className="grid grid-cols-3 gap-6 mb-6">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -1930,6 +2069,9 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
             onChange={(e) => setClassNumber(parseInt(e.target.value))}
             className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
+          <p className="text-xs text-slate-500 mt-1">
+            Próxima aula: {totalClassesGiven + 1}
+          </p>
         </div>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -1939,6 +2081,8 @@ function VideoconferenciaAttendance({ classData, students, onUpdate }: any) {
             type="date"
             value={classDate}
             onChange={(e) => setClassDate(e.target.value)}
+            min={cycleStartDate}
+            max={cycleEndDate}
             className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
         </div>
@@ -2051,6 +2195,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   const [editingRecord, setEditingRecord] = useState<string | null>(null);
   const [editData, setEditData] = useState<{ classNumber: number; classDate: string; present: boolean } | null>(null);
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
+  const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
   useEffect(() => {
     loadCycleData();
@@ -2060,7 +2205,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   const loadCycleData = async () => {
     const { data, error } = await supabase
       .from('cycles')
-      .select('start_date')
+      .select('start_date, end_date')
       .eq('id', classData.cycle_id)
       .single();
 
@@ -2071,6 +2216,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 
     if (data) {
       setCycleStartDate(data.start_date);
+      setCycleEndDate(data.end_date);
     }
   };
 
@@ -2080,7 +2226,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       .select('*')
       .eq('class_id', classData.id)
       .eq('student_id', student.student_id)
-      .order('class_number', { ascending: true });
+      .order('class_date', { ascending: true });
 
     if (error) {
       console.error('Error loading attendance records:', error);
@@ -2099,8 +2245,29 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     });
   };
 
+  const validateEdit = (): boolean => {
+    if (!editData) return false;
+
+    if (cycleStartDate && editData.classDate < cycleStartDate) {
+      alert('Data não pode ser anterior ao início do ciclo');
+      return false;
+    }
+
+    if (cycleEndDate && editData.classDate > cycleEndDate) {
+      alert('Data não pode ser posterior ao fim do ciclo');
+      return false;
+    }
+
+    if (editData.classNumber < 1 || editData.classNumber > classData.total_classes) {
+      alert(`Número da aula deve estar entre 1 e ${classData.total_classes}`);
+      return false;
+    }
+
+    return true;
+  };
+
   const handleSaveEdit = async (recordId: string) => {
-    if (!editData) return;
+    if (!editData || !validateEdit()) return;
 
     const { error } = await supabase
       .from('attendance')
@@ -2117,8 +2284,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
-    // Atualizar status do aluno após editar frequência
-    await updateStudentStatus(classData.id, student.student_id, classData, student);
+    // NÃO atualizar status durante o ciclo
 
     setEditingRecord(null);
     setEditData(null);
@@ -2145,35 +2311,18 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
-    // Atualizar status do aluno após deletar frequência
-    await updateStudentStatus(classData.id, student.student_id, classData, student);
+    // NÃO atualizar status durante o ciclo
 
     loadAttendanceRecords();
     alert('Frequência excluída com sucesso!');
   };
 
-  let totalClassesForStudent = classData.total_classes;
-  let percentage = 0;
-  let presentCount = 0;
-  let isProportionalCalculation = false;
-
-  const enrollmentDate = student.enrollment_date ? student.enrollment_date.split('T')[0] : null;
-  const isEnrolledAfterCycleStart = enrollmentDate && cycleStartDate && enrollmentDate > cycleStartDate;
-
-  if (isEnrolledAfterCycleStart && attendanceRecords.length > 0) {
-    isProportionalCalculation = true;
-
-    const classesAfterEnrollment = attendanceRecords.filter(
-      r => r.class_date >= enrollmentDate
-    );
-    totalClassesForStudent = classesAfterEnrollment.length || classData.total_classes;
-
-    presentCount = attendanceRecords.filter(r => r.present && r.class_date >= enrollmentDate).length;
-  } else {
-    presentCount = attendanceRecords.filter(r => r.present).length;
-  }
-
-  percentage = totalClassesForStudent > 0 ? (presentCount / totalClassesForStudent) * 100 : 0;
+  // Calcular frequência baseada apenas nas aulas realizadas
+  const uniqueClasses = [...new Set(attendanceRecords.map(r => r.class_number))];
+  const totalClassesGiven = uniqueClasses.length;
+  
+  const presentCount = attendanceRecords.filter(r => r.present).length;
+  const percentage = totalClassesGiven > 0 ? (presentCount / totalClassesGiven) * 100 : 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
@@ -2185,17 +2334,15 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
               <p className="text-lg text-slate-600 mt-1">{student.students.full_name}</p>
               <div className="flex items-center space-x-4 mt-3">
                 <span className="text-sm text-slate-600">
-                  Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {totalClassesForStudent}
-                  {isProportionalCalculation && enrollmentDate && (
-                    <span className="ml-2 text-xs text-amber-600">
-                      (Matrícula após início do ciclo - {new Date(enrollmentDate + 'T00:00:00').toLocaleDateString('pt-BR')})
-                    </span>
-                  )}
+                  Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {totalClassesGiven} aulas
                 </span>
                 <span className={`text-sm font-bold ${percentage >= 60 ? 'text-green-600' : 'text-red-600'}`}>
                   {percentage.toFixed(1)}%
                 </span>
               </div>
+              <p className="text-xs text-slate-500 mt-1">
+                Total de aulas realizadas na turma: {totalClassesGiven} de {classData.total_classes}
+              </p>
             </div>
             <button
               onClick={onClose}
@@ -2235,6 +2382,8 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
                             type="date"
                             value={editData?.classDate || ''}
                             onChange={(e) => setEditData({ ...editData!, classDate: e.target.value })}
+                            min={cycleStartDate}
+                            max={cycleEndDate}
                             className="px-2 py-1 border border-slate-300 rounded focus:ring-2 focus:ring-green-500 text-sm"
                           />
                         </td>
@@ -2332,8 +2481,11 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
+  const [cycleStartDate, setCycleStartDate] = useState<string>('');
+  const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
   useEffect(() => {
+    loadCycleDates();
     const initial: Record<string, any> = {};
     students.forEach((student: any) => {
       initial[student.student_id] = {
@@ -2345,8 +2497,43 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     setAccessData(initial);
   }, [students]);
 
+  const loadCycleDates = async () => {
+    const { data } = await supabase
+      .from('cycles')
+      .select('start_date, end_date')
+      .eq('id', classData.cycle_id)
+      .single();
+
+    if (data) {
+      setCycleStartDate(data.start_date);
+      setCycleEndDate(data.end_date);
+    }
+  };
+
+  const validateAccessDate = (date: string): boolean => {
+    if (!date) return true;
+    
+    if (cycleStartDate && date < cycleStartDate) {
+      alert('Data de acesso não pode ser anterior ao início do ciclo');
+      return false;
+    }
+
+    if (cycleEndDate && date > cycleEndDate) {
+      alert('Data de acesso não pode ser posterior ao fim do ciclo');
+      return false;
+    }
+
+    return true;
+  };
+
   const handleSaveAccess = async (studentId: string) => {
     const data = accessData[studentId];
+
+    // Validar todas as datas
+    const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
+    for (const date of dates) {
+      if (!validateAccessDate(date)) return;
+    }
 
     await supabase
       .from('ead_access')
@@ -2364,8 +2551,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         { onConflict: 'class_id,student_id' }
       );
 
-    // Atualizar status do aluno após registrar acesso
-    await updateStudentStatus(classData.id, studentId, classData);
+    // NÃO atualizar status durante o ciclo
 
     alert('Acessos atualizados!');
     onUpdate();
@@ -2378,6 +2564,18 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       const data = accessData[student.student_id];
       
       if (data) {
+        // Validar todas as datas
+        const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
+        let isValid = true;
+        for (const date of dates) {
+          if (!validateAccessDate(date)) {
+            isValid = false;
+            break;
+          }
+        }
+
+        if (!isValid) continue;
+
         await supabase
           .from('ead_access')
           .upsert(
@@ -2394,8 +2592,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             { onConflict: 'class_id,student_id' }
           );
 
-        // Atualizar status do aluno
-        await updateStudentStatus(classData.id, student.student_id, classData);
+        // NÃO atualizar status durante o ciclo
       }
     }
     
@@ -2483,6 +2680,8 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                             },
                           })
                         }
+                        min={cycleStartDate}
+                        max={cycleEndDate}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                       />
                     </td>
