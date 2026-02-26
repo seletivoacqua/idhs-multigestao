@@ -2002,59 +2002,46 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     return true;
   };
 
-  const handleSaveAttendance = async () => {
+const handleSaveAttendance = async () => {
   if (!validateAttendance()) return;
 
   try {
-    // 🔥 1. RECALCULA NA HORA (não confia no state)
-    const { data: existingClasses } = await supabase
+    // 🔥 BUSCA OTIMIZADA - apenas o máximo
+    const { data: maxClassData } = await supabase
       .from('attendance')
       .select('class_number')
-      .eq('class_id', classData.id);
+      .eq('class_id', classData.id)
+      .order('class_number', { ascending: false })
+      .limit(1);
 
-    const classNumbers = existingClasses?.map(a => a.class_number) || [];
-    const maxClassNumber = classNumbers.length > 0 ? Math.max(...classNumbers) : 0;
-    const proximaAula = maxClassNumber + 1;
+    const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
     
-    console.log('🔍 Diagnóstico:', {
-      classNumbers,
-      maxClassNumber,
-      proximaAula,
-      classNumberState: classNumber
-    });
+    console.log('Próxima aula:', proximaAula);
 
-    // 2. USA O VALOR RECALCULADO
-    const classNumberCorreto = proximaAula;
+    // 🔥 UPSERT EM LOTE (uma única chamada)
+    const records = students.map(student => ({
+      class_id: classData.id,
+      student_id: student.student_id,
+      class_number: proximaAula,
+      class_date: classDate,
+      present: attendance[student.student_id] || false,
+    }));
 
-    // 3. SALVA COM O NÚMERO CORRETO
-    for (const student of students) {
-      const present = attendance[student.student_id] || false;
+    const { error } = await supabase
+      .from('attendance')
+      .upsert(records, { 
+        onConflict: 'class_id,student_id,class_number',
+        ignoreDuplicates: false 
+      });
 
-      const { error } = await supabase
-        .from('attendance')
-        .upsert(
-          [{
-            class_id: classData.id,
-            student_id: student.student_id,
-            class_number: classNumberCorreto, // ← VALOR CONFIÁVEL
-            class_date: classDate,
-            present,
-          }],
-          { onConflict: 'class_id,student_id,class_number' }
-        );
+    if (error) throw error;
 
-      if (error) throw error;
-    }
-
-    alert(`Frequência da aula ${classNumberCorreto} registrada com sucesso!`);
+    alert(`Aula ${proximaAula} registrada!`);
     setAttendance({});
     onUpdate();
     
-    // 4. ATUALIZA O STATE COM O VALOR CORRETO
-    setClassNumber(classNumberCorreto + 1);
-    
   } catch (error: any) {
-    console.error('Erro ao salvar:', error);
+    console.error('Erro:', error);
     alert(`Erro: ${error.message}`);
   }
 };
