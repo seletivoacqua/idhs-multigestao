@@ -123,7 +123,7 @@ export function ControlePagamentoTab() {
       .select('*')
       .eq('user_id', user.id)
       .is('deleted_at', null)
-      .order('item_number', { ascending: false });
+      .order('item_number', { ascending: true });
 
     if (error) {
       console.error('Error loading invoices:', error);
@@ -463,8 +463,8 @@ export function ControlePagamentoTab() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
+<div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
+  <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
