@@ -47,8 +47,7 @@ export function FinanceiroDashboard() {
           </div>
         </div>
       </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+<div className="w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="bg-white rounded-lg shadow-sm border border-slate-200">
           <div className="border-b border-slate-200">
             <nav className="flex space-x-1 p-2">
