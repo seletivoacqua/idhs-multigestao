@@ -151,29 +151,44 @@ export function FluxoCaixaTab() {
   };
 
   const loadTransactions = async () => {
-    if (!user) return;
+  if (!user) return;
 
-    const startDate = `${filterMonth}-01`;
-    const endDate = new Date(filterMonth + '-01');
-    endDate.setMonth(endDate.getMonth() + 1);
-    endDate.setDate(0);
-    const endDateStr = endDate.toISOString().split('T')[0];
+  console.log('📅 Filter month:', filterMonth);
+  
+  // Extrair ano e mês
+  const [year, month] = filterMonth.split('-').map(Number);
+  
+  // Formatar mês com 2 dígitos
+  const monthPadded = month.toString().padStart(2, '0');
+  
+  // Primeiro dia do mês
+  const startDate = `${year}-${monthPadded}-01`;
+  
+  // Último dia do mês (criando data e extraindo o último dia)
+  const lastDay = new Date(year, month, 0).getDate(); // month aqui é 1-based? Vamos testar
+  const lastDayCorrected = new Date(year, month, 0).getDate(); // Isso retorna o último dia
+  
+  const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
+  
+  console.log('📅 Start date:', startDate);
+  console.log('📅 End date:', endDate);
 
-    const { data, error } = await supabase
-      .from('cash_flow_transactions')
-      .select('*')
-      .eq('user_id', user.id)
-      .gte('transaction_date', startDate)
-      .lte('transaction_date', endDateStr)
-      .order('transaction_date', { ascending: false });
+  const { data, error } = await supabase
+    .from('cash_flow_transactions')
+    .select('*')
+    .eq('user_id', user.id)
+    .gte('transaction_date', startDate)
+    .lte('transaction_date', endDate)
+    .order('transaction_date', { ascending: false });
 
-    if (error) {
-      console.error('Error loading transactions:', error);
-      return;
-    }
+  if (error) {
+    console.error('Error loading transactions:', error);
+    return;
+  }
 
-    setTransactions(data || []);
-  };
+  console.log('✅ Transações carregadas:', data);
+  setTransactions(data || []);
+};
 
   const loadFixedExpenses = async () => {
     if (!user) return;
