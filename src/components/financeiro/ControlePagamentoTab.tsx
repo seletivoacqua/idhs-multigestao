@@ -45,6 +45,11 @@ export function ControlePagamentoTab() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
+  
+  // Estados para filtro de período
+  const [startDateFilter, setStartDateFilter] = useState<string>('');
+  const [endDateFilter, setEndDateFilter] = useState<string>('');
+  
   const { user } = useAuth();
 
   // Função utilitária para formatar datas sem problemas de fuso horário
@@ -426,9 +431,27 @@ export function ControlePagamentoTab() {
     .filter((inv) => inv.payment_status === 'ATRASADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
+  // Função de filtro modificada para incluir período
   const filteredInvoices = invoices.filter((inv) => {
-    if (statusFilter === 'all') return true;
-    return inv.payment_status === statusFilter;
+    // Filtro por status
+    if (statusFilter !== 'all' && inv.payment_status !== statusFilter) {
+      return false;
+    }
+
+    // Filtro por período (baseado na data de vencimento)
+    if (startDateFilter && endDateFilter) {
+      const dueDate = new Date(inv.due_date);
+      const startDate = new Date(startDateFilter);
+      const endDate = new Date(endDateFilter);
+      
+      // Ajusta as datas para comparar corretamente
+      startDate.setHours(0, 0, 0, 0);
+      endDate.setHours(23, 59, 59, 999);
+      
+      return dueDate >= startDate && dueDate <= endDate;
+    }
+
+    return true;
   });
 
   return (
@@ -436,6 +459,8 @@ export function ControlePagamentoTab() {
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
+          
+          {/* Filtro de Status */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -446,7 +471,41 @@ export function ControlePagamentoTab() {
             <option value="EM ABERTO">Em Aberto</option>
             <option value="ATRASADO">Atrasado</option>
           </select>
+
+          {/* Filtro de Período */}
+          <div className="flex items-center space-x-2">
+            <input
+              type="date"
+              value={startDateFilter}
+              onChange={(e) => setStartDateFilter(e.target.value)}
+              className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Data inicial"
+            />
+            <span className="text-slate-500">até</span>
+            <input
+              type="date"
+              value={endDateFilter}
+              onChange={(e) => setEndDateFilter(e.target.value)}
+              className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Data final"
+            />
+            
+            {/* Botão para limpar filtros */}
+            {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setStartDateFilter('');
+                  setEndDateFilter('');
+                  setStatusFilter('all');
+                }}
+                className="px-3 py-2 text-sm text-red-600 hover:text-red-800 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+              >
+                Limpar Filtros
+              </button>
+            )}
+          </div>
         </div>
+
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setShowReportModal(true)}
@@ -464,6 +523,28 @@ export function ControlePagamentoTab() {
           </button>
         </div>
       </div>
+
+      {/* Indicador de filtros ativos */}
+      {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center space-x-2 text-sm text-blue-700">
+            <span>Filtros ativos:</span>
+            {statusFilter !== 'all' && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Status: {statusFilter === 'PAGO' ? 'Pago' : statusFilter === 'EM ABERTO' ? 'Em Aberto' : 'Atrasado'}
+              </span>
+            )}
+            {startDateFilter && endDateFilter && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Período: {formatDate(startDateFilter)} até {formatDate(endDateFilter)}
+              </span>
+            )}
+          </div>
+          <span className="text-sm text-blue-700">
+            {filteredInvoices.length} nota(s) fiscal(is) encontrada(s)
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -497,8 +578,8 @@ export function ControlePagamentoTab() {
         </div>
       </div>
 
-<div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
-  <div className="overflow-x-auto">
+      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
+        <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
