@@ -96,6 +96,7 @@ async function calculateAttendancePercentage(
     };
   }
 
+  // 🔥 CORREÇÃO: Filtrar por data de matrícula para TODOS que têm data
   let filteredAttendances = attendances;
   let isProportional = false;
 
@@ -106,12 +107,20 @@ async function calculateAttendancePercentage(
     );
   }
 
+  // Se não tem aulas após a matrícula, retorna 0
+  if (filteredAttendances.length === 0) {
+    return {
+      percentage: 0,
+      presentCount: 0,
+      totalClassesToConsider: 0,
+      isProportional
+    };
+  }
+
   const presentCount = filteredAttendances.filter(a => a.present).length;
   const totalClassesToConsider = filteredAttendances.length;
   
-  const percentage = totalClassesToConsider > 0 
-    ? (presentCount / totalClassesToConsider) * 100 
-    : 0;
+  const percentage = (presentCount / totalClassesToConsider) * 100;
 
   return {
     percentage,
@@ -2020,6 +2029,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 // ===========================================
 // COMPONENTE - VideoconferenciaAttendance
 // ===========================================
+// ===========================================
+// COMPONENTE - VideoconferenciaAttendance CORRIGIDO
+// ===========================================
 function VideoconferenciaAttendance({ classData, students, onUpdate, totalClassesGiven }: any) {
   const [classNumber, setClassNumber] = useState(totalClassesGiven + 1);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2030,11 +2042,39 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
+  const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
 
   useEffect(() => {
     loadCycleDates();
     setClassNumber(totalClassesGiven + 1);
   }, [totalClassesGiven]);
+
+  // 🔥 NOVO: Filtrar alunos elegíveis para a aula
+  useEffect(() => {
+    if (classDate && students.length > 0) {
+      const eligible = students.filter((student: any) => {
+        const enrollmentDate = student.enrollment_date?.split('T')[0];
+        
+        // Se não tem data de matrícula, considera elegível
+        if (!enrollmentDate) return true;
+        
+        // Só é elegível se a data da aula >= data da matrícula
+        return classDate >= enrollmentDate;
+      });
+      
+      setEligibleStudents(eligible);
+      
+      // Log para debug
+      console.log('📅 Filtro de alunos:', {
+        dataAula: classDate,
+        totalAlunos: students.length,
+        alunosElegiveis: eligible.length,
+        alunosIgnorados: students.length - eligible.length
+      });
+    } else {
+      setEligibleStudents(students);
+    }
+  }, [classDate, students]);
 
   const loadCycleDates = async () => {
     const { data } = await supabase
@@ -2063,23 +2103,13 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     }
 
     if (cycleStartDate && classDate < cycleStartDate) {
-      setValidationError('Data da aula não pode ser anterior ao início do ciclo');
+      setValidationError(`Data da aula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
       return false;
     }
 
     if (cycleEndDate && classDate > cycleEndDate) {
-      setValidationError('Data da aula não pode ser posterior ao fim do ciclo');
+      setValidationError(`Data da aula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
       return false;
-    }
-
-    const existingClass = students.some((s: any) => 
-      s.attendanceRecords?.some((r: any) => r.class_number === classNumber)
-    );
-
-    if (existingClass) {
-      if (!confirm(`Aula ${classNumber} já possui registros. Deseja sobrescrever?`)) {
-        return false;
-      }
     }
 
     return true;
@@ -2098,13 +2128,22 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
       const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
       
-      const records = students.map((student: any) => ({
+      // 🔥 IMPORTANTE: Só salvar para alunos ELEGÍVEIS
+      const records = eligibleStudents.map((student: any) => ({
         class_id: classData.id,
         student_id: student.student_id,
         class_number: proximaAula,
         class_date: classDate,
         present: attendance[student.student_id] || false,
       }));
+
+      // Log para debug
+      console.log('💾 Salvando frequência:', {
+        dataAula: classDate,
+        totalRegistros: records.length,
+        presentes: records.filter(r => r.present).length,
+        ausentes: records.filter(r => !r.present).length
+      });
 
       const { error } = await supabase
         .from('attendance')
@@ -2115,7 +2154,7 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
       if (error) throw error;
 
-      alert(`Aula ${proximaAula} registrada!`);
+      alert(`Aula ${proximaAula} registrada para ${records.length} alunos elegíveis!`);
       setAttendance({});
       onUpdate();
       
@@ -2130,11 +2169,15 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     setShowDetailsModal(true);
   };
 
-  const filteredStudents = students.filter((student: any) => {
+  // Filtrar para busca
+  const filteredEligibleStudents = eligibleStudents.filter((student: any) => {
     if (!studentSearchTerm) return true;
     const search = studentSearchTerm.toLowerCase();
     return student.students.full_name.toLowerCase().includes(search);
   });
+
+  // 🔥 NOVO: Contar alunos ignorados
+  const ignoredCount = students.length - eligibleStudents.length;
 
   return (
     <>
@@ -2149,6 +2192,15 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
           <strong>📊 Aulas realizadas:</strong> {totalClassesGiven} de {classData.total_classes}
         </p>
       </div>
+
+      {/* 🔥 NOVO: Aviso sobre alunos não elegíveis */}
+      {ignoredCount > 0 && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <p className="text-sm text-amber-800">
+            <strong>⚠️ Atenção:</strong> {ignoredCount} aluno(s) não estão sendo exibidos porque a data da aula ({new Date(classDate).toLocaleDateString('pt-BR')}) é anterior à data de matrícula deles.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <div>
@@ -2185,7 +2237,7 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
             onClick={handleSaveAttendance}
             className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
           >
-            Salvar Frequência
+            Salvar Frequência ({eligibleStudents.length} alunos)
           </button>
         </div>
       </div>
@@ -2226,24 +2278,11 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredStudents.map((student: any) => {
-                const getEnrollmentTypeInfo = () => {
-                  const isExceptional = student.enrollment_type === 'exceptional';
-                  const enrollmentDate = student.enrollment_date 
-                    ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
-                    : null;
-                  
-                  return {
-                    tipo: isExceptional ? 'Excepcional' : 'Regular',
-                    cor: isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800',
-                    tooltip: isExceptional 
-                      ? `Matrícula excepcional em ${enrollmentDate}`
-                      : 'Matrícula regular desde o início do ciclo',
-                    data: enrollmentDate
-                  };
-                };
-
-                const enrollmentInfo = getEnrollmentTypeInfo();
+              {filteredEligibleStudents.map((student: any) => {
+                const isExceptional = student.enrollment_type === 'exceptional';
+                const enrollmentDate = student.enrollment_date 
+                  ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
+                  : null;
                 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
@@ -2253,20 +2292,14 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
                     
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
-                        <span 
-                          className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${enrollmentInfo.cor}`}
-                          title={enrollmentInfo.tooltip}
-                        >
-                          {enrollmentInfo.tipo}
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                          isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {isExceptional ? 'Excepcional' : 'Regular'}
                         </span>
-                        {enrollmentInfo.data && (
+                        {enrollmentDate && (
                           <span className="text-xs text-slate-500 mt-1">
-                            {enrollmentInfo.data}
-                          </span>
-                        )}
-                        {student.enrollment_type === 'exceptional' && (
-                          <span className="text-xs text-amber-600 font-medium mt-1">
-                            ⚖️ Proporcional
+                            Mat: {enrollmentDate}
                           </span>
                         )}
                       </div>
