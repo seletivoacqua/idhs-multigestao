@@ -1166,43 +1166,62 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   };
 
   const handleEnrollStudents = async () => {
-    if (selectedStudents.size === 0) {
-      alert('Por favor, selecione pelo menos um aluno para matricular');
-      return;
-    }
+  if (selectedStudents.size === 0) {
+    alert('Por favor, selecione pelo menos um aluno para matricular');
+    return;
+  }
 
-    const enrollmentDate = new Date().toISOString();
-    const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
+  if (!enrollmentDate) {
+    alert('Por favor, selecione a data da matrícula');
+    return;
+  }
+
+  // ✅ Validar se a data está dentro do ciclo
+  if (cycleStartDate && enrollmentDate < cycleStartDate) {
+    alert(`Data de matrícula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
+    return;
+  }
+
+  if (cycleEndDate && enrollmentDate > cycleEndDate) {
+    alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
+    return;
+  }
+
+  // ✅ Converter para ISO string com timezone correto
+  const enrollmentDateTime = `${enrollmentDate}T00:00:00.000Z`;
+
+  const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
+    class_id: classData.id,
+    student_id: studentId,
+    enrollment_type: enrollmentType,
+    enrollment_date: enrollmentDateTime, // ✅ Agora usa a data selecionada!
+    current_status: 'em_andamento',
+    status_updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase.from('class_students').insert(studentsToEnroll);
+
+  if (error) {
+    console.error('Error enrolling students:', error);
+    alert('Erro ao matricular alunos');
+    return;
+  }
+
+  if (classData.modality === 'EAD') {
+    const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
       class_id: classData.id,
       student_id: studentId,
-      enrollment_type: enrollmentType,
-      enrollment_date: enrollmentDate,
-      current_status: 'em_andamento',
-      status_updated_at: new Date().toISOString(),
     }));
+    await supabase.from('ead_access').insert(eadAccessRecords);
+  }
 
-    const { error } = await supabase.from('class_students').insert(studentsToEnroll);
-
-    if (error) {
-      console.error('Error enrolling students:', error);
-      alert('Erro ao matricular alunos');
-      return;
-    }
-
-    if (classData.modality === 'EAD') {
-      const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
-        class_id: classData.id,
-        student_id: studentId,
-      }));
-      await supabase.from('ead_access').insert(eadAccessRecords);
-    }
-
-    setShowEnrollmentModal(false);
-    setSelectedStudents(new Set());
-    loadClassStudents();
-    loadAvailableStudents();
-    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso!`);
-  };
+  setShowEnrollmentModal(false);
+  setSelectedStudents(new Set());
+  loadClassStudents();
+  loadAvailableStudents();
+  
+  alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso em ${new Date(enrollmentDate).toLocaleDateString('pt-BR')}!`);
+};
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!confirm('Tem certeza que deseja remover este aluno da turma?')) return;
