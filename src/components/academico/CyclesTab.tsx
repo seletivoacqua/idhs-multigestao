@@ -72,60 +72,78 @@ async function getTotalClassesGiven(classId: string): Promise<number> {
 }
 
 // Função para calcular frequência corretamente
-async function calculateAttendancePercentage(classId: string, studentId: string, enrollmentDate?: string | null): Promise<{ percentage: number; presentCount: number; totalClassesGiven: number; isProportional: boolean }> {
-  // Contar total de aulas realizadas
-  const totalClassesGiven = await getTotalClassesGiven(classId);
-  
-  if (totalClassesGiven === 0) {
-    return { percentage: 0, presentCount: 0, totalClassesGiven: 0, isProportional: false };
-  }
+// ===========================================
+// FUNÇÃO CORRIGIDA - VIDEOCONFERÊNCIA
+// SEM REPOSIÇÕES, APENAS DATAS
+// ===========================================
 
-  // Buscar presenças do aluno
-  let query = supabase
+async function calculateAttendancePercentage(
+  classId: string, 
+  studentId: string, 
+  enrollmentDate?: string | null  // Só existe para excepcional
+): Promise<{ 
+  percentage: number; 
+  presentCount: number; 
+  totalClassesToConsider: number; 
+  isProportional: boolean 
+}> {
+  
+  // 1. Buscar todas as frequências do aluno
+  const { data: attendances } = await supabase
     .from('attendance')
-    .select('*', { count: 'exact', head: true })
+    .select('class_date, present')
     .eq('class_id', classId)
     .eq('student_id', studentId)
-    .eq('present', true);
+    .order('class_date');
 
-  // Se for matrícula excepcional, contar apenas presenças após a matrícula
-  const isProportional = !!enrollmentDate;
-  if (enrollmentDate) {
-    query = query.gte('class_date', enrollmentDate);
+  if (!attendances || attendances.length === 0) {
+    return { 
+      percentage: 0, 
+      presentCount: 0, 
+      totalClassesToConsider: 0, 
+      isProportional: false 
+    };
   }
 
-  const { count } = await query;
-  const presentCount = count || 0;
+  // 2. Se for matrícula excepcional, filtrar por data
+  let filteredAttendances = attendances;
+  let isProportional = false;
 
-  // Calcular porcentagem baseada nas aulas realizadas APÓS a matrícula (se for o caso)
-  let classesToConsider = totalClassesGiven;
+  if (enrollmentDate) {
+    isProportional = true;
+    // 🔥 SIMPLES: filtra aulas com data >= data da matrícula
+    filteredAttendances = attendances.filter(a => 
+      a.class_date >= enrollmentDate
+    );
+  }
+
+  // 3. Calcular presenças
+  const presentCount = filteredAttendances.filter(a => a.present).length;
+  const totalClassesToConsider = filteredAttendances.length;
   
-  if (enrollmentDate) {
-    // Contar quantas aulas foram realizadas após a matrícula
-    const { data: classesAfterEnrollment } = await supabase
-      .from('attendance')
-      .select('class_date')
-      .eq('class_id', classId)
-      .gte('class_date', enrollmentDate);
-
-    if (classesAfterEnrollment) {
-      const uniqueDatesAfterEnrollment = [...new Set(classesAfterEnrollment.map(a => a.class_date))];
-      classesToConsider = uniqueDatesAfterEnrollment.length;
-    }
-  }
-
-  const percentage = classesToConsider > 0 ? (presentCount / classesToConsider) * 100 : 0;
+  const percentage = totalClassesToConsider > 0 
+    ? (presentCount / totalClassesToConsider) * 100 
+    : 0;
 
   return {
     percentage,
     presentCount,
-    totalClassesGiven: classesToConsider,
+    totalClassesToConsider,
     isProportional
   };
 }
 
 // Função para calcular e atualizar o status do aluno no banco (APENAS no encerramento)
-async function updateStudentStatusOnClose(classId: string, studentId: string, classData?: any, studentData?: any) {
+// ===========================================
+// FUNÇÃO CORRIGIDA - ATUALIZAR STATUS
+// ===========================================
+
+async function updateStudentStatusOnClose(
+  classId: string, 
+  studentId: string, 
+  classData?: any, 
+  studentData?: any
+) {
   try {
     // Buscar dados se não fornecidos
     if (!classData) {
@@ -166,19 +184,31 @@ async function updateStudentStatusOnClose(classId: string, studentId: string, cl
     let isApproved = false;
 
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      // Calcular frequência para videoconferência
+      // 🔥 DECISÃO: Regular ou Excepcional?
       const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
-      const isExceptional = studentData?.enrollment_type === 'exceptional' && enrollmentDate > cycleData?.start_date;
+      const isExceptional = studentData?.enrollment_type === 'exceptional';
       
-      const { percentage } = await calculateAttendancePercentage(
-        classId, 
-        studentId, 
-        isExceptional ? enrollmentDate : null
-      );
+      // Log para debug
+      console.log(`Aluno ${studentId}:`, {
+        tipo: isExceptional ? 'EXCEPCIONAL' : 'REGULAR',
+        matricula: enrollmentDate,
+        ciclo_inicio: cycleData?.start_date
+      });
+
+      // Calcular frequência (com ou sem filtro de data)
+      const { percentage, presentCount, totalClassesToConsider, isProportional } = 
+        await calculateAttendancePercentage(
+          classId, 
+          studentId, 
+          isExceptional ? enrollmentDate : null  // Só filtra se for excepcional
+        );
       
       isApproved = percentage >= 60;
+      
+      console.log(`Resultado: ${percentage}% (${presentCount}/${totalClassesToConsider} aulas) - ${isApproved ? '✅' : '❌'}`);
+      
     } else {
-      // Validar EAD
+      // EAD: 3 acessos (qualquer data)
       const { data: accessData } = await supabase
         .from('ead_access')
         .select('*')
@@ -186,11 +216,13 @@ async function updateStudentStatusOnClose(classId: string, studentId: string, cl
         .eq('student_id', studentId)
         .single();
 
-      isApproved = validateEADAccess(
+      const accessCount = [
         accessData?.access_date_1,
         accessData?.access_date_2,
         accessData?.access_date_3
-      );
+      ].filter(Boolean).length;
+      
+      isApproved = accessCount === 3;
     }
 
     currentStatus = isApproved ? 'aprovado' : 'reprovado';
@@ -213,17 +245,29 @@ async function updateStudentStatusOnClose(classId: string, studentId: string, cl
 }
 
 // Função para atualizar status de todos os alunos de uma turma (APENAS no encerramento)
+// ===========================================
+// FUNÇÃO CORRIGIDA - ATUALIZAR TURMA INTEIRA
+// ===========================================
+
 async function updateAllStudentsStatusOnClose(classId: string) {
   try {
-    // Verificar se todas as aulas foram dadas
-    const totalClassesGiven = await getTotalClassesGiven(classId);
-    
+    // Buscar dados da turma
     const { data: classData } = await supabase
       .from('classes')
       .select('*, cycles(*)')
       .eq('id', classId)
       .single();
 
+    // Contar aulas dadas
+    const { data: attendanceData } = await supabase
+      .from('attendance')
+      .select('class_number')
+      .eq('class_id', classId);
+
+    const uniqueClasses = [...new Set(attendanceData?.map(a => a.class_number) || [])];
+    const totalClassesGiven = uniqueClasses.length;
+
+    // Verificar se todas as aulas foram dadas (alerta)
     if (totalClassesGiven < classData.total_classes) {
       const confirm = window.confirm(
         `Atenção: Foram dadas apenas ${totalClassesGiven} de ${classData.total_classes} aulas. ` +
@@ -232,6 +276,7 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       if (!confirm) return;
     }
 
+    // Buscar todos os alunos da turma
     const { data: students } = await supabase
       .from('class_students')
       .select('student_id, enrollment_date, enrollment_type')
@@ -239,9 +284,19 @@ async function updateAllStudentsStatusOnClose(classId: string) {
 
     if (!students) return;
 
+    // Atualizar um por um
     for (const student of students) {
       await updateStudentStatusOnClose(classId, student.student_id, classData, student);
     }
+
+    // Fechar a turma
+    await supabase
+      .from('classes')
+      .update({ status: 'closed' })
+      .eq('id', classId);
+
+    alert('Turma encerrada e status dos alunos atualizados!');
+    
   } catch (error) {
     console.error('Error updating all students status:', error);
   }
