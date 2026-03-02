@@ -2681,14 +2681,22 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 // ===========================================
 // COMPONENTE - EADAccessManagement (CORRIGIDO)
 // ===========================================
+// ===========================================
+// COMPONENTE - EADAccessManagement (CORRIGIDO)
+// ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
+  // Carregar datas do ciclo
   useEffect(() => {
     loadCycleDates();
+  }, [classData.cycle_id]);
+
+  // Inicializar dados de acesso quando students mudar
+  useEffect(() => {
     const initial: Record<string, any> = {};
     students.forEach((student: any) => {
       initial[student.student_id] = {
@@ -2701,15 +2709,19 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   }, [students]);
 
   const loadCycleDates = async () => {
-    const { data } = await supabase
-      .from('cycles')
-      .select('start_date, end_date')
-      .eq('id', classData.cycle_id)
-      .single();
+    try {
+      const { data } = await supabase
+        .from('cycles')
+        .select('start_date, end_date')
+        .eq('id', classData.cycle_id)
+        .single();
 
-    if (data) {
-      setCycleStartDate(data.start_date);
-      setCycleEndDate(data.end_date);
+      if (data) {
+        setCycleStartDate(data.start_date);
+        setCycleEndDate(data.end_date);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar datas do ciclo:', error);
     }
   };
 
@@ -2717,12 +2729,12 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     if (!date) return true;
     
     if (cycleStartDate && date < cycleStartDate) {
-      alert('Data de acesso não pode ser anterior ao início do ciclo');
+      alert(`Data de acesso não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
       return false;
     }
 
     if (cycleEndDate && date > cycleEndDate) {
-      alert('Data de acesso não pode ser posterior ao fim do ciclo');
+      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
       return false;
     }
 
@@ -2732,40 +2744,54 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   const handleSaveAccess = async (studentId: string) => {
     const data = accessData[studentId];
 
+    // Validar todas as datas
     const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
     for (const date of dates) {
       if (!validateAccessDate(date)) return;
     }
 
-    await supabase
-      .from('ead_access')
-      .upsert(
-        [
-          {
-            class_id: classData.id,
-            student_id: studentId,
-            access_date_1: data.access_date_1 || null,
-            access_date_2: data.access_date_2 || null,
-            access_date_3: data.access_date_3 || null,
-            updated_at: new Date().toISOString(),
-          },
-        ],
-        { onConflict: 'class_id,student_id' }
-      );
+    try {
+      const { error } = await supabase
+        .from('ead_access')
+        .upsert(
+          [
+            {
+              class_id: classData.id,
+              student_id: studentId,
+              access_date_1: data.access_date_1 || null,
+              access_date_2: data.access_date_2 || null,
+              access_date_3: data.access_date_3 || null,
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          { onConflict: 'class_id,student_id' }
+        );
 
-    alert('Acessos atualizados!');
-    onUpdate();
+      if (error) throw error;
+
+      alert('Acessos atualizados com sucesso!');
+      onUpdate();
+      
+    } catch (error) {
+      console.error('Erro ao salvar acessos:', error);
+      alert('Erro ao salvar acessos. Tente novamente.');
+    }
   };
 
   const handleSaveAll = async () => {
     if (!confirm('Salvar todos os acessos?')) return;
     
+    let successCount = 0;
+    let errorCount = 0;
+
     for (const student of students) {
       const data = accessData[student.student_id];
       
       if (data) {
+        // Validar datas
         const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
         let isValid = true;
+        
         for (const date of dates) {
           if (!validateAccessDate(date)) {
             isValid = false;
@@ -2773,38 +2799,51 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
           }
         }
 
-        if (!isValid) continue;
+        if (!isValid) {
+          errorCount++;
+          continue;
+        }
 
-        await supabase
-          .from('ead_access')
-          .upsert(
-            [
-              {
-                class_id: classData.id,
-                student_id: student.student_id,
-                access_date_1: data.access_date_1 || null,
-                access_date_2: data.access_date_2 || null,
-                access_date_3: data.access_date_3 || null,
-                updated_at: new Date().toISOString(),
-              },
-            ],
-            { onConflict: 'class_id,student_id' }
-          );
+        try {
+          const { error } = await supabase
+            .from('ead_access')
+            .upsert(
+              [
+                {
+                  class_id: classData.id,
+                  student_id: student.student_id,
+                  access_date_1: data.access_date_1 || null,
+                  access_date_2: data.access_date_2 || null,
+                  access_date_3: data.access_date_3 || null,
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+              { onConflict: 'class_id,student_id' }
+            );
+
+          if (error) throw error;
+          successCount++;
+          
+        } catch (error) {
+          console.error(`Erro ao salvar aluno ${student.students.full_name}:`, error);
+          errorCount++;
+        }
       }
     }
     
-    alert('Todos os acessos foram salvos!');
+    alert(`Acessos salvos! ${successCount} sucesso(s), ${errorCount} erro(s).`);
     onUpdate();
   };
 
   const filteredStudents = students.filter((student: any) => {
     if (!studentSearchTerm) return true;
     const search = studentSearchTerm.toLowerCase();
-    return student.students.full_name.toLowerCase().includes(search);
+    return student.students?.full_name?.toLowerCase().includes(search);
   });
 
   return (
     <div className="space-y-6">
+      {/* Cabeçalho com botão Salvar Todos */}
       <div className="flex justify-between items-center mb-4">
         <h4 className="text-lg font-semibold text-slate-800">Controle de Acessos EAD</h4>
         <button
@@ -2815,7 +2854,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </button>
       </div>
 
-      {/* ✅ NOVO TEXTO - REGRA SIMPLIFICADA */}
+      {/* Banner com a regra EAD */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
           <strong>📌 Regra EAD:</strong> O aluno precisa realizar <strong>3 acessos</strong> para ser aprovado.
@@ -2827,6 +2866,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </p>
       </div>
 
+      {/* Busca de alunos */}
       <div className="mb-4">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -2840,6 +2880,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </div>
       </div>
 
+      {/* Tabela de acessos */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full min-w-full">
@@ -2876,8 +2917,10 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
                     <td className="px-6 py-4 text-sm text-slate-800">
-                      {student.students.full_name}
+                      {student.students?.full_name || 'Nome não disponível'}
                     </td>
+                    
+                    {/* Campos de acesso */}
                     {[1, 2, 3].map((num) => (
                       <td key={num} className="px-6 py-4">
                         <input
@@ -2898,6 +2941,8 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                         />
                       </td>
                     ))}
+                    
+                    {/* Status */}
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                         accessCount === 3
@@ -2907,6 +2952,8 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                         {accessCount === 3 ? '✅ Aprovado' : `${accessCount}/3 acessos`}
                       </span>
                     </td>
+                    
+                    {/* Botão Salvar individual */}
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleSaveAccess(student.student_id)}
@@ -2918,6 +2965,8 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                   </tr>
                 );
               })}
+              
+              {/* Mensagem quando não há alunos */}
               {students.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
