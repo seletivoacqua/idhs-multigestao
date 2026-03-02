@@ -42,3 +42,19 @@ export function extractDatePart(dateString: string | null): string | null {
   if (!dateString) return null;
   return dateString.split('T')[0];
 }
+
+/**
+ * Força a exibição de uma data, retornando string vazia se nula
+ */
+export function forceDateToDisplay(dateString: string | null | undefined): string {
+  if (!dateString) return '';
+  return formatDateToDisplay(dateString);
+}
+
+/**
+ * Compara se date1 >= date2 (ambas em formato YYYY-MM-DD)
+ */
+export function isDateGreaterOrEqual(date1: string | null, date2: string | null): boolean {
+  if (!date1 || !date2) return false;
+  return date1 >= date2;
+}
