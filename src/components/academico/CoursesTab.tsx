@@ -232,7 +232,7 @@ export function CoursesTab() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl w-[95vw] sm:w-[85vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold text-slate-800 mb-4">
               {editingCourse ? 'Editar Curso' : 'Novo Curso'}
             </h3>

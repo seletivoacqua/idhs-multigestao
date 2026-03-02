@@ -4,9 +4,16 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
 
+interface Unit {
+  id: string;
+  name: string;
+  municipality: string;
+}
+
 interface Invoice {
   id: string;
   item_number: number;
+  unit_id?: string;
   unit_name: string;
   cnpj_cpf: string;
   exercise_month: number;
@@ -24,10 +31,12 @@ interface Invoice {
   document_type_file?: string;
   estado?: string;
   created_at: string;
+  units?: Unit;
 }
 
 export function ControlePagamentoTab() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
@@ -61,6 +70,7 @@ export function ControlePagamentoTab() {
   };
 
   const [formData, setFormData] = useState({
+    unit_id: '',
     unit_name: '',
     cnpj_cpf: '',
     exercise_month: new Date().getMonth() + 1,
@@ -78,6 +88,7 @@ export function ControlePagamentoTab() {
 
   useEffect(() => {
     loadInvoices();
+    loadUnits();
     updateOverdueInvoices();
   }, []);
 
@@ -115,12 +126,29 @@ export function ControlePagamentoTab() {
     }
   };
 
+  const loadUnits = async () => {
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('units')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('Error loading units:', error);
+      return;
+    }
+
+    setUnits(data || []);
+  };
+
   const loadInvoices = async () => {
     if (!user) return;
 
     const { data, error } = await supabase
       .from('invoices')
-      .select('*')
+      .select('*, units(id, name, municipality)')
       .eq('user_id', user.id)
       .is('deleted_at', null)
       .order('item_number', { ascending: true });
@@ -173,7 +201,9 @@ export function ControlePagamentoTab() {
 
     let invoiceId = editingInvoice?.id;
 
-    // Converter as datas para ISO string mantendo o dia correto
+    const selectedUnit = units.find(u => u.id === formData.unit_id);
+    const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
+
     const issueDateISO = createISODate(formData.issue_date);
     const dueDateISO = createISODate(formData.due_date);
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
@@ -182,7 +212,8 @@ export function ControlePagamentoTab() {
       const { error } = await supabase
         .from('invoices')
         .update({
-          unit_name: formData.unit_name,
+          unit_id: formData.unit_id || null,
+          unit_name: unitName,
           cnpj_cpf: formData.cnpj_cpf,
           exercise_month: formData.exercise_month,
           exercise_year: formData.exercise_year,
@@ -213,7 +244,8 @@ export function ControlePagamentoTab() {
         {
           user_id: user.id,
           item_number: itemNumberData || 1,
-          unit_name: formData.unit_name,
+          unit_id: formData.unit_id || null,
+          unit_name: unitName,
           cnpj_cpf: formData.cnpj_cpf,
           exercise_month: formData.exercise_month,
           exercise_year: formData.exercise_year,
@@ -264,6 +296,7 @@ export function ControlePagamentoTab() {
     setEditingInvoice(null);
     setSelectedFile(null);
     setFormData({
+      unit_id: '',
       unit_name: '',
       cnpj_cpf: '',
       exercise_month: new Date().getMonth() + 1,
@@ -283,13 +316,14 @@ export function ControlePagamentoTab() {
   const handleEdit = (invoice: Invoice) => {
     setEditingInvoice(invoice);
     setFormData({
+      unit_id: invoice.unit_id || '',
       unit_name: invoice.unit_name,
       cnpj_cpf: invoice.cnpj_cpf,
       exercise_month: invoice.exercise_month,
       exercise_year: invoice.exercise_year,
       document_type: invoice.document_type,
       invoice_number: invoice.invoice_number,
-      issue_date: invoice.issue_date.split('T')[0], // Pega apenas a parte da data
+      issue_date: invoice.issue_date.split('T')[0],
       due_date: invoice.due_date.split('T')[0],
       net_value: invoice.net_value.toString(),
       payment_status: invoice.payment_status,
@@ -489,7 +523,7 @@ export function ControlePagamentoTab() {
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
                     {invoice.item_number}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{invoice.unit_name}</td>
+                  <td className="px-4 py-3 text-sm text-slate-700">{invoice.units?.name || invoice.unit_name}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.estado || '-'}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.cnpj_cpf}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
@@ -602,14 +636,20 @@ export function ControlePagamentoTab() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Nome da Unidade</label>
-                  <input
-                    type="text"
-                    value={formData.unit_name}
-                    onChange={(e) => setFormData({ ...formData, unit_name: e.target.value })}
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+                  <select
+                    value={formData.unit_id}
+                    onChange={(e) => setFormData({ ...formData, unit_id: e.target.value })}
                     required
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
+                  >
+                    <option value="">Selecione uma unidade</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} - {unit.municipality}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
