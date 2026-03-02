@@ -50,7 +50,7 @@ function validateEADAccess(
   access_date_3: string | null
 ): boolean {
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
-  return dates.length === 3; // ✅ Apenas 3 acessos, qualquer data
+  return dates.length === 3;
 }
 
 // Função para contar aulas já realizadas
@@ -68,7 +68,6 @@ async function getTotalClassesGiven(classId: string): Promise<number> {
 
 // ===========================================
 // FUNÇÃO CORRIGIDA - VIDEOCONFERÊNCIA
-// SEM REPOSIÇÕES, APENAS DATAS
 // ===========================================
 async function calculateAttendancePercentage(
   classId: string, 
@@ -81,7 +80,6 @@ async function calculateAttendancePercentage(
   isProportional: boolean 
 }> {
   
-  // 1. Buscar todas as frequências do aluno
   const { data: attendances } = await supabase
     .from('attendance')
     .select('class_date, present')
@@ -98,19 +96,16 @@ async function calculateAttendancePercentage(
     };
   }
 
-  // 2. Se for matrícula excepcional, filtrar por data
   let filteredAttendances = attendances;
   let isProportional = false;
 
   if (enrollmentDate) {
     isProportional = true;
-    // ✅ filtra aulas com data >= data da matrícula
     filteredAttendances = attendances.filter(a => 
       a.class_date >= enrollmentDate
     );
   }
 
-  // 3. Calcular presenças
   const presentCount = filteredAttendances.filter(a => a.present).length;
   const totalClassesToConsider = filteredAttendances.length;
   
@@ -136,7 +131,6 @@ async function updateStudentStatusOnClose(
   studentData?: any
 ) {
   try {
-    // Buscar dados se não fornecidos
     if (!classData) {
       const { data } = await supabase
         .from('classes')
@@ -156,7 +150,6 @@ async function updateStudentStatusOnClose(
       studentData = data;
     }
 
-    // Buscar ciclo
     const { data: cycleData } = await supabase
       .from('cycles')
       .select('*')
@@ -166,7 +159,6 @@ async function updateStudentStatusOnClose(
     const today = new Date().toISOString().split('T')[0];
     const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
 
-    // Se o ciclo ainda estiver ativo, não calcular status final
     if (isCycleActive) {
       return 'em_andamento';
     }
@@ -175,32 +167,18 @@ async function updateStudentStatusOnClose(
     let isApproved = false;
 
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      // ✅ Usar studentData que já foi buscado
       const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
       const isExceptional = studentData?.enrollment_type === 'exceptional';
       
-      // 🔥 LOG para debug
-      console.log('📊 Calculando status - aluno:', {
-        studentId,
-        nome: studentData?.students?.full_name,
-        tipo: isExceptional ? 'EXCEPCIONAL' : 'REGULAR',
-        dataMatricula: enrollmentDate,
-        classId
-      });
-
-      const { percentage, presentCount, totalClassesToConsider, isProportional } = 
-        await calculateAttendancePercentage(
-          classId, 
-          studentId, 
-          isExceptional ? enrollmentDate : null
-        );
+      const { percentage } = await calculateAttendancePercentage(
+        classId, 
+        studentId, 
+        isExceptional ? enrollmentDate : null
+      );
       
       isApproved = percentage >= 60;
       
-      console.log(`📈 Resultado: ${percentage.toFixed(1)}% (${presentCount}/${totalClassesToConsider} aulas) - ${isApproved ? '✅ APROVADO' : '❌ REPROVADO'}`);
-      
     } else {
-      // EAD: 3 acessos (qualquer data)
       const { data: accessData } = await supabase
         .from('ead_access')
         .select('*')
@@ -219,7 +197,6 @@ async function updateStudentStatusOnClose(
 
     currentStatus = isApproved ? 'aprovado' : 'reprovado';
 
-    // Atualizar status no banco
     await supabase
       .from('class_students')
       .update({
@@ -241,14 +218,12 @@ async function updateStudentStatusOnClose(
 // ===========================================
 async function updateAllStudentsStatusOnClose(classId: string) {
   try {
-    // Buscar dados da turma
     const { data: classData } = await supabase
       .from('classes')
       .select('*, cycles(*)')
       .eq('id', classId)
       .single();
 
-    // Contar aulas dadas
     const { data: attendanceData } = await supabase
       .from('attendance')
       .select('class_number')
@@ -257,7 +232,6 @@ async function updateAllStudentsStatusOnClose(classId: string) {
     const uniqueClasses = [...new Set(attendanceData?.map(a => a.class_number) || [])];
     const totalClassesGiven = uniqueClasses.length;
 
-    // Verificar se todas as aulas foram dadas (alerta)
     if (totalClassesGiven < classData.total_classes) {
       const confirm = window.confirm(
         `Atenção: Foram dadas apenas ${totalClassesGiven} de ${classData.total_classes} aulas. ` +
@@ -266,7 +240,6 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       if (!confirm) return;
     }
 
-    // Buscar todos os alunos da turma
     const { data: students } = await supabase
       .from('class_students')
       .select('student_id, enrollment_date, enrollment_type')
@@ -274,12 +247,10 @@ async function updateAllStudentsStatusOnClose(classId: string) {
 
     if (!students) return;
 
-    // Atualizar um por um
     for (const student of students) {
       await updateStudentStatusOnClose(classId, student.student_id, classData, student);
     }
 
-    // Fechar a turma
     await supabase
       .from('classes')
       .update({ status: 'closed' })
@@ -542,7 +513,6 @@ export function CyclesTab() {
         )}
       </div>
 
-      {/* Modal de Criar/Editar Ciclo */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl 
@@ -879,7 +849,6 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
           )}
         </div>
 
-        {/* Modal de Criar Nova Turma */}
         {showClassModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
             <div className="bg-white rounded-xl shadow-xl 
@@ -1028,6 +997,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [enrollmentType, setEnrollmentType] = useState<'regular' | 'exceptional'>('regular');
   const [selectedStudents, setSelectedStudents] = useState<Set<string>>(new Set());
   const [enrollmentSearch, setEnrollmentSearch] = useState('');
+  const [enrollmentDate, setEnrollmentDate] = useState(new Date().toISOString().split('T')[0]);
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [cycleStatus, setCycleStatus] = useState<string>('');
@@ -1080,7 +1050,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       const studentsWithAttendance = await Promise.all(
         (data || []).map(async (cs) => {
           const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
-          // ✅ CORRIGIDO: não compara com cycleStartDate
           const isExceptional = cs.enrollment_type === 'exceptional';
           
           const { percentage, presentCount, totalClassesGiven: totalClasses, isProportional } = 
@@ -1152,6 +1121,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setEnrollmentType(type);
     setSelectedStudents(new Set());
     setEnrollmentSearch('');
+    setEnrollmentDate(new Date().toISOString().split('T')[0]);
     setShowEnrollmentModal(true);
   };
 
@@ -1166,62 +1136,60 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   };
 
   const handleEnrollStudents = async () => {
-  if (selectedStudents.size === 0) {
-    alert('Por favor, selecione pelo menos um aluno para matricular');
-    return;
-  }
+    if (selectedStudents.size === 0) {
+      alert('Por favor, selecione pelo menos um aluno para matricular');
+      return;
+    }
 
-  if (!enrollmentDate) {
-    alert('Por favor, selecione a data da matrícula');
-    return;
-  }
+    if (!enrollmentDate) {
+      alert('Por favor, selecione a data da matrícula');
+      return;
+    }
 
-  // ✅ Validar se a data está dentro do ciclo
-  if (cycleStartDate && enrollmentDate < cycleStartDate) {
-    alert(`Data de matrícula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
-    return;
-  }
+    if (cycleStartDate && enrollmentDate < cycleStartDate) {
+      alert(`Data de matrícula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
+      return;
+    }
 
-  if (cycleEndDate && enrollmentDate > cycleEndDate) {
-    alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
-    return;
-  }
+    if (cycleEndDate && enrollmentDate > cycleEndDate) {
+      alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
+      return;
+    }
 
-  // ✅ Converter para ISO string com timezone correto
-  const enrollmentDateTime = `${enrollmentDate}T00:00:00.000Z`;
+    const enrollmentDateTime = `${enrollmentDate}T00:00:00.000Z`;
 
-  const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
-    class_id: classData.id,
-    student_id: studentId,
-    enrollment_type: enrollmentType,
-    enrollment_date: enrollmentDateTime, // ✅ Agora usa a data selecionada!
-    current_status: 'em_andamento',
-    status_updated_at: new Date().toISOString(),
-  }));
-
-  const { error } = await supabase.from('class_students').insert(studentsToEnroll);
-
-  if (error) {
-    console.error('Error enrolling students:', error);
-    alert('Erro ao matricular alunos');
-    return;
-  }
-
-  if (classData.modality === 'EAD') {
-    const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
+    const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
       class_id: classData.id,
       student_id: studentId,
+      enrollment_type: enrollmentType,
+      enrollment_date: enrollmentDateTime,
+      current_status: 'em_andamento',
+      status_updated_at: new Date().toISOString(),
     }));
-    await supabase.from('ead_access').insert(eadAccessRecords);
-  }
 
-  setShowEnrollmentModal(false);
-  setSelectedStudents(new Set());
-  loadClassStudents();
-  loadAvailableStudents();
-  
-  alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso em ${new Date(enrollmentDate).toLocaleDateString('pt-BR')}!`);
-};
+    const { error } = await supabase.from('class_students').insert(studentsToEnroll);
+
+    if (error) {
+      console.error('Error enrolling students:', error);
+      alert('Erro ao matricular alunos');
+      return;
+    }
+
+    if (classData.modality === 'EAD') {
+      const eadAccessRecords = Array.from(selectedStudents).map(studentId => ({
+        class_id: classData.id,
+        student_id: studentId,
+      }));
+      await supabase.from('ead_access').insert(eadAccessRecords);
+    }
+
+    setShowEnrollmentModal(false);
+    setSelectedStudents(new Set());
+    loadClassStudents();
+    loadAvailableStudents();
+    
+    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso em ${new Date(enrollmentDate).toLocaleDateString('pt-BR')}!`);
+  };
 
   const handleRemoveStudent = async (studentId: string) => {
     if (!confirm('Tem certeza que deseja remover este aluno da turma?')) return;
@@ -1485,7 +1453,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         </div>
 
         <div className="min-h-[500px]">
-          {/* Aba Alunos */}
           {tab === 'students' && (
             <div className="space-y-6">
               <div className="flex gap-4">
@@ -1613,7 +1580,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
-          {/* Aba Frequência - Videoconferência */}
           {tab === 'attendance' && classData.modality === 'VIDEOCONFERENCIA' && (
             <div className="space-y-6 min-h-[500px]">
               <VideoconferenciaAttendance
@@ -1628,7 +1594,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
-          {/* Aba Acessos - EAD */}
           {tab === 'attendance' && classData.modality === 'EAD' && (
             <div className="min-h-[500px]">
               <EADAccessManagement
@@ -1639,7 +1604,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
-          {/* Aba Encerramento */}
           {tab === 'close' && (
             <div className="space-y-6">
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
@@ -1880,7 +1844,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         </div>
       </div>
 
-      {/* Modais de Certificado */}
       {showCertificate && certificateData && (
         <>
           {classData.modality === 'EAD' ? (
@@ -1907,157 +1870,152 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         </>
       )}
 
-      {/* Modal de Matrícula */}
       {showEnrollmentModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-    <div className="bg-white rounded-xl shadow-xl 
-      w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
-      max-h-[90vh] overflow-y-auto">
-      
-      <div className="p-6">
-        {/* HEADER */}
-        <div className="flex justify-between items-start mb-6">
-          <div>
-            <h3 className="text-2xl font-bold text-slate-800">
-              {enrollmentType === 'regular' ? 'Matrícula Regular' : 'Matrícula Excepcional'}
-            </h3>
-            <p className="text-slate-600 mt-1">
-              {enrollmentType === 'regular'
-                ? 'Aluno que iniciou no início do ciclo ou em data retroativa'
-                : 'Aluno que entrou após o início do ciclo'}
-            </p>
-          </div>
-          <button
-            onClick={() => setShowEnrollmentModal(false)}
-            className="text-slate-400 hover:text-slate-600 text-3xl p-1"
-          >
-            ×
-          </button>
-        </div>
-
-        {/* ⚠️ AVISO SOBRE A DATA */}
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-sm text-blue-800">
-            <strong>📅 Importante:</strong> Selecione a data REAL em que o aluno começou a frequentar a turma.
-            {enrollmentType === 'regular' && (
-              <span className="block mt-1">
-                Para matrículas regulares no início do ciclo, use a data de início do ciclo.
-                Para matrículas regulares retroativas, use a data real de entrada.
-              </span>
-            )}
-            {enrollmentType === 'exceptional' && (
-              <span className="block mt-1">
-                A frequência será calculada apenas a partir desta data.
-              </span>
-            )}
-          </p>
-        </div>
-
-        {/* 📅 CAMPO DE DATA */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-slate-700 mb-2">
-            Data da Matrícula <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="date"
-            value={enrollmentDate}
-            onChange={(e) => setEnrollmentDate(e.target.value)}
-            min={cycleStartDate}  // Não pode ser antes do ciclo
-            max={new Date().toISOString().split('T')[0]}  // Não pode ser futuro
-            required
-            className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
-          />
-          <p className="text-xs text-slate-500 mt-2">
-            {enrollmentType === 'regular' 
-              ? '✅ Pode ser retroativa (data em que o aluno realmente começou)'
-              : '📌 Deve ser a data em que o aluno passou a frequentar a turma'}
-          </p>
-        </div>
-
-        {/* BUSCA DE ALUNOS */}
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar aluno por nome..."
-              value={enrollmentSearch}
-              onChange={(e) => setEnrollmentSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-
-        {/* CONTADOR DE SELECIONADOS */}
-        <div className="mb-4 p-3 bg-slate-50 rounded-lg flex justify-between items-center">
-          <p className="text-sm text-slate-600">
-            {selectedStudents.size} aluno(s) selecionado(s)
-          </p>
-          {selectedStudents.size > 0 && (
-            <p className="text-xs text-green-600">
-              ✅ Matrícula em {new Date(enrollmentDate).toLocaleDateString('pt-BR')}
-            </p>
-          )}
-        </div>
-
-        {/* LISTA DE ALUNOS */}
-        <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
-          <div className="divide-y divide-slate-200">
-            {availableStudents
-              .filter(student => {
-                if (!enrollmentSearch) return true;
-                return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
-              })
-              .map(student => (
-                <label
-                  key={student.id}
-                  className="flex items-center p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
+            max-h-[90vh] overflow-y-auto">
+            
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-800">
+                    {enrollmentType === 'regular' ? 'Matrícula Regular' : 'Matrícula Excepcional'}
+                  </h3>
+                  <p className="text-slate-600 mt-1">
+                    {enrollmentType === 'regular'
+                      ? 'Aluno que iniciou no início do ciclo ou em data retroativa'
+                      : 'Aluno que entrou após o início do ciclo'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowEnrollmentModal(false)}
+                  className="text-slate-400 hover:text-slate-600 text-3xl p-1"
                 >
-                  <input
-                    type="checkbox"
-                    checked={selectedStudents.has(student.id)}
-                    onChange={() => handleToggleStudent(student.id)}
-                    className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
-                  />
-                  <span className="text-slate-800">{student.full_name}</span>
-                </label>
-              ))}
-            {availableStudents.filter(student => {
-              if (!enrollmentSearch) return true;
-              return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
-            }).length === 0 && (
-              <div className="p-8 text-center text-slate-500">
-                <User className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                <p>Nenhum aluno disponível para matrícula</p>
+                  ×
+                </button>
               </div>
-            )}
+
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>📅 Importante:</strong> Selecione a data REAL em que o aluno começou a frequentar a turma.
+                  {enrollmentType === 'regular' && (
+                    <span className="block mt-1">
+                      Para matrículas regulares no início do ciclo, use a data de início do ciclo.
+                      Para matrículas regulares retroativas, use a data real de entrada.
+                    </span>
+                  )}
+                  {enrollmentType === 'exceptional' && (
+                    <span className="block mt-1">
+                      A frequência será calculada apenas a partir desta data.
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Data da Matrícula <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={enrollmentDate}
+                  onChange={(e) => setEnrollmentDate(e.target.value)}
+                  min={cycleStartDate}
+                  max={new Date().toISOString().split('T')[0]}
+                  required
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
+                />
+                <p className="text-xs text-slate-500 mt-2">
+                  {enrollmentType === 'regular' 
+                    ? '✅ Pode ser retroativa (data em que o aluno realmente começou)'
+                    : '📌 Deve ser a data em que o aluno passou a frequentar a turma'}
+                </p>
+              </div>
+
+              <div className="mb-4">
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar aluno por nome..."
+                    value={enrollmentSearch}
+                    onChange={(e) => setEnrollmentSearch(e.target.value)}
+                    className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div className="mb-4 p-3 bg-slate-50 rounded-lg flex justify-between items-center">
+                <p className="text-sm text-slate-600">
+                  {selectedStudents.size} aluno(s) selecionado(s)
+                </p>
+                {selectedStudents.size > 0 && (
+                  <p className="text-xs text-green-600">
+                    ✅ Matrícula em {new Date(enrollmentDate).toLocaleDateString('pt-BR')}
+                  </p>
+                )}
+              </div>
+
+              <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
+                <div className="divide-y divide-slate-200">
+                  {availableStudents
+                    .filter(student => {
+                      if (!enrollmentSearch) return true;
+                      return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+                    })
+                    .map(student => (
+                      <label
+                        key={student.id}
+                        className="flex items-center p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedStudents.has(student.id)}
+                          onChange={() => handleToggleStudent(student.id)}
+                          className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
+                        />
+                        <span className="text-slate-800">{student.full_name}</span>
+                      </label>
+                    ))}
+                  {availableStudents.filter(student => {
+                    if (!enrollmentSearch) return true;
+                    return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+                  }).length === 0 && (
+                    <div className="p-8 text-center text-slate-500">
+                      <User className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                      <p>Nenhum aluno disponível para matrícula</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => setShowEnrollmentModal(false)}
+                  className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleEnrollStudents}
+                  disabled={selectedStudents.size === 0 || !enrollmentDate}
+                  className={`flex-1 px-4 py-3 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                    enrollmentType === 'regular'
+                      ? 'bg-green-600 hover:bg-green-700'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                  }`}
+                >
+                  Matricular {selectedStudents.size > 0 ? `(${selectedStudents.size})` : ''}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-
-        {/* BOTÕES */}
-        <div className="flex space-x-3 mt-6">
-          <button
-            onClick={() => setShowEnrollmentModal(false)}
-            className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleEnrollStudents}
-            disabled={selectedStudents.size === 0 || !enrollmentDate}
-            className={`flex-1 px-4 py-3 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
-              enrollmentType === 'regular'
-                ? 'bg-green-600 hover:bg-green-700'
-                : 'bg-amber-600 hover:bg-amber-700'
-            }`}
-          >
-            Matricular {selectedStudents.size > 0 ? `(${selectedStudents.size})` : ''}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
-  </div>
-)}
+  );
+}
 
 // ===========================================
 // COMPONENTE - VideoconferenciaAttendance
@@ -2070,7 +2028,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
-
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
@@ -2141,8 +2098,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
       const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
       
-      console.log('Próxima aula:', proximaAula);
-
       const records = students.map((student: any) => ({
         class_id: classData.id,
         student_id: student.student_id,
@@ -2681,21 +2636,16 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 // ===========================================
 // COMPONENTE - EADAccessManagement (CORRIGIDO)
 // ===========================================
-// ===========================================
-// COMPONENTE - EADAccessManagement (CORRIGIDO)
-// ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
-  // Carregar datas do ciclo
   useEffect(() => {
     loadCycleDates();
   }, [classData.cycle_id]);
 
-  // Inicializar dados de acesso quando students mudar
   useEffect(() => {
     const initial: Record<string, any> = {};
     students.forEach((student: any) => {
@@ -2744,7 +2694,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   const handleSaveAccess = async (studentId: string) => {
     const data = accessData[studentId];
 
-    // Validar todas as datas
     const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
     for (const date of dates) {
       if (!validateAccessDate(date)) return;
@@ -2788,7 +2737,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       const data = accessData[student.student_id];
       
       if (data) {
-        // Validar datas
         const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
         let isValid = true;
         
@@ -2843,7 +2791,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
 
   return (
     <div className="space-y-6">
-      {/* Cabeçalho com botão Salvar Todos */}
       <div className="flex justify-between items-center mb-4">
         <h4 className="text-lg font-semibold text-slate-800">Controle de Acessos EAD</h4>
         <button
@@ -2854,7 +2801,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </button>
       </div>
 
-      {/* Banner com a regra EAD */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
           <strong>📌 Regra EAD:</strong> O aluno precisa realizar <strong>3 acessos</strong> para ser aprovado.
@@ -2866,7 +2812,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </p>
       </div>
 
-      {/* Busca de alunos */}
       <div className="mb-4">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -2880,7 +2825,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </div>
       </div>
 
-      {/* Tabela de acessos */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <div className="max-h-[500px] overflow-y-auto">
           <table className="w-full min-w-full">
@@ -2920,7 +2864,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                       {student.students?.full_name || 'Nome não disponível'}
                     </td>
                     
-                    {/* Campos de acesso */}
                     {[1, 2, 3].map((num) => (
                       <td key={num} className="px-6 py-4">
                         <input
@@ -2942,7 +2885,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                       </td>
                     ))}
                     
-                    {/* Status */}
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                         accessCount === 3
@@ -2953,7 +2895,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                       </span>
                     </td>
                     
-                    {/* Botão Salvar individual */}
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleSaveAccess(student.student_id)}
@@ -2966,7 +2907,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                 );
               })}
               
-              {/* Mensagem quando não há alunos */}
               {students.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
