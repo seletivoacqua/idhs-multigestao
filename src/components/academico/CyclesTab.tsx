@@ -2179,65 +2179,113 @@ const handleSaveAttendance = async () => {
         </div>
       </div>
 
-      <div className="border border-slate-200 rounded-lg overflow-hidden">
-        <div className="max-h-[400px] overflow-y-auto">
-          <table className="w-full min-w-full">
-            <thead className="bg-slate-50 sticky top-0">
-              <tr>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Aluno
-                </th>
-                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Presente
-                </th>
-                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Ações
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {filteredStudents.map((student: any) => (
-                <tr key={student.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 text-sm text-slate-800">
-                    {student.students.full_name}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <input
-                      type="checkbox"
-                      checked={attendance[student.student_id] || false}
-                      onChange={(e) =>
-                        setAttendance({ ...attendance, [student.student_id]: e.target.checked })
-                      }
-                      className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
-                    />
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                      attendance[student.student_id]
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-slate-100 text-slate-800'
-                    }`}>
-                      {attendance[student.student_id] ? 'Presente' : 'Ausente'}
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+  <div className="max-h-[400px] overflow-y-auto">
+    <table className="w-full min-w-full">
+      <thead className="bg-slate-50 sticky top-0">
+        <tr>
+          <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+            Aluno
+          </th>
+          {/* NOVA COLUNA: Tipo de Matrícula */}
+          <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+            Tipo Matrícula
+          </th>
+          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+            Presente
+          </th>
+          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+            Status
+          </th>
+          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+            Ações
+          </th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-200">
+        {filteredStudents.map((student: any) => {
+          // Função auxiliar para determinar o tipo de matrícula
+          const getEnrollmentTypeInfo = () => {
+            const isExceptional = student.enrollment_type === 'exceptional';
+            const enrollmentDate = student.enrollment_date 
+              ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
+              : null;
+            
+            return {
+              tipo: isExceptional ? 'Excepcional' : 'Regular',
+              cor: isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800',
+              tooltip: isExceptional 
+                ? `Matrícula excepcional em ${enrollmentDate}`
+                : 'Matrícula regular desde o início do ciclo',
+              data: enrollmentDate
+            };
+          };
+
+          const enrollmentInfo = getEnrollmentTypeInfo();
+          
+          return (
+            <tr key={student.id} className="hover:bg-slate-50">
+              <td className="px-6 py-4 text-sm text-slate-800">
+                <div className="font-medium">{student.students.full_name}</div>
+              </td>
+              
+              {/* NOVA CÉLULA: Tipo de Matrícula */}
+              <td className="px-6 py-4">
+                <div className="flex flex-col">
+                  <span 
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${enrollmentInfo.cor}`}
+                    title={enrollmentInfo.tooltip}
+                  >
+                    {enrollmentInfo.tipo}
+                  </span>
+                  {enrollmentInfo.data && (
+                    <span className="text-xs text-slate-500 mt-1">
+                      {enrollmentInfo.data}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <button
-                      onClick={() => handleViewDetails(student)}
-                      className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>Ver Detalhes</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                  )}
+                  {student.enrollment_type === 'exceptional' && (
+                    <span className="text-xs text-amber-600 font-medium mt-1">
+                      ⚖️ Cálculo proporcional
+                    </span>
+                  )}
+                </div>
+              </td>
+              
+              <td className="px-6 py-4 text-center">
+                <input
+                  type="checkbox"
+                  checked={attendance[student.student_id] || false}
+                  onChange={(e) =>
+                    setAttendance({ ...attendance, [student.student_id]: e.target.checked })
+                  }
+                  className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
+                />
+              </td>
+              <td className="px-6 py-4 text-center">
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                  attendance[student.student_id]
+                    ? 'bg-green-100 text-green-800'
+                    : 'bg-slate-100 text-slate-800'
+                }`}>
+                  {attendance[student.student_id] ? 'Presente' : 'Ausente'}
+                </span>
+              </td>
+              <td className="px-6 py-4 text-center">
+                <button
+                  onClick={() => handleViewDetails(student)}
+                  className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>Ver Detalhes</span>
+                </button>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</div>
 
       {showDetailsModal && selectedStudent && (
         <AttendanceDetailsModal
