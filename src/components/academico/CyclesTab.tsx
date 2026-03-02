@@ -41,12 +41,14 @@ interface Student {
   full_name: string;
 }
 
-function validateEADAccess(access_date_1: string | null, access_date_2: string | null, access_date_3: string | null): boolean {
+function validateEADAccess(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null
+): boolean {
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
-
-  if (dates.length < 3) {
-    return false;
-  }
+  return dates.length === 3; // ✅ Apenas 3 acessos, qualquer data
+}
 
   const months = dates.map(date => {
     const d = new Date(date! + 'T00:00:00');
@@ -183,37 +185,30 @@ async function updateStudentStatusOnClose(
     let currentStatus = 'em_andamento';
     let isApproved = false;
 
-    // Na parte do cálculo para videoconferência
-if (classData.modality === 'VIDEOCONFERENCIA') {
-  // Buscar dados atualizados do aluno
-  const { data: studentData } = await supabase
-    .from('class_students')
-    .select('enrollment_date, enrollment_type')
-    .eq('class_id', classId)
-    .eq('student_id', studentId)
-    .single();
-
-  const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
-  const isExceptional = studentData?.enrollment_type === 'exceptional';
-  
-  // 🔥 IMPORTANTE: Log para debug
-  console.log('Status update - aluno:', {
-    studentId,
-    isExceptional,
-    enrollmentDate,
-    classId
-  });
-
-  const { percentage } = await calculateAttendancePercentage(
-    classId, 
-    studentId, 
-    isExceptional ? enrollmentDate : null
-  );
-  
-  isApproved = percentage >= 60;
-}
+    if (classData.modality === 'VIDEOCONFERENCIA') {
+      // ✅ USAR studentData que já foi buscado
+      const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
+      const isExceptional = studentData?.enrollment_type === 'exceptional';
       
-      console.log(`Resultado: ${percentage}% (${presentCount}/${totalClassesToConsider} aulas) - ${isApproved ? '✅' : '❌'}`);
+      // 🔥 LOG PARA DEBUG
+      console.log('📊 Calculando status - aluno:', {
+        studentId,
+        nome: studentData?.students?.full_name,
+        tipo: isExceptional ? 'EXCEPCIONAL' : 'REGULAR',
+        dataMatricula: enrollmentDate,
+        classId
+      });
+
+      const { percentage, presentCount, totalClassesToConsider, isProportional } = 
+        await calculateAttendancePercentage(
+          classId, 
+          studentId, 
+          isExceptional ? enrollmentDate : null
+        );
+      
+      isApproved = percentage >= 60;
+      
+      console.log(`📈 Resultado: ${percentage.toFixed(1)}% (${presentCount}/${totalClassesToConsider} aulas) - ${isApproved ? '✅ APROVADO' : '❌ REPROVADO'}`);
       
     } else {
       // EAD: 3 acessos (qualquer data)
