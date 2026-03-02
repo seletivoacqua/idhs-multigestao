@@ -41,6 +41,9 @@ interface Student {
   full_name: string;
 }
 
+// ===========================================
+// FUNÇÃO CORRIGIDA - EAD (3 ACESSOS, QUALQUER DATA)
+// ===========================================
 function validateEADAccess(
   access_date_1: string | null, 
   access_date_2: string | null, 
@@ -48,16 +51,6 @@ function validateEADAccess(
 ): boolean {
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
   return dates.length === 3; // ✅ Apenas 3 acessos, qualquer data
-}
-
-  const months = dates.map(date => {
-    const d = new Date(date! + 'T00:00:00');
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
-
-  const uniqueMonths = new Set(months);
-
-  return uniqueMonths.size === 3;
 }
 
 // Função para contar aulas já realizadas
@@ -73,16 +66,14 @@ async function getTotalClassesGiven(classId: string): Promise<number> {
   return uniqueClasses.length;
 }
 
-// Função para calcular frequência corretamente
 // ===========================================
 // FUNÇÃO CORRIGIDA - VIDEOCONFERÊNCIA
 // SEM REPOSIÇÕES, APENAS DATAS
 // ===========================================
-
 async function calculateAttendancePercentage(
   classId: string, 
   studentId: string, 
-  enrollmentDate?: string | null  // Só existe para excepcional
+  enrollmentDate?: string | null
 ): Promise<{ 
   percentage: number; 
   presentCount: number; 
@@ -113,7 +104,7 @@ async function calculateAttendancePercentage(
 
   if (enrollmentDate) {
     isProportional = true;
-    // 🔥 SIMPLES: filtra aulas com data >= data da matrícula
+    // ✅ filtra aulas com data >= data da matrícula
     filteredAttendances = attendances.filter(a => 
       a.class_date >= enrollmentDate
     );
@@ -135,11 +126,9 @@ async function calculateAttendancePercentage(
   };
 }
 
-// Função para calcular e atualizar o status do aluno no banco (APENAS no encerramento)
 // ===========================================
 // FUNÇÃO CORRIGIDA - ATUALIZAR STATUS
 // ===========================================
-
 async function updateStudentStatusOnClose(
   classId: string, 
   studentId: string, 
@@ -160,7 +149,7 @@ async function updateStudentStatusOnClose(
     if (!studentData) {
       const { data } = await supabase
         .from('class_students')
-        .select('*')
+        .select('*, students(*)')
         .eq('class_id', classId)
         .eq('student_id', studentId)
         .single();
@@ -186,11 +175,11 @@ async function updateStudentStatusOnClose(
     let isApproved = false;
 
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      // ✅ USAR studentData que já foi buscado
+      // ✅ Usar studentData que já foi buscado
       const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
       const isExceptional = studentData?.enrollment_type === 'exceptional';
       
-      // 🔥 LOG PARA DEBUG
+      // 🔥 LOG para debug
       console.log('📊 Calculando status - aluno:', {
         studentId,
         nome: studentData?.students?.full_name,
@@ -247,11 +236,9 @@ async function updateStudentStatusOnClose(
   }
 }
 
-// Função para atualizar status de todos os alunos de uma turma (APENAS no encerramento)
 // ===========================================
 // FUNÇÃO CORRIGIDA - ATUALIZAR TURMA INTEIRA
 // ===========================================
-
 async function updateAllStudentsStatusOnClose(classId: string) {
   try {
     // Buscar dados da turma
@@ -305,6 +292,9 @@ async function updateAllStudentsStatusOnClose(classId: string) {
   }
 }
 
+// ===========================================
+// COMPONENTE PRINCIPAL - CyclesTab
+// ===========================================
 export function CyclesTab() {
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -430,7 +420,6 @@ export function CyclesTab() {
 
     if (classes) {
       for (const cls of classes) {
-        // Atualizar status de todos os alunos antes de fechar a turma
         await updateAllStudentsStatusOnClose(cls.id);
         
         const { error } = await supabase
@@ -553,9 +542,12 @@ export function CyclesTab() {
         )}
       </div>
 
+      {/* Modal de Criar/Editar Ciclo */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] sm:w-[80vw] md:w-[60vw] lg:w-[50vw] xl:w-[40vw] max-w-2xl 
+            max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <h3 className="text-xl font-bold text-slate-800 mb-4">
                 {editingCycle ? 'Editar Ciclo' : 'Iniciar Novo Ciclo'}
@@ -637,6 +629,9 @@ export function CyclesTab() {
   );
 }
 
+// ===========================================
+// COMPONENTE - CycleClassesModal
+// ===========================================
 interface CycleClassesModalProps {
   cycle: Cycle;
   onClose: () => void;
@@ -670,7 +665,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
     const { data, error } = await supabase
       .from('courses')
       .select('id, name, modality')
-       .order('name');
+      .order('name');
 
     if (error) {
       console.error('Error loading courses:', error);
@@ -777,7 +772,10 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl w-[95vw] max-w-[1400px] p-6 my-8 max-h-[85vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-7xl 
+        p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
+        
         <div className="flex justify-between items-start mb-6">
           <div>
             <h3 className="text-2xl font-bold text-slate-800">Gerenciar Turmas</h3>
@@ -881,9 +879,12 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
           )}
         </div>
 
+        {/* Modal de Criar Nova Turma */}
         {showClassModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-            <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+            <div className="bg-white rounded-xl shadow-xl 
+              w-[95vw] md:w-[80vw] lg:w-[70vw] xl:w-[60vw] max-w-3xl
+              max-h-[90vh] overflow-y-auto">
               <div className="p-6">
                 <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -920,9 +921,9 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
                     <>
                       <div>
                         <label className="block text-sm font-medium text-slate-700 mb-2">
-                          Dias da Semana (selecione múltiplos se necessário)
+                          Dias da Semana
                         </label>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                           {['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'].map((day) => (
                             <label key={day} className="flex items-center space-x-2 p-2 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
                               <input
@@ -943,45 +944,49 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
                         </div>
                       </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-2">Horário</label>
-                        <input
-                          type="time"
-                          value={formData.class_time}
-                          onChange={(e) => setFormData({ ...formData, class_time: e.target.value })}
-                          required
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        />
-                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Horário</label>
+                          <input
+                            type="time"
+                            value={formData.class_time}
+                            onChange={(e) => setFormData({ ...formData, class_time: e.target.value })}
+                            required
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          />
+                        </div>
 
-                      <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-2">Total de Aulas no Ciclo</label>
-                        <input
-                          type="number"
-                          value={formData.total_classes}
-                          onChange={(e) => setFormData({ ...formData, total_classes: e.target.value })}
-                          required
-                          min="1"
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                        />
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-2">Total de Aulas</label>
+                          <input
+                            type="number"
+                            value={formData.total_classes}
+                            onChange={(e) => setFormData({ ...formData, total_classes: e.target.value })}
+                            required
+                            min="1"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                          />
+                        </div>
                       </div>
                     </>
                   )}
 
-                  <div className="flex space-x-3 pt-4">
-                    <button
-                      type="button"
-                      onClick={resetForm}
-                      className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                    >
-                      Criar Turma
-                    </button>
+                  <div className="sticky bottom-0 bg-white pt-4 border-t border-slate-200">
+                    <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
+                      <button
+                        type="button"
+                        onClick={resetForm}
+                        className="w-full sm:flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        className="w-full sm:flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                      >
+                        Criar Turma
+                      </button>
+                    </div>
                   </div>
                 </form>
               </div>
@@ -1003,6 +1008,9 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
   );
 }
 
+// ===========================================
+// COMPONENTE - ClassManagementModal
+// ===========================================
 interface ClassManagementModalProps {
   classData: Class;
   onClose: () => void;
@@ -1072,7 +1080,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       const studentsWithAttendance = await Promise.all(
         (data || []).map(async (cs) => {
           const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
-          const isExceptional = cs.enrollment_type === 'exceptional' && enrollmentDate > cycleStartDate;
+          // ✅ CORRIGIDO: não compara com cycleStartDate
+          const isExceptional = cs.enrollment_type === 'exceptional';
           
           const { percentage, presentCount, totalClassesGiven: totalClasses, isProportional } = 
             await calculateAttendancePercentage(
@@ -1126,7 +1135,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     const { data, error } = await supabase
       .from('students')
       .select('id, full_name')
-       .order('full_name');
+      .order('full_name');
 
     if (error) {
       console.error('Error loading students:', error);
@@ -1217,14 +1226,12 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const handleCloseClass = async () => {
     if (!confirm('Tem certeza que deseja encerrar esta turma? Esta ação não pode ser desfeita.')) return;
 
-    // Verificar se há aulas dadas
     if (totalClassesGiven === 0) {
       if (!confirm('Nenhuma aula foi registrada para esta turma. Deseja encerrar mesmo assim?')) {
         return;
       }
     }
 
-    // Atualizar status de todos os alunos antes de fechar
     await updateAllStudentsStatusOnClose(classData.id);
 
     const { error } = await supabase
@@ -1388,7 +1395,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl w-[95vw] max-w-[1400px] p-6 my-8 max-h-[85vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-6xl
+        p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
+        
         <div className="flex justify-between items-start mb-6">
           <div>
             <h3 className="text-2xl font-bold text-slate-800">{classData.name}</h3>
@@ -1449,13 +1459,14 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                     : 'text-slate-600 hover:text-slate-800'
                 }`}
               >
-                Encerrar Ciclo
+                Encerramento
               </button>
             )}
           </nav>
         </div>
 
         <div className="min-h-[500px]">
+          {/* Aba Alunos */}
           {tab === 'students' && (
             <div className="space-y-6">
               <div className="flex gap-4">
@@ -1529,25 +1540,26 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             <td className="px-6 py-4 text-sm text-slate-600">
                               {student.students.cpf || '-'}
                             </td>
-                           <td className="px-6 py-4">
-  <div className="flex flex-col">
-    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-      student.enrollment_type === 'exceptional' 
-        ? 'bg-amber-100 text-amber-800' 
-        : 'bg-blue-100 text-blue-800'
-    }`}>
-      {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
-    </span>
-    {student.enrollment_type === 'exceptional' && student.enrollment_date && (
-      <span className="text-xs text-amber-600 mt-1">
-        ⚖️ Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
-      </span>
-    )}
-                              {student.isProportionalCalculation && (
-                                <div className="text-xs text-amber-600 mt-1 font-medium">
-                                  Cálculo proporcional aplicado
-                                </div>
-                              )}
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col">
+                                <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                                  student.enrollment_type === 'exceptional' 
+                                    ? 'bg-amber-100 text-amber-800' 
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}>
+                                  {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
+                                </span>
+                                {student.enrollment_type === 'exceptional' && student.enrollment_date && (
+                                  <span className="text-xs text-amber-600 mt-1">
+                                    ⚖️ {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
+                                {student.isProportionalCalculation && (
+                                  <div className="text-xs text-amber-600 mt-1 font-medium">
+                                    Cálculo proporcional
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="px-6 py-4">
                               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${situation.color}`}>
@@ -1575,23 +1587,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                           </td>
                         </tr>
                       )}
-                      {students.length > 0 && students.filter((student) => {
-                        if (!searchTerm) return true;
-                        const search = searchTerm.toLowerCase();
-                        return (
-                          student.students.full_name.toLowerCase().includes(search) ||
-                          student.students.cpf?.toLowerCase().includes(search)
-                        );
-                      }).length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
-                            <div className="flex flex-col items-center">
-                              <Search className="w-12 h-12 text-slate-300 mb-3" />
-                              <p className="text-lg">Nenhum aluno encontrado com esse termo</p>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1599,6 +1594,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
+          {/* Aba Frequência - Videoconferência */}
           {tab === 'attendance' && classData.modality === 'VIDEOCONFERENCIA' && (
             <div className="space-y-6 min-h-[500px]">
               <VideoconferenciaAttendance
@@ -1613,6 +1609,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
+          {/* Aba Acessos - EAD */}
           {tab === 'attendance' && classData.modality === 'EAD' && (
             <div className="min-h-[500px]">
               <EADAccessManagement
@@ -1623,6 +1620,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             </div>
           )}
 
+          {/* Aba Encerramento */}
           {tab === 'close' && (
             <div className="space-y-6">
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-6">
@@ -1689,7 +1687,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                           Aluno
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                          {classData.modality === 'EAD' ? 'Status de Acesso' : 'Frequência'}
+                          {classData.modality === 'EAD' ? 'Acessos' : 'Frequência'}
                         </th>
                         <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                           Situação
@@ -1789,8 +1787,8 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   </span>
                                   <span className="text-xs text-slate-500">
                                     {student.isPresent 
-                                      ? 'Acessos em meses distintos' 
-                                      : 'Necessário 3 acessos em meses diferentes'}
+                                      ? '3 acessos completos' 
+                                      : 'Necessário 3 acessos'}
                                   </span>
                                 </div>
                               )}
@@ -1863,6 +1861,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         </div>
       </div>
 
+      {/* Modais de Certificado */}
       {showCertificate && certificateData && (
         <>
           {classData.modality === 'EAD' ? (
@@ -1889,9 +1888,12 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         </>
       )}
 
+      {/* Modal de Matrícula */}
       {showEnrollmentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
+            max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex justify-between items-start mb-6">
                 <div>
@@ -1991,6 +1993,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   );
 }
 
+// ===========================================
+// COMPONENTE - VideoconferenciaAttendance
+// ===========================================
 function VideoconferenciaAttendance({ classData, students, onUpdate, totalClassesGiven }: any) {
   const [classNumber, setClassNumber] = useState(totalClassesGiven + 1);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2000,7 +2005,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Validar se a data está dentro do ciclo (será passado via props)
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
 
@@ -2025,13 +2029,11 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const validateAttendance = (): boolean => {
     setValidationError(null);
 
-    // Validar número da aula
     if (classNumber < 1 || classNumber > classData.total_classes) {
       setValidationError(`Número da aula deve estar entre 1 e ${classData.total_classes}`);
       return false;
     }
 
-    // Validar data
     if (!classDate) {
       setValidationError('Selecione uma data para a aula');
       return false;
@@ -2047,7 +2049,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
       return false;
     }
 
-    // Validar se já existe frequência para esta aula
     const existingClass = students.some((s: any) => 
       s.attendanceRecords?.some((r: any) => r.class_number === classNumber)
     );
@@ -2061,49 +2062,47 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     return true;
   };
 
-const handleSaveAttendance = async () => {
-  if (!validateAttendance()) return;
+  const handleSaveAttendance = async () => {
+    if (!validateAttendance()) return;
 
-  try {
-    // 🔥 BUSCA OTIMIZADA - apenas o máximo
-    const { data: maxClassData } = await supabase
-      .from('attendance')
-      .select('class_number')
-      .eq('class_id', classData.id)
-      .order('class_number', { ascending: false })
-      .limit(1);
+    try {
+      const { data: maxClassData } = await supabase
+        .from('attendance')
+        .select('class_number')
+        .eq('class_id', classData.id)
+        .order('class_number', { ascending: false })
+        .limit(1);
 
-    const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
-    
-    console.log('Próxima aula:', proximaAula);
+      const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
+      
+      console.log('Próxima aula:', proximaAula);
 
-    // 🔥 UPSERT EM LOTE (uma única chamada)
-    const records = students.map(student => ({
-      class_id: classData.id,
-      student_id: student.student_id,
-      class_number: proximaAula,
-      class_date: classDate,
-      present: attendance[student.student_id] || false,
-    }));
+      const records = students.map((student: any) => ({
+        class_id: classData.id,
+        student_id: student.student_id,
+        class_number: proximaAula,
+        class_date: classDate,
+        present: attendance[student.student_id] || false,
+      }));
 
-    const { error } = await supabase
-      .from('attendance')
-      .upsert(records, { 
-        onConflict: 'class_id,student_id,class_number',
-        ignoreDuplicates: false 
-      });
+      const { error } = await supabase
+        .from('attendance')
+        .upsert(records, { 
+          onConflict: 'class_id,student_id,class_number',
+          ignoreDuplicates: false 
+        });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    alert(`Aula ${proximaAula} registrada!`);
-    setAttendance({});
-    onUpdate();
-    
-  } catch (error: any) {
-    console.error('Erro:', error);
-    alert(`Erro: ${error.message}`);
-  }
-};
+      alert(`Aula ${proximaAula} registrada!`);
+      setAttendance({});
+      onUpdate();
+      
+    } catch (error: any) {
+      console.error('Erro:', error);
+      alert(`Erro: ${error.message}`);
+    }
+  };
 
   const handleViewDetails = (student: any) => {
     setSelectedStudent(student);
@@ -2130,7 +2129,7 @@ const handleSaveAttendance = async () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-2">
             Número da Aula
@@ -2183,113 +2182,110 @@ const handleSaveAttendance = async () => {
         </div>
       </div>
 
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-  <div className="max-h-[400px] overflow-y-auto">
-    <table className="w-full min-w-full">
-      <thead className="bg-slate-50 sticky top-0">
-        <tr>
-          <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-            Aluno
-          </th>
-          {/* NOVA COLUNA: Tipo de Matrícula */}
-          <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-            Tipo Matrícula
-          </th>
-          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-            Presente
-          </th>
-          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-            Status
-          </th>
-          <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
-            Ações
-          </th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-slate-200">
-        {filteredStudents.map((student: any) => {
-          // Função auxiliar para determinar o tipo de matrícula
-          const getEnrollmentTypeInfo = () => {
-            const isExceptional = student.enrollment_type === 'exceptional';
-            const enrollmentDate = student.enrollment_date 
-              ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
-              : null;
-            
-            return {
-              tipo: isExceptional ? 'Excepcional' : 'Regular',
-              cor: isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800',
-              tooltip: isExceptional 
-                ? `Matrícula excepcional em ${enrollmentDate}`
-                : 'Matrícula regular desde o início do ciclo',
-              data: enrollmentDate
-            };
-          };
+      <div className="border border-slate-200 rounded-lg overflow-hidden">
+        <div className="max-h-[400px] overflow-y-auto">
+          <table className="w-full min-w-full">
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Aluno
+                </th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Tipo Matrícula
+                </th>
+                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Presente
+                </th>
+                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-4 text-center text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Ações
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {filteredStudents.map((student: any) => {
+                const getEnrollmentTypeInfo = () => {
+                  const isExceptional = student.enrollment_type === 'exceptional';
+                  const enrollmentDate = student.enrollment_date 
+                    ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
+                    : null;
+                  
+                  return {
+                    tipo: isExceptional ? 'Excepcional' : 'Regular',
+                    cor: isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800',
+                    tooltip: isExceptional 
+                      ? `Matrícula excepcional em ${enrollmentDate}`
+                      : 'Matrícula regular desde o início do ciclo',
+                    data: enrollmentDate
+                  };
+                };
 
-          const enrollmentInfo = getEnrollmentTypeInfo();
-          
-          return (
-            <tr key={student.id} className="hover:bg-slate-50">
-              <td className="px-6 py-4 text-sm text-slate-800">
-                <div className="font-medium">{student.students.full_name}</div>
-              </td>
-              
-              {/* NOVA CÉLULA: Tipo de Matrícula */}
-              <td className="px-6 py-4">
-                <div className="flex flex-col">
-                  <span 
-                    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${enrollmentInfo.cor}`}
-                    title={enrollmentInfo.tooltip}
-                  >
-                    {enrollmentInfo.tipo}
-                  </span>
-                  {enrollmentInfo.data && (
-                    <span className="text-xs text-slate-500 mt-1">
-                      {enrollmentInfo.data}
-                    </span>
-                  )}
-                  {student.enrollment_type === 'exceptional' && (
-                    <span className="text-xs text-amber-600 font-medium mt-1">
-                      ⚖️ Cálculo proporcional
-                    </span>
-                  )}
-                </div>
-              </td>
-              
-              <td className="px-6 py-4 text-center">
-                <input
-                  type="checkbox"
-                  checked={attendance[student.student_id] || false}
-                  onChange={(e) =>
-                    setAttendance({ ...attendance, [student.student_id]: e.target.checked })
-                  }
-                  className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
-                />
-              </td>
-              <td className="px-6 py-4 text-center">
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                  attendance[student.student_id]
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-slate-100 text-slate-800'
-                }`}>
-                  {attendance[student.student_id] ? 'Presente' : 'Ausente'}
-                </span>
-              </td>
-              <td className="px-6 py-4 text-center">
-                <button
-                  onClick={() => handleViewDetails(student)}
-                  className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>Ver Detalhes</span>
-                </button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  </div>
-</div>
+                const enrollmentInfo = getEnrollmentTypeInfo();
+                
+                return (
+                  <tr key={student.id} className="hover:bg-slate-50">
+                    <td className="px-6 py-4 text-sm text-slate-800">
+                      <div className="font-medium">{student.students.full_name}</div>
+                    </td>
+                    
+                    <td className="px-6 py-4">
+                      <div className="flex flex-col">
+                        <span 
+                          className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${enrollmentInfo.cor}`}
+                          title={enrollmentInfo.tooltip}
+                        >
+                          {enrollmentInfo.tipo}
+                        </span>
+                        {enrollmentInfo.data && (
+                          <span className="text-xs text-slate-500 mt-1">
+                            {enrollmentInfo.data}
+                          </span>
+                        )}
+                        {student.enrollment_type === 'exceptional' && (
+                          <span className="text-xs text-amber-600 font-medium mt-1">
+                            ⚖️ Proporcional
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    
+                    <td className="px-6 py-4 text-center">
+                      <input
+                        type="checkbox"
+                        checked={attendance[student.student_id] || false}
+                        onChange={(e) =>
+                          setAttendance({ ...attendance, [student.student_id]: e.target.checked })
+                        }
+                        className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                        attendance[student.student_id]
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-slate-100 text-slate-800'
+                      }`}>
+                        {attendance[student.student_id] ? 'Presente' : 'Ausente'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <button
+                        onClick={() => handleViewDetails(student)}
+                        className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>Ver Detalhes</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {showDetailsModal && selectedStudent && (
         <AttendanceDetailsModal
@@ -2306,6 +2302,9 @@ const handleSaveAttendance = async () => {
   );
 }
 
+// ===========================================
+// COMPONENTE - AttendanceDetailsModal
+// ===========================================
 interface AttendanceDetailsModalProps {
   classData: Class;
   student: any;
@@ -2406,8 +2405,6 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
-    // NÃO atualizar status durante o ciclo
-
     setEditingRecord(null);
     setEditData(null);
     loadAttendanceRecords();
@@ -2433,13 +2430,10 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
       return;
     }
 
-    // NÃO atualizar status durante o ciclo
-
     loadAttendanceRecords();
     alert('Frequência excluída com sucesso!');
   };
 
-  // Calcular frequência baseada apenas nas aulas realizadas
   const uniqueClasses = [...new Set(attendanceRecords.map(r => r.class_number))];
   const totalClassesGiven = uniqueClasses.length;
   
@@ -2448,12 +2442,30 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[85vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[85vw] lg:w-[75vw] xl:w-[65vw] max-w-5xl
+        max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-start mb-6">
             <div>
               <h3 className="text-2xl font-bold text-slate-800">Detalhes de Frequência</h3>
               <p className="text-lg text-slate-600 mt-1">{student.students.full_name}</p>
+              
+              <div className="flex items-center space-x-4 mt-3">
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  student.enrollment_type === 'exceptional' 
+                    ? 'bg-amber-100 text-amber-800' 
+                    : 'bg-blue-100 text-blue-800'
+                }`}>
+                  {student.enrollment_type === 'exceptional' ? 'Matrícula Excepcional' : 'Matrícula Regular'}
+                </span>
+                {student.enrollment_date && (
+                  <span className="text-sm text-slate-600">
+                    Data matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                  </span>
+                )}
+              </div>
+              
               <div className="flex items-center space-x-4 mt-3">
                 <span className="text-sm text-slate-600">
                   Presenças: <span className="font-bold text-green-600">{presentCount}</span> / {totalClassesGiven} aulas
@@ -2600,6 +2612,9 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   );
 }
 
+// ===========================================
+// COMPONENTE - EADAccessManagement (CORRIGIDO)
+// ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -2651,7 +2666,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   const handleSaveAccess = async (studentId: string) => {
     const data = accessData[studentId];
 
-    // Validar todas as datas
     const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
     for (const date of dates) {
       if (!validateAccessDate(date)) return;
@@ -2673,8 +2687,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         { onConflict: 'class_id,student_id' }
       );
 
-    // NÃO atualizar status durante o ciclo
-
     alert('Acessos atualizados!');
     onUpdate();
   };
@@ -2686,7 +2698,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       const data = accessData[student.student_id];
       
       if (data) {
-        // Validar todas as datas
         const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
         let isValid = true;
         for (const date of dates) {
@@ -2713,8 +2724,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             ],
             { onConflict: 'class_id,student_id' }
           );
-
-        // NÃO atualizar status durante o ciclo
       }
     }
     
@@ -2740,10 +2749,15 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         </button>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-        <p className="text-sm text-amber-800">
-          <strong>Atenção:</strong> Para aprovação no curso EAD, o aluno deve realizar <strong>3 acessos em meses diferentes</strong>.
-          Se 2 ou 3 acessos forem registrados no mesmo mês, o aluno será considerado reprovado.
+      {/* ✅ NOVO TEXTO - REGRA SIMPLIFICADA */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+        <p className="text-sm text-blue-800">
+          <strong>📌 Regra EAD:</strong> O aluno precisa realizar <strong>3 acessos</strong> para ser aprovado.
+          {classData.status === 'active' && (
+            <span className="block mt-1 text-blue-600">
+              Ciclo ativo: os acessos podem ser registrados a qualquer momento.
+            </span>
+          )}
         </p>
       </div>
 
@@ -2778,49 +2792,69 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                   Acesso 3
                 </th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                  Status
+                </th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                   Ações
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredStudents.map((student: any) => (
-                <tr key={student.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 text-sm text-slate-800">
-                    {student.students.full_name}
-                  </td>
-                  {[1, 2, 3].map((num) => (
-                    <td key={num} className="px-6 py-4">
-                      <input
-                        type="date"
-                        value={accessData[student.student_id]?.[`access_date_${num}`] || ''}
-                        onChange={(e) =>
-                          setAccessData({
-                            ...accessData,
-                            [student.student_id]: {
-                              ...accessData[student.student_id],
-                              [`access_date_${num}`]: e.target.value,
-                            },
-                          })
-                        }
-                        min={cycleStartDate}
-                        max={cycleEndDate}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                      />
+              {filteredStudents.map((student: any) => {
+                const accessCount = [
+                  accessData[student.student_id]?.access_date_1,
+                  accessData[student.student_id]?.access_date_2,
+                  accessData[student.student_id]?.access_date_3
+                ].filter(Boolean).length;
+
+                return (
+                  <tr key={student.id} className="hover:bg-slate-50">
+                    <td className="px-6 py-4 text-sm text-slate-800">
+                      {student.students.full_name}
                     </td>
-                  ))}
-                  <td className="px-6 py-4">
-                    <button
-                      onClick={() => handleSaveAccess(student.student_id)}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                    >
-                      Salvar
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                    {[1, 2, 3].map((num) => (
+                      <td key={num} className="px-6 py-4">
+                        <input
+                          type="date"
+                          value={accessData[student.student_id]?.[`access_date_${num}`] || ''}
+                          onChange={(e) =>
+                            setAccessData({
+                              ...accessData,
+                              [student.student_id]: {
+                                ...accessData[student.student_id],
+                                [`access_date_${num}`]: e.target.value,
+                              },
+                            })
+                          }
+                          min={cycleStartDate}
+                          max={cycleEndDate}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                        />
+                      </td>
+                    ))}
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                        accessCount === 3
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {accessCount === 3 ? '✅ Aprovado' : `${accessCount}/3 acessos`}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => handleSaveAccess(student.student_id)}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+                      >
+                        Salvar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {students.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <User className="w-12 h-12 text-slate-300 mb-3" />
                       <p className="text-lg">Nenhum aluno matriculado</p>
