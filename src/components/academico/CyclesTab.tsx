@@ -183,27 +183,35 @@ async function updateStudentStatusOnClose(
     let currentStatus = 'em_andamento';
     let isApproved = false;
 
-    if (classData.modality === 'VIDEOCONFERENCIA') {
-      // 🔥 DECISÃO: Regular ou Excepcional?
-      const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
-      const isExceptional = studentData?.enrollment_type === 'exceptional';
-      
-      // Log para debug
-      console.log(`Aluno ${studentId}:`, {
-        tipo: isExceptional ? 'EXCEPCIONAL' : 'REGULAR',
-        matricula: enrollmentDate,
-        ciclo_inicio: cycleData?.start_date
-      });
+    // Na parte do cálculo para videoconferência
+if (classData.modality === 'VIDEOCONFERENCIA') {
+  // Buscar dados atualizados do aluno
+  const { data: studentData } = await supabase
+    .from('class_students')
+    .select('enrollment_date, enrollment_type')
+    .eq('class_id', classId)
+    .eq('student_id', studentId)
+    .single();
 
-      // Calcular frequência (com ou sem filtro de data)
-      const { percentage, presentCount, totalClassesToConsider, isProportional } = 
-        await calculateAttendancePercentage(
-          classId, 
-          studentId, 
-          isExceptional ? enrollmentDate : null  // Só filtra se for excepcional
-        );
-      
-      isApproved = percentage >= 60;
+  const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
+  const isExceptional = studentData?.enrollment_type === 'exceptional';
+  
+  // 🔥 IMPORTANTE: Log para debug
+  console.log('Status update - aluno:', {
+    studentId,
+    isExceptional,
+    enrollmentDate,
+    classId
+  });
+
+  const { percentage } = await calculateAttendancePercentage(
+    classId, 
+    studentId, 
+    isExceptional ? enrollmentDate : null
+  );
+  
+  isApproved = percentage >= 60;
+}
       
       console.log(`Resultado: ${percentage}% (${presentCount}/${totalClassesToConsider} aulas) - ${isApproved ? '✅' : '❌'}`);
       
@@ -1526,19 +1534,20 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                             <td className="px-6 py-4 text-sm text-slate-600">
                               {student.students.cpf || '-'}
                             </td>
-                            <td className="px-6 py-4">
-                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                                student.enrollment_type === 'exceptional'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-blue-100 text-blue-800'
-                              }`}>
-                                {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
-                              </span>
-                              {student.enrollment_date && (
-                                <div className="text-xs text-slate-500 mt-1">
-                                  Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
-                                </div>
-                              )}
+                           <td className="px-6 py-4">
+  <div className="flex flex-col">
+    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+      student.enrollment_type === 'exceptional' 
+        ? 'bg-amber-100 text-amber-800' 
+        : 'bg-blue-100 text-blue-800'
+    }`}>
+      {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
+    </span>
+    {student.enrollment_type === 'exceptional' && student.enrollment_date && (
+      <span className="text-xs text-amber-600 mt-1">
+        ⚖️ Matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+      </span>
+    )}
                               {student.isProportionalCalculation && (
                                 <div className="text-xs text-amber-600 mt-1 font-medium">
                                   Cálculo proporcional aplicado
