@@ -1908,11 +1908,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       )}
 
       {/* Modal de Matrícula */}
-     // ===========================================
-// MODAL DE MATRÍCULA CORRIGIDO - COM DATA
-// ===========================================
-
-{showEnrollmentModal && (
+      {showEnrollmentModal && (
   <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
     <div className="bg-white rounded-xl shadow-xl 
       w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
