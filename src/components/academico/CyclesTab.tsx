@@ -1889,109 +1889,160 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       )}
 
       {/* Modal de Matrícula */}
-      {showEnrollmentModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl shadow-xl 
-            w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
-            max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-800">
-                    {enrollmentType === 'regular' ? 'Matrícula Regular' : 'Matrícula Excepcional'}
-                  </h3>
-                  <p className="text-slate-600 mt-1">
-                    {enrollmentType === 'regular'
-                      ? 'O aluno seguirá o fluxo normal de frequência desde o início do ciclo'
-                      : 'A frequência será calculada apenas a partir da data de matrícula'}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowEnrollmentModal(false)}
-                  className="text-slate-400 hover:text-slate-600 text-3xl p-1"
-                >
-                  ×
-                </button>
-              </div>
+     // ===========================================
+// MODAL DE MATRÍCULA CORRIGIDO - COM DATA
+// ===========================================
 
-              <div className="mb-4">
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar aluno por nome..."
-                    value={enrollmentSearch}
-                    onChange={(e) => setEnrollmentSearch(e.target.value)}
-                    className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
+{showEnrollmentModal && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+    <div className="bg-white rounded-xl shadow-xl 
+      w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
+      max-h-[90vh] overflow-y-auto">
+      
+      <div className="p-6">
+        {/* HEADER */}
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h3 className="text-2xl font-bold text-slate-800">
+              {enrollmentType === 'regular' ? 'Matrícula Regular' : 'Matrícula Excepcional'}
+            </h3>
+            <p className="text-slate-600 mt-1">
+              {enrollmentType === 'regular'
+                ? 'Aluno que iniciou no início do ciclo ou em data retroativa'
+                : 'Aluno que entrou após o início do ciclo'}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowEnrollmentModal(false)}
+            className="text-slate-400 hover:text-slate-600 text-3xl p-1"
+          >
+            ×
+          </button>
+        </div>
 
-              <div className="mb-4 p-3 bg-slate-50 rounded-lg">
-                <p className="text-sm text-slate-600">
-                  {selectedStudents.size} aluno(s) selecionado(s)
-                </p>
-              </div>
+        {/* ⚠️ AVISO SOBRE A DATA */}
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-800">
+            <strong>📅 Importante:</strong> Selecione a data REAL em que o aluno começou a frequentar a turma.
+            {enrollmentType === 'regular' && (
+              <span className="block mt-1">
+                Para matrículas regulares no início do ciclo, use a data de início do ciclo.
+                Para matrículas regulares retroativas, use a data real de entrada.
+              </span>
+            )}
+            {enrollmentType === 'exceptional' && (
+              <span className="block mt-1">
+                A frequência será calculada apenas a partir desta data.
+              </span>
+            )}
+          </p>
+        </div>
 
-              <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
-                <div className="divide-y divide-slate-200">
-                  {availableStudents
-                    .filter(student => {
-                      if (!enrollmentSearch) return true;
-                      return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
-                    })
-                    .map(student => (
-                      <label
-                        key={student.id}
-                        className="flex items-center p-4 hover:bg-slate-50 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedStudents.has(student.id)}
-                          onChange={() => handleToggleStudent(student.id)}
-                          className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
-                        />
-                        <span className="text-slate-800">{student.full_name}</span>
-                      </label>
-                    ))}
-                  {availableStudents.filter(student => {
-                    if (!enrollmentSearch) return true;
-                    return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
-                  }).length === 0 && (
-                    <div className="p-8 text-center text-slate-500">
-                      <User className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                      <p>Nenhum aluno disponível para matrícula</p>
-                    </div>
-                  )}
-                </div>
-              </div>
+        {/* 📅 CAMPO DE DATA */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-slate-700 mb-2">
+            Data da Matrícula <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="date"
+            value={enrollmentDate}
+            onChange={(e) => setEnrollmentDate(e.target.value)}
+            min={cycleStartDate}  // Não pode ser antes do ciclo
+            max={new Date().toISOString().split('T')[0]}  // Não pode ser futuro
+            required
+            className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
+          />
+          <p className="text-xs text-slate-500 mt-2">
+            {enrollmentType === 'regular' 
+              ? '✅ Pode ser retroativa (data em que o aluno realmente começou)'
+              : '📌 Deve ser a data em que o aluno passou a frequentar a turma'}
+          </p>
+        </div>
 
-              <div className="flex space-x-3 mt-6">
-                <button
-                  onClick={() => setShowEnrollmentModal(false)}
-                  className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleEnrollStudents}
-                  disabled={selectedStudents.size === 0}
-                  className={`flex-1 px-4 py-3 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
-                    enrollmentType === 'regular'
-                      ? 'bg-green-600 hover:bg-green-700'
-                      : 'bg-amber-600 hover:bg-amber-700'
-                  }`}
-                >
-                  Matricular {selectedStudents.size > 0 ? `(${selectedStudents.size})` : ''}
-                </button>
-              </div>
-            </div>
+        {/* BUSCA DE ALUNOS */}
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar aluno por nome..."
+              value={enrollmentSearch}
+              onChange={(e) => setEnrollmentSearch(e.target.value)}
+              className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
           </div>
         </div>
-      )}
+
+        {/* CONTADOR DE SELECIONADOS */}
+        <div className="mb-4 p-3 bg-slate-50 rounded-lg flex justify-between items-center">
+          <p className="text-sm text-slate-600">
+            {selectedStudents.size} aluno(s) selecionado(s)
+          </p>
+          {selectedStudents.size > 0 && (
+            <p className="text-xs text-green-600">
+              ✅ Matrícula em {new Date(enrollmentDate).toLocaleDateString('pt-BR')}
+            </p>
+          )}
+        </div>
+
+        {/* LISTA DE ALUNOS */}
+        <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
+          <div className="divide-y divide-slate-200">
+            {availableStudents
+              .filter(student => {
+                if (!enrollmentSearch) return true;
+                return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+              })
+              .map(student => (
+                <label
+                  key={student.id}
+                  className="flex items-center p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedStudents.has(student.id)}
+                    onChange={() => handleToggleStudent(student.id)}
+                    className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
+                  />
+                  <span className="text-slate-800">{student.full_name}</span>
+                </label>
+              ))}
+            {availableStudents.filter(student => {
+              if (!enrollmentSearch) return true;
+              return student.full_name.toLowerCase().includes(enrollmentSearch.toLowerCase());
+            }).length === 0 && (
+              <div className="p-8 text-center text-slate-500">
+                <User className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                <p>Nenhum aluno disponível para matrícula</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* BOTÕES */}
+        <div className="flex space-x-3 mt-6">
+          <button
+            onClick={() => setShowEnrollmentModal(false)}
+            className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleEnrollStudents}
+            disabled={selectedStudents.size === 0 || !enrollmentDate}
+            className={`flex-1 px-4 py-3 text-white rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+              enrollmentType === 'regular'
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-amber-600 hover:bg-amber-700'
+            }`}
+          >
+            Matricular {selectedStudents.size > 0 ? `(${selectedStudents.size})` : ''}
+          </button>
+        </div>
+      </div>
     </div>
-  );
-}
+  </div>
+)}
 
 // ===========================================
 // COMPONENTE - VideoconferenciaAttendance
