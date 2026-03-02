@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { CertificateModal } from './CertificateModal';
 import { CertificateModalEAD } from './CertificateModalEAD';
+import { formatDateToDisplay, forceDateToDisplay, formatDateToDatabase, extractDatePart, isDateGreaterOrEqual } from '../../utils/dateUtils';
 
 interface Cycle {
   id: string;
@@ -96,31 +97,24 @@ async function calculateAttendancePercentage(
     };
   }
 
-  // 🔥 CORREÇÃO: Filtrar por data de matrícula para TODOS que têm data
   let filteredAttendances = attendances;
   let isProportional = false;
 
   if (enrollmentDate) {
     isProportional = true;
-    filteredAttendances = attendances.filter(a => 
-      a.class_date >= enrollmentDate
-    );
-  }
-
-  // Se não tem aulas após a matrícula, retorna 0
-  if (filteredAttendances.length === 0) {
-    return {
-      percentage: 0,
-      presentCount: 0,
-      totalClassesToConsider: 0,
-      isProportional
-    };
+    // 🔥 Usar extractDatePart para comparar apenas as datas
+    filteredAttendances = attendances.filter(a => {
+      const classDatePart = extractDatePart(a.class_date);
+      return classDatePart && classDatePart >= enrollmentDate;
+    });
   }
 
   const presentCount = filteredAttendances.filter(a => a.present).length;
   const totalClassesToConsider = filteredAttendances.length;
   
-  const percentage = (presentCount / totalClassesToConsider) * 100;
+  const percentage = totalClassesToConsider > 0 
+    ? (presentCount / totalClassesToConsider) * 100 
+    : 0;
 
   return {
     percentage,
@@ -176,7 +170,7 @@ async function updateStudentStatusOnClose(
     let isApproved = false;
 
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      const enrollmentDate = studentData?.enrollment_date?.split('T')[0];
+      const enrollmentDate = extractDatePart(studentData?.enrollment_date);
       const isExceptional = studentData?.enrollment_type === 'exceptional';
       
       const { percentage } = await calculateAttendancePercentage(
@@ -477,13 +471,13 @@ export function CyclesTab() {
               <div className="flex items-center space-x-2">
                 <Calendar className="w-4 h-4" />
                 <span>
-                  Início: {new Date(cycle.start_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  Início: {formatDateToDisplay(cycle.start_date)}
                 </span>
               </div>
               <div className="flex items-center space-x-2">
                 <Calendar className="w-4 h-4" />
                 <span>
-                  Fim: {new Date(cycle.end_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                  Fim: {formatDateToDisplay(cycle.end_date)}
                 </span>
               </div>
             </div>
@@ -761,7 +755,7 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
             <p className="text-slate-600 text-lg">{cycle.name}</p>
             <div className="flex items-center gap-3 mt-2">
               <span className="text-sm text-slate-600">
-                {new Date(cycle.start_date + 'T00:00:00').toLocaleDateString('pt-BR')} até {new Date(cycle.end_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                {formatDateToDisplay(cycle.start_date)} até {formatDateToDisplay(cycle.end_date)}
               </span>
               <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                 cycle.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
@@ -1058,7 +1052,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     if (classData.modality === 'VIDEOCONFERENCIA') {
       const studentsWithAttendance = await Promise.all(
         (data || []).map(async (cs) => {
-          const enrollmentDate = cs.enrollment_date ? cs.enrollment_date.split('T')[0] : null;
+          const enrollmentDate = extractDatePart(cs.enrollment_date);
           const isExceptional = cs.enrollment_type === 'exceptional';
           
           const { percentage, presentCount, totalClassesGiven: totalClasses, isProportional } = 
@@ -1156,16 +1150,17 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     }
 
     if (cycleStartDate && enrollmentDate < cycleStartDate) {
-      alert(`Data de matrícula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
+      alert(`Data de matrícula não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
       return;
     }
 
     if (cycleEndDate && enrollmentDate > cycleEndDate) {
-      alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
+      alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
       return;
     }
 
-    const enrollmentDateTime = `${enrollmentDate}T00:00:00.000Z`;
+    // 🔥 Usar a função para formatar para o banco
+    const enrollmentDateTime = formatDateToDatabase(enrollmentDate);
 
     const studentsToEnroll = Array.from(selectedStudents).map(studentId => ({
       class_id: classData.id,
@@ -1197,7 +1192,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     loadClassStudents();
     loadAvailableStudents();
     
-    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso em ${new Date(enrollmentDate).toLocaleDateString('pt-BR')}!`);
+    alert(`${selectedStudents.size} aluno(s) matriculado(s) com sucesso em ${formatDateToDisplay(enrollmentDateTime)}!`);
   };
 
   const handleRemoveStudent = async (studentId: string) => {
@@ -1544,9 +1539,9 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                 }`}>
                                   {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
                                 </span>
-                                {student.enrollment_type === 'exceptional' && student.enrollment_date && (
+                                {student.enrollment_date && (
                                   <span className="text-xs text-amber-600 mt-1">
-                                    ⚖️ {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                                    ⚖️ {forceDateToDisplay(student.enrollment_date)}
                                   </span>
                                 )}
                                 {student.isProportionalCalculation && (
@@ -1759,7 +1754,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                                   </span>
                                   <span className="text-xs text-slate-500">
                                     {student.isProportionalCalculation && student.enrollment_date
-                                      ? `Matrícula: ${new Date(student.enrollment_date).toLocaleDateString('pt-BR')}`
+                                      ? `Matrícula: ${forceDateToDisplay(student.enrollment_date)}`
                                       : 'Presenças registradas'}
                                   </span>
                                   {totalClassesGiven < classData.total_classes && cycleStatus === 'active' && (
@@ -1961,7 +1956,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
                 </p>
                 {selectedStudents.size > 0 && (
                   <p className="text-xs text-green-600">
-                    ✅ Matrícula em {new Date(enrollmentDate).toLocaleDateString('pt-BR')}
+                    ✅ Matrícula em {formatDateToDisplay(enrollmentDate)}
                   </p>
                 )}
               </div>
@@ -2027,9 +2022,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 }
 
 // ===========================================
-// COMPONENTE - VideoconferenciaAttendance
-// ===========================================
-// ===========================================
 // COMPONENTE - VideoconferenciaAttendance CORRIGIDO
 // ===========================================
 function VideoconferenciaAttendance({ classData, students, onUpdate, totalClassesGiven }: any) {
@@ -2043,36 +2035,55 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
+  const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
 
   useEffect(() => {
     loadCycleDates();
     setClassNumber(totalClassesGiven + 1);
   }, [totalClassesGiven]);
 
-  // 🔥 NOVO: Filtrar alunos elegíveis para a aula
+  // 🔥 FILTRO PRINCIPAL - Quando a data da aula mudar
   useEffect(() => {
     if (classDate && students.length > 0) {
-      const eligible = students.filter((student: any) => {
-        const enrollmentDate = student.enrollment_date?.split('T')[0];
+      const eligible: any[] = [];
+      const ignored: any[] = [];
+      
+      students.forEach((student: any) => {
+        const enrollmentDate = extractDatePart(student.enrollment_date);
         
         // Se não tem data de matrícula, considera elegível
-        if (!enrollmentDate) return true;
+        if (!enrollmentDate) {
+          eligible.push(student);
+          return;
+        }
         
-        // Só é elegível se a data da aula >= data da matrícula
-        return classDate >= enrollmentDate;
+        // Comparar datas usando a função utilitária
+        if (isDateGreaterOrEqual(classDate, enrollmentDate)) {
+          eligible.push(student);
+        } else {
+          ignored.push(student);
+        }
       });
       
       setEligibleStudents(eligible);
+      setIgnoredStudents(ignored);
       
-      // Log para debug
-      console.log('📅 Filtro de alunos:', {
+      // Limpar seleções de alunos ignorados
+      const newAttendance = { ...attendance };
+      ignored.forEach(student => {
+        delete newAttendance[student.student_id];
+      });
+      setAttendance(newAttendance);
+      
+      console.log('📅 Filtro aplicado:', {
         dataAula: classDate,
         totalAlunos: students.length,
         alunosElegiveis: eligible.length,
-        alunosIgnorados: students.length - eligible.length
+        alunosIgnorados: ignored.length,
       });
     } else {
       setEligibleStudents(students);
+      setIgnoredStudents([]);
     }
   }, [classDate, students]);
 
@@ -2103,12 +2114,12 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     }
 
     if (cycleStartDate && classDate < cycleStartDate) {
-      setValidationError(`Data da aula não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
+      setValidationError(`Data da aula não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
       return false;
     }
 
     if (cycleEndDate && classDate > cycleEndDate) {
-      setValidationError(`Data da aula não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
+      setValidationError(`Data da aula não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
       return false;
     }
 
@@ -2117,6 +2128,11 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
   const handleSaveAttendance = async () => {
     if (!validateAttendance()) return;
+
+    if (eligibleStudents.length === 0) {
+      alert('Não há alunos elegíveis para esta data. Verifique se a data está correta.');
+      return;
+    }
 
     try {
       const { data: maxClassData } = await supabase
@@ -2128,7 +2144,6 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
       const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
       
-      // 🔥 IMPORTANTE: Só salvar para alunos ELEGÍVEIS
       const records = eligibleStudents.map((student: any) => ({
         class_id: classData.id,
         student_id: student.student_id,
@@ -2137,13 +2152,17 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
         present: attendance[student.student_id] || false,
       }));
 
-      // Log para debug
-      console.log('💾 Salvando frequência:', {
-        dataAula: classDate,
-        totalRegistros: records.length,
-        presentes: records.filter(r => r.present).length,
-        ausentes: records.filter(r => !r.present).length
-      });
+      const presentes = records.filter(r => r.present).length;
+      const ausentes = records.filter(r => !r.present).length;
+      
+      if (!confirm(`Salvar frequência da aula ${proximaAula}?\n\n` +
+                   `📅 Data: ${formatDateToDisplay(classDate)}\n` +
+                   `👥 Alunos elegíveis: ${eligibleStudents.length}\n` +
+                   `✅ Presentes: ${presentes}\n` +
+                   `❌ Ausentes: ${ausentes}\n` +
+                   `🚫 Ignorados (matrícula posterior): ${ignoredStudents.length}`)) {
+        return;
+      }
 
       const { error } = await supabase
         .from('attendance')
@@ -2154,7 +2173,10 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
 
       if (error) throw error;
 
-      alert(`Aula ${proximaAula} registrada para ${records.length} alunos elegíveis!`);
+      alert(`✅ Aula ${proximaAula} registrada!\n` +
+            `${presentes} presentes, ${ausentes} ausentes\n` +
+            `${ignoredStudents.length} alunos ignorados (matrícula posterior)`);
+      
       setAttendance({});
       onUpdate();
       
@@ -2169,15 +2191,11 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
     setShowDetailsModal(true);
   };
 
-  // Filtrar para busca
   const filteredEligibleStudents = eligibleStudents.filter((student: any) => {
     if (!studentSearchTerm) return true;
     const search = studentSearchTerm.toLowerCase();
     return student.students.full_name.toLowerCase().includes(search);
   });
-
-  // 🔥 NOVO: Contar alunos ignorados
-  const ignoredCount = students.length - eligibleStudents.length;
 
   return (
     <>
@@ -2193,12 +2211,32 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
         </p>
       </div>
 
-      {/* 🔥 NOVO: Aviso sobre alunos não elegíveis */}
-      {ignoredCount > 0 && (
-        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-          <p className="text-sm text-amber-800">
-            <strong>⚠️ Atenção:</strong> {ignoredCount} aluno(s) não estão sendo exibidos porque a data da aula ({new Date(classDate).toLocaleDateString('pt-BR')}) é anterior à data de matrícula deles.
-          </p>
+      {ignoredStudents.length > 0 && (
+        <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex items-start space-x-3">
+            <span className="text-amber-600 font-bold text-lg">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-amber-800">
+                <strong>{ignoredStudents.length} aluno(s) não estão sendo exibidos</strong>
+              </p>
+              <p className="text-xs text-amber-700 mt-1">
+                Data da aula: {formatDateToDisplay(classDate)}
+              </p>
+              <div className="mt-2 max-h-32 overflow-y-auto bg-amber-100/50 rounded p-2">
+                {ignoredStudents.map((student: any) => (
+                  <div key={student.id} className="text-xs text-amber-800 flex justify-between py-1 border-b border-amber-200 last:border-0">
+                    <span>{student.students.full_name}</span>
+                    <span className="font-medium">
+                      Matrícula: {forceDateToDisplay(student.enrollment_date)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-amber-700 mt-2">
+                ⏰ Alunos com matrícula posterior à data da aula não devem constar na lista.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -2235,9 +2273,15 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
         <div className="flex items-end">
           <button
             onClick={handleSaveAttendance}
-            className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
+            disabled={eligibleStudents.length === 0}
+            className={`w-full px-6 py-3 text-white rounded-lg transition-colors font-medium ${
+              eligibleStudents.length === 0
+                ? 'bg-slate-400 cursor-not-allowed'
+                : 'bg-green-600 hover:bg-green-700'
+            }`}
           >
-            Salvar Frequência ({eligibleStudents.length} alunos)
+            Salvar Frequência 
+            {eligibleStudents.length > 0 && ` (${eligibleStudents.length} alunos)`}
           </button>
         </div>
       </div>
@@ -2278,64 +2322,83 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredEligibleStudents.map((student: any) => {
-                const isExceptional = student.enrollment_type === 'exceptional';
-                const enrollmentDate = student.enrollment_date 
-                  ? new Date(student.enrollment_date).toLocaleDateString('pt-BR')
-                  : null;
-                
-                return (
-                  <tr key={student.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 text-sm text-slate-800">
-                      <div className="font-medium">{student.students.full_name}</div>
-                    </td>
-                    
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                          isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
-                        }`}>
-                          {isExceptional ? 'Excepcional' : 'Regular'}
-                        </span>
-                        {enrollmentDate && (
-                          <span className="text-xs text-slate-500 mt-1">
-                            Mat: {enrollmentDate}
+              {filteredEligibleStudents.length > 0 ? (
+                filteredEligibleStudents.map((student: any) => {
+                  const isExceptional = student.enrollment_type === 'exceptional';
+                  const enrollmentDate = student.enrollment_date 
+                    ? forceDateToDisplay(student.enrollment_date)
+                    : null;
+                  
+                  return (
+                    <tr key={student.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4 text-sm text-slate-800">
+                        <div className="font-medium">{student.students.full_name}</div>
+                      </td>
+                      
+                      <td className="px-6 py-4">
+                        <div className="flex flex-col">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                            isExceptional ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {isExceptional ? 'Excepcional' : 'Regular'}
                           </span>
-                        )}
-                      </div>
-                    </td>
-                    
-                    <td className="px-6 py-4 text-center">
-                      <input
-                        type="checkbox"
-                        checked={attendance[student.student_id] || false}
-                        onChange={(e) =>
-                          setAttendance({ ...attendance, [student.student_id]: e.target.checked })
-                        }
-                        className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
-                      />
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        attendance[student.student_id]
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-slate-100 text-slate-800'
-                      }`}>
-                        {attendance[student.student_id] ? 'Presente' : 'Ausente'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={() => handleViewDetails(student)}
-                        className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
-                      >
-                        <Eye className="w-4 h-4" />
-                        <span>Ver Detalhes</span>
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+                          {enrollmentDate && (
+                            <span className="text-xs text-slate-500 mt-1">
+                              Mat: {enrollmentDate}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      
+                      <td className="px-6 py-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={attendance[student.student_id] || false}
+                          onChange={(e) =>
+                            setAttendance({ ...attendance, [student.student_id]: e.target.checked })
+                          }
+                          className="w-6 h-6 text-green-600 rounded focus:ring-green-500 cursor-pointer"
+                        />
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                          attendance[student.student_id]
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-slate-100 text-slate-800'
+                        }`}>
+                          {attendance[student.student_id] ? 'Presente' : 'Ausente'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => handleViewDetails(student)}
+                          className="inline-flex items-center space-x-1 px-3 py-1 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>Ver Detalhes</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                    <div className="flex flex-col items-center">
+                      <User className="w-12 h-12 text-slate-300 mb-3" />
+                      <p className="text-lg">Nenhum aluno elegível para esta data</p>
+                      <p className="text-sm text-slate-400 mt-1">
+                        Data selecionada: {formatDateToDisplay(classDate)}
+                      </p>
+                      {ignoredStudents.length > 0 && (
+                        <p className="text-sm text-amber-600 mt-2">
+                          {ignoredStudents.length} aluno(s) ignorado(s) por matrícula posterior
+                        </p>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -2424,12 +2487,12 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     if (!editData) return false;
 
     if (cycleStartDate && editData.classDate < cycleStartDate) {
-      alert('Data não pode ser anterior ao início do ciclo');
+      alert(`Data não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
       return false;
     }
 
     if (cycleEndDate && editData.classDate > cycleEndDate) {
-      alert('Data não pode ser posterior ao fim do ciclo');
+      alert(`Data não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
       return false;
     }
 
@@ -2515,7 +2578,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
                 </span>
                 {student.enrollment_date && (
                   <span className="text-sm text-slate-600">
-                    Data matrícula: {new Date(student.enrollment_date).toLocaleDateString('pt-BR')}
+                    📅 Matrícula: {forceDateToDisplay(student.enrollment_date)}
                   </span>
                 )}
               </div>
@@ -2608,7 +2671,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
                       <>
                         <td className="px-4 py-3 text-sm text-slate-800">Aula {record.class_number}</td>
                         <td className="px-4 py-3 text-sm text-slate-800">
-                          {new Date(record.class_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                          {formatDateToDisplay(record.class_date)}
                         </td>
                         <td className="px-4 py-3 text-center">
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -2667,7 +2730,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement (CORRIGIDO)
+// COMPONENTE - EADAccessManagement
 // ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
@@ -2712,12 +2775,12 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     if (!date) return true;
     
     if (cycleStartDate && date < cycleStartDate) {
-      alert(`Data de acesso não pode ser anterior ao início do ciclo (${new Date(cycleStartDate).toLocaleDateString('pt-BR')})`);
+      alert(`Data de acesso não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
       return false;
     }
 
     if (cycleEndDate && date > cycleEndDate) {
-      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${new Date(cycleEndDate).toLocaleDateString('pt-BR')})`);
+      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
       return false;
     }
 
