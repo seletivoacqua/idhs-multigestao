@@ -51,7 +51,7 @@ function validateEADAccess(
   access_date_3: string | null
 ): boolean {
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
-  return dates.length === 3;
+  return dates.length > 0; // ✅ Aluno frequente se tiver PELO MENOS 1 acesso
 }
 
 // Função para contar aulas já realizadas
@@ -190,14 +190,13 @@ async function updateStudentStatusOnClose(
         .single();
 
       const accessCount = [
-        accessData?.access_date_1,
-        accessData?.access_date_2,
-        accessData?.access_date_3
-      ].filter(Boolean).length;
-      
-      isApproved = accessCount === 3;
-    }
-
+    accessData?.access_date_1,
+    accessData?.access_date_2,
+    accessData?.access_date_3
+  ].filter(Boolean).length;
+  
+  isApproved = accessCount > 0; // ✅ Aprovado se tiver PELO MENOS 1 acesso
+}
     currentStatus = isApproved ? 'aprovado' : 'reprovado';
 
     await supabase
@@ -1374,14 +1373,14 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
       };
     } else {
-      const isApproved = student.isPresent;
-      return {
-        status: isApproved ? 'Aprovado' : 'Reprovado',
-        color: isApproved ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
-        canCertify: isApproved,
-        message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
-      };
-    }
+  const isApproved = student.isPresent; // student.isPresent já usa a função validateEADAccess
+  return {
+    status: isApproved ? 'Aprovado' : 'Reprovado',
+    color: isApproved ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+    canCertify: isApproved,
+    message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
+  };
+}
   };
 
   return (
