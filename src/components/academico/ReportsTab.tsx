@@ -38,14 +38,13 @@ interface ReportData {
   studentCpf: string;
   className: string;
   cycleName: string;
-  cycleStatus: 'active' | 'closed';
   modality: string;
   classesAttended: number;
   totalClassesConsidered: number;
   ultimoAcesso: string; // Apenas a data mais recente
   frequency: string;
   frequencyValue: number;
-  situacao: 'APROVADO' | 'INCOMPLETO';
+  situacao: 'FREQUENTE' | 'INCOMPLETO';
   totalAccesses: number;
 }
 
@@ -70,7 +69,7 @@ export function ReportsTab() {
 
   const [stats, setStats] = useState({
     totalStudents: 0,
-    aprovados: 0,
+    frequentes: 0,
     incompletos: 0,
   });
 
@@ -248,14 +247,10 @@ export function ReportsTab() {
         let ultimoAcesso = '-';
         let frequency = '';
         let frequencyValue = 0;
-        let situacao: 'APROVADO' | 'INCOMPLETO' = 'INCOMPLETO';
+        let situacao: 'FREQUENTE' | 'INCOMPLETO' = 'INCOMPLETO';
         let totalAccesses = 0;
 
         const enrollmentDate = extractDatePart(cs.enrollment_date);
-        const cycleStatus = cls.cycles?.status || 'active';
-        const cycleEndDate = cls.cycles?.end_date || '';
-        const today = new Date().toISOString().split('T')[0];
-        const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           // Lógica para Videoconferência
@@ -297,13 +292,7 @@ export function ReportsTab() {
           }
 
           // Situação para Videoconferência
-          if (totalClassesConsidered === 0) {
-            situacao = 'INCOMPLETO';
-          } else if (frequencyValue >= 60) {
-            situacao = 'APROVADO';
-          } else {
-            situacao = 'INCOMPLETO';
-          }
+          situacao = classesAttended > 0 ? 'FREQUENTE' : 'INCOMPLETO';
 
         } else {
           // EAD - NOVA LÓGICA
@@ -347,15 +336,9 @@ export function ReportsTab() {
             ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
           }
 
-          // Determinar situação: APROVADO ou INCOMPLETO
-          // No encerramento do ciclo, aprovado só com 3 acessos
-          if (!isCycleActive) {
-            // Ciclo encerrado
-            situacao = totalAccesses === 3 ? 'APROVADO' : 'INCOMPLETO';
-          } else {
-            // Ciclo ativo - sempre INCOMPLETO até ter 3 acessos E ciclo encerrar
-            situacao = 'INCOMPLETO';
-          }
+          // ✅ REGRA CORRETA: FREQUENTE se tiver 1 ou mais acessos
+          // INCOMPLETO apenas se tiver 0 acessos
+          situacao = totalAccesses > 0 ? 'FREQUENTE' : 'INCOMPLETO';
         }
 
         allReportData.push({
@@ -364,7 +347,6 @@ export function ReportsTab() {
           studentCpf: cs.students?.cpf || '',
           className: cls.name,
           cycleName: cls.cycles?.name || 'Sem ciclo',
-          cycleStatus: cls.cycles?.status || 'active',
           modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
           classesAttended,
           totalClassesConsidered,
@@ -377,10 +359,10 @@ export function ReportsTab() {
       }
     }
 
-    // Ordenar por situação (aprovados primeiro) e depois por nome
+    // Ordenar por situação (frequentes primeiro) e depois por nome
     allReportData.sort((a, b) => {
       if (a.situacao !== b.situacao) {
-        return a.situacao === 'APROVADO' ? -1 : 1;
+        return a.situacao === 'FREQUENTE' ? -1 : 1;
       }
       return a.studentName.localeCompare(b.studentName);
     });
@@ -390,7 +372,7 @@ export function ReportsTab() {
     // Calcular estatísticas
     const stats = {
       totalStudents: allReportData.length,
-      aprovados: allReportData.filter(d => d.situacao === 'APROVADO').length,
+      frequentes: allReportData.filter(d => d.situacao === 'FREQUENTE').length,
       incompletos: allReportData.filter(d => d.situacao === 'INCOMPLETO').length,
     };
 
@@ -405,7 +387,7 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'STATUS CICLO', 'MODALIDADE', 
+    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'MODALIDADE', 
       'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQUÊNCIA', 'SITUAÇÃO'];
 
     const rows = reportData.map((row) => [
@@ -414,7 +396,6 @@ export function ReportsTab() {
       row.studentCpf,
       row.className,
       row.cycleName,
-      row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
       row.modality,
       row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
       row.ultimoAcesso,
@@ -507,8 +488,8 @@ export function ReportsTab() {
           
           // Cor de fundo baseada na situação (última coluna)
           if (idx === 8) {
-            td.style.backgroundColor = row.situacao === 'APROVADO' ? '#dcfce7' : '#fee2e2';
-            td.style.color = row.situacao === 'APROVADO' ? '#166534' : '#991b1b';
+            td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
+            td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
             td.style.fontWeight = 'bold';
             td.style.textAlign = 'center';
           }
@@ -555,7 +536,7 @@ export function ReportsTab() {
       const filterInfo: string[] = [];
       
       const selectedCycle = cycles.find(c => c.id === filters.cycleId);
-      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name} (${selectedCycle.status === 'active' ? 'Ativo' : 'Encerrado'})`);
+      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
       
       const selectedUnit = units.find(u => u.id === filters.unitId);
       if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
@@ -590,9 +571,9 @@ export function ReportsTab() {
       pdf.roundedRect(margin + 60, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Aprovados', margin + 65, yPos + 5);
+      pdf.text('Frequentes', margin + 65, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.aprovados.toString(), margin + 65, yPos + 11);
+      pdf.text(stats.frequentes.toString(), margin + 65, yPos + 11);
       
       pdf.setFillColor(239, 68, 68);
       pdf.roundedRect(margin + 120, yPos, 45, 14, 2, 2, 'F');
@@ -646,8 +627,8 @@ export function ReportsTab() {
     pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const aprovadosPercentage = stats.totalStudents > 0
-    ? (stats.aprovados / stats.totalStudents) * 100
+  const frequentesPercentage = stats.totalStudents > 0
+    ? (stats.frequentes / stats.totalStudents) * 100
     : 0;
   const incompletosPercentage = stats.totalStudents > 0
     ? (stats.incompletos / stats.totalStudents) * 100
@@ -709,7 +690,7 @@ export function ReportsTab() {
               <option value="">Todos os ciclos</option>
               {cycles.map((cycle) => (
                 <option key={cycle.id} value={cycle.id}>
-                  {cycle.name} - {cycle.status === 'active' ? 'Ativo' : 'Encerrado'}
+                  {cycle.name}
                 </option>
               ))}
             </select>
@@ -801,8 +782,8 @@ export function ReportsTab() {
         </div>
 
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-sm text-green-600 font-medium">Aprovados</p>
-          <p className="text-2xl font-bold text-green-700">{stats.aprovados}</p>
+          <p className="text-sm text-green-600 font-medium">Frequentes</p>
+          <p className="text-2xl font-bold text-green-700">{stats.frequentes}</p>
         </div>
 
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -816,7 +797,7 @@ export function ReportsTab() {
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-sm font-medium text-slate-700">Distribuição</h4>
           <div className="flex space-x-4 text-xs">
-            <span className="text-green-600 font-medium">Aprovados: {stats.aprovados} ({aprovadosPercentage.toFixed(1)}%)</span>
+            <span className="text-green-600 font-medium">Frequentes: {stats.frequentes} ({frequentesPercentage.toFixed(1)}%)</span>
             <span className="text-red-600 font-medium">Incompletos: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)</span>
           </div>
         </div>
@@ -826,11 +807,11 @@ export function ReportsTab() {
             <>
               <div
                 className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
-                style={{ width: `${aprovadosPercentage}%` }}
+                style={{ width: `${frequentesPercentage}%` }}
               >
-                {aprovadosPercentage > 8 && (
+                {frequentesPercentage > 8 && (
                   <span className="drop-shadow-md">
-                    {aprovadosPercentage.toFixed(0)}%
+                    {frequentesPercentage.toFixed(0)}%
                   </span>
                 )}
               </div>
@@ -873,9 +854,6 @@ export function ReportsTab() {
                   CICLO
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
-                  STATUS CICLO
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
                   MODALIDADE
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
@@ -899,15 +877,6 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm font-medium text-slate-800">{row.studentName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
-                  <td className="px-4 py-2 text-sm">
-                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                      row.cycleStatus === 'active' 
-                        ? 'bg-green-100 text-green-700' 
-                        : 'bg-slate-100 text-slate-700'
-                    }`}>
-                      {row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
-                    </span>
-                  </td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
                   <td className="px-4 py-2 text-sm text-center font-medium">
                     {row.modality.includes('EAD') 
@@ -920,7 +889,7 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm text-center font-medium">{row.frequency}</td>
                   <td className="px-4 py-2 text-sm text-center">
                     <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
-                      row.situacao === 'APROVADO' 
+                      row.situacao === 'FREQUENTE' 
                         ? 'bg-green-500 text-white shadow-md' 
                         : 'bg-red-500 text-white shadow-md'
                     }`}>
@@ -931,7 +900,7 @@ export function ReportsTab() {
               ))}
               {reportData.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
