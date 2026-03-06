@@ -2729,7 +2729,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement
+// COMPONENTE - EADAccessManagement (MODIFICADO APENAS OS CAMPOS DE DATA)
 // ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
@@ -2773,13 +2773,22 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   const validateAccessDate = (date: string): boolean => {
     if (!date) return true;
     
-    if (cycleStartDate && date < cycleStartDate) {
-      alert(`Data de acesso não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
+    // Valida se a data está no formato DD/MM/AAAA e é válida
+    if (!isValidDate(date)) {
+      alert(`Data de acesso inválida: ${date}. Use o formato DD/MM/AAAA`);
+      return false;
+    }
+    
+    // Converte para ISO para comparar com as datas do ciclo
+    const dateISO = parseDateInput(date);
+    
+    if (cycleStartDate && dateISO < cycleStartDate) {
+      alert(`Data de acesso não pode ser anterior ao início do ciclo (${formatDateForInput(cycleStartDate)})`);
       return false;
     }
 
-    if (cycleEndDate && date > cycleEndDate) {
-      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
+    if (cycleEndDate && dateISO > cycleEndDate) {
+      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${formatDateForInput(cycleEndDate)})`);
       return false;
     }
 
@@ -2795,6 +2804,13 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }
 
     try {
+      // Converte as datas para ISO antes de salvar no banco
+      const accessDataISO = {
+        access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
+        access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
+        access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
+      };
+
       const { error } = await supabase
         .from('ead_access')
         .upsert(
@@ -2802,9 +2818,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             {
               class_id: classData.id,
               student_id: studentId,
-              access_date_1: data.access_date_1 || null,
-              access_date_2: data.access_date_2 || null,
-              access_date_3: data.access_date_3 || null,
+              ...accessDataISO,
               updated_at: new Date().toISOString(),
             },
           ],
@@ -2848,6 +2862,13 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         }
 
         try {
+          // Converte as datas para ISO antes de salvar
+          const accessDataISO = {
+            access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
+            access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
+            access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
+          };
+
           const { error } = await supabase
             .from('ead_access')
             .upsert(
@@ -2855,9 +2876,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                 {
                   class_id: classData.id,
                   student_id: student.student_id,
-                  access_date_1: data.access_date_1 || null,
-                  access_date_2: data.access_date_2 || null,
-                  access_date_3: data.access_date_3 || null,
+                  ...accessDataISO,
                   updated_at: new Date().toISOString(),
                 },
               ],
@@ -2904,6 +2923,9 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
               Ciclo ativo: os acessos podem ser registrados a qualquer momento.
             </span>
           )}
+        </p>
+        <p className="text-xs text-blue-600 mt-2">
+          Formato da data: <strong>DD/MM/AAAA</strong> (digite manualmente)
         </p>
       </div>
 
@@ -2962,19 +2984,26 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                     {[1, 2, 3].map((num) => (
                       <td key={num} className="px-6 py-4">
                         <input
-                          type="date"
-                          value={accessData[student.student_id]?.[`access_date_${num}`] || ''}
-                          onChange={(e) =>
+                          type="text"
+                          value={formatDateForInput(accessData[student.student_id]?.[`access_date_${num}`] || '')}
+                          onChange={(e) => {
+                            const formatted = formatDateInput(e.target.value);
                             setAccessData({
                               ...accessData,
                               [student.student_id]: {
                                 ...accessData[student.student_id],
-                                [`access_date_${num}`]: e.target.value,
+                                [`access_date_${num}`]: formatted,
                               },
-                            })
-                          }
-                          min={cycleStartDate}
-                          max={cycleEndDate}
+                            });
+                          }}
+                          onBlur={(e) => {
+                            // Valida a data quando o campo perde o foco
+                            if (e.target.value && !isValidDate(e.target.value)) {
+                              alert(`Data inválida: ${e.target.value}. Use o formato DD/MM/AAAA`);
+                            }
+                          }}
+                          placeholder="DD/MM/AAAA"
+                          maxLength={10}
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
                         />
                       </td>
