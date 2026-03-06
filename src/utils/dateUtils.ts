@@ -305,64 +305,90 @@ export function validateEADAccess(
   return dates.length > 0;
 }
 
+// ===========================================
+// FUNÇÕES ATUALIZADAS - EAD (REGRAS DIFERENCIADAS)
+// ===========================================
+
 /**
- * Função que retorna detalhes sobre os acessos, incluindo o mais recente
+ * Verifica se o aluno é frequente (durante o ciclo)
+ * @returns boolean - true se tiver PELO MENOS 1 ACESSO
  */
-export function getEADAccessStatus(
+export function isStudentActive(
   access_date_1: string | null, 
   access_date_2: string | null, 
   access_date_3: string | null
+): boolean {
+  const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
+  return dates.length > 0; // Frequente se tiver pelo menos 1 acesso
+}
+
+/**
+ * Verifica se o aluno está aprovado (no encerramento do ciclo)
+ * @returns boolean - true se tiver os 3 ACESSOS COMPLETOS
+ */
+export function isStudentApproved(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null
+): boolean {
+  // Precisa ter os 3 acessos preenchidos
+  return !!(access_date_1 && access_date_2 && access_date_3);
+}
+
+/**
+ * Retorna o status detalhado do aluno EAD
+ */
+export function getEADStudentStatus(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null,
+  isCycleActive: boolean = true
 ): { 
-  isApproved: boolean; 
-  mostRecentAccess: string | null;
-  mostRecentAccessNumber: 1 | 2 | 3 | null;
-  totalAccesses: number;
+  status: 'frequente' | 'aprovado' | 'reprovado' | 'em_andamento';
+  color: string;
   message: string;
+  canCertify: boolean;
+  totalAccesses: number;
 } {
-  const dates = [
-    { number: 1, date: access_date_1 },
-    { number: 2, date: access_date_2 },
-    { number: 3, date: access_date_3 }
-  ].filter(d => d.date) as { number: 1 | 2 | 3; date: string }[];
+  const totalAccesses = [access_date_1, access_date_2, access_date_3].filter(Boolean).length;
   
-  const totalAccesses = dates.length;
-  const isApproved = totalAccesses > 0; // Aprovado se tiver pelo menos 1 acesso
-  
-  // Encontra o acesso mais recente
-  let mostRecentAccess = null;
-  let mostRecentAccessNumber = null;
-  
-  if (dates.length > 0) {
-    // Converte todas para ISO para comparação
-    const datesWithISO = dates.map(d => {
-      let isoDate = d.date;
-      if (d.date.includes('/')) {
-        const [day, month, year] = d.date.split('/');
-        isoDate = `${year}-${month}-${day}`;
-      } else {
-        isoDate = d.date.split('T')[0];
-      }
-      return { ...d, isoDate };
-    });
-    
-    // Ordena por data ISO (mais recente primeiro)
-    datesWithISO.sort((a, b) => b.isoDate.localeCompare(a.isoDate));
-    mostRecentAccess = datesWithISO[0].date;
-    mostRecentAccessNumber = datesWithISO[0].number;
+  // Se o ciclo ainda está ativo
+  if (isCycleActive) {
+    if (totalAccesses > 0) {
+      return {
+        status: 'frequente',
+        color: 'bg-blue-100 text-blue-800',
+        message: `Frequente (${totalAccesses}/3 acessos)`,
+        canCertify: false,
+        totalAccesses
+      };
+    } else {
+      return {
+        status: 'em_andamento',
+        color: 'bg-slate-100 text-slate-800',
+        message: 'Sem acessos',
+        canCertify: false,
+        totalAccesses
+      };
+    }
   }
   
-  let message = '';
-  if (isApproved) {
-    message = `✅ Aprovado - Último acesso: ${mostRecentAccessNumber}º em ${formatDateToDisplay(mostRecentAccess)}`;
+  // Se o ciclo está encerrado
+  if (totalAccesses === 3) {
+    return {
+      status: 'aprovado',
+      color: 'bg-green-100 text-green-800',
+      message: 'Aprovado - 3 acessos completos',
+      canCertify: true,
+      totalAccesses
+    };
   } else {
-    message = '⏳ Sem acessos registrados';
+    return {
+      status: 'reprovado',
+      color: 'bg-red-100 text-red-800',
+      message: `Reprovado - ${totalAccesses}/3 acessos`,
+      canCertify: false,
+      totalAccesses
+    };
   }
-  
-  return {
-    isApproved,
-    mostRecentAccess,
-    mostRecentAccessNumber,
-    totalAccesses,
-    message
-  };
 }
