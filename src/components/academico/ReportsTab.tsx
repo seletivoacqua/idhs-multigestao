@@ -31,7 +31,7 @@ interface Class {
   modality: string;
 }
 
-// Interface atualizada com SITUAÇÃO em vez de STATUS
+// Interface atualizada
 interface ReportData {
   unitName: string;
   studentName: string;
@@ -42,17 +42,11 @@ interface ReportData {
   modality: string;
   classesAttended: number;
   totalClassesConsidered: number;
-  accesses: string;
+  ultimoAcesso: string; // Apenas a data mais recente
   frequency: string;
   frequencyValue: number;
-  situacao: {
-    label: string;
-    color: string;
-    bgColor: string;
-    icon: string;
-  };
+  situacao: 'APROVADO' | 'INCOMPLETO';
   totalAccesses: number;
-  missingAccesses: number;
 }
 
 export function ReportsTab() {
@@ -76,11 +70,8 @@ export function ReportsTab() {
 
   const [stats, setStats] = useState({
     totalStudents: 0,
-    frequentes: 0,
     aprovados: 0,
-    reprovados: 0,
-    semAcessos: 0,
-    emAndamento: 0,
+    incompletos: 0,
   });
 
   // Função auxiliar para extrair data
@@ -89,64 +80,26 @@ export function ReportsTab() {
     return dateStr.split('T')[0];
   };
 
-  // Função para determinar a situação do aluno EAD
-  const getEADSituacao = (
-    totalAccesses: number,
-    cycleStatus: 'active' | 'closed',
-    cycleEndDate: string
-  ) => {
-    const today = new Date().toISOString().split('T')[0];
-    const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
-
-    // Se o ciclo ainda está ativo
-    if (isCycleActive) {
-      if (totalAccesses === 0) {
-        return {
-          label: 'Sem Acessos',
-          color: 'text-slate-700',
-          bgColor: 'bg-slate-100',
-          icon: '📝'
-        };
-      } else if (totalAccesses === 1) {
-        return {
-          label: '1º Acesso',
-          color: 'text-blue-700',
-          bgColor: 'bg-blue-100',
-          icon: '🔵'
-        };
-      } else if (totalAccesses === 2) {
-        return {
-          label: '2º Acesso',
-          color: 'text-indigo-700',
-          bgColor: 'bg-indigo-100',
-          icon: '🟣'
-        };
-      } else if (totalAccesses === 3) {
-        return {
-          label: '3º Acesso (Completo)',
-          color: 'text-green-700',
-          bgColor: 'bg-green-100',
-          icon: '✅'
-        };
-      }
+  // Função para formatar data no padrão brasileiro
+  const formatDateBR = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '-';
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('pt-BR');
+    } catch {
+      return '-';
     }
+  };
 
-    // Se o ciclo está encerrado
-    if (totalAccesses === 3) {
-      return {
-        label: 'Aprovado',
-        color: 'text-green-700',
-        bgColor: 'bg-green-100',
-        icon: '✅'
-      };
-    } else {
-      return {
-        label: `Reprovado (${totalAccesses}/3)`,
-        color: 'text-red-700',
-        bgColor: 'bg-red-100',
-        icon: '❌'
-      };
-    }
+  // Função para encontrar a data mais recente entre os acessos
+  const getMostRecentDate = (dates: (string | null)[]): string | null => {
+    const validDates = dates.filter(d => d !== null) as string[];
+    if (validDates.length === 0) return null;
+    
+    // Converte para Date e encontra a mais recente
+    const dateObjects = validDates.map(d => new Date(d));
+    const mostRecent = new Date(Math.max(...dateObjects.map(d => d.getTime())));
+    return mostRecent.toISOString().split('T')[0];
   };
 
   useEffect(() => {
@@ -292,24 +245,20 @@ export function ReportsTab() {
 
         let classesAttended = 0;
         let totalClassesConsidered = 0;
-        let accessesArray: string[] = [];
+        let ultimoAcesso = '-';
         let frequency = '';
         let frequencyValue = 0;
-        let situacao = {
-          label: '',
-          color: '',
-          bgColor: '',
-          icon: ''
-        };
+        let situacao: 'APROVADO' | 'INCOMPLETO' = 'INCOMPLETO';
         let totalAccesses = 0;
-        let missingAccesses = 0;
 
         const enrollmentDate = extractDatePart(cs.enrollment_date);
         const cycleStatus = cls.cycles?.status || 'active';
         const cycleEndDate = cls.cycles?.end_date || '';
+        const today = new Date().toISOString().split('T')[0];
+        const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
-          // Lógica para Videoconferência (mantida)
+          // Lógica para Videoconferência
           let attendanceQuery = supabase
             .from('attendance')
             .select('*')
@@ -340,28 +289,20 @@ export function ReportsTab() {
             : 0;
           frequency = `${frequencyValue.toFixed(1)}%`;
           
+          // Para videoconferência, considera a data da última presença
+          if (relevantAttendance.length > 0) {
+            const dates = relevantAttendance.map(a => a.class_date);
+            const mostRecent = getMostRecentDate(dates);
+            ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
+          }
+
           // Situação para Videoconferência
           if (totalClassesConsidered === 0) {
-            situacao = {
-              label: 'Sem Registro',
-              color: 'text-slate-700',
-              bgColor: 'bg-slate-100',
-              icon: '📝'
-            };
+            situacao = 'INCOMPLETO';
           } else if (frequencyValue >= 60) {
-            situacao = {
-              label: 'Frequente',
-              color: 'text-green-700',
-              bgColor: 'bg-green-100',
-              icon: '✅'
-            };
+            situacao = 'APROVADO';
           } else {
-            situacao = {
-              label: 'Ausente',
-              color: 'text-red-700',
-              bgColor: 'bg-red-100',
-              icon: '❌'
-            };
+            situacao = 'INCOMPLETO';
           }
 
         } else {
@@ -380,34 +321,41 @@ export function ReportsTab() {
           ];
 
           // Filtrar por período se necessário
+          let filteredAccesses = allAccesses.filter(date => date !== null) as string[];
+          
           if (filters.startDate || filters.endDate) {
             const start = filters.startDate ? new Date(filters.startDate) : null;
             const end = filters.endDate ? new Date(filters.endDate) : null;
 
-            accessesArray = allAccesses
-              .filter(date => date !== null)
-              .filter(date => {
-                const accessDate = new Date(date);
-                if (start && accessDate < start) return false;
-                if (end && accessDate > end) return false;
-                return true;
-              })
-              .map(date => new Date(date).toLocaleDateString('pt-BR'));
-          } else {
-            accessesArray = allAccesses
-              .filter(date => date !== null)
-              .map(date => new Date(date).toLocaleDateString('pt-BR'));
+            filteredAccesses = filteredAccesses.filter(date => {
+              const accessDate = new Date(date);
+              if (start && accessDate < start) return false;
+              if (end && accessDate > end) return false;
+              return true;
+            });
           }
 
-          totalAccesses = accessesArray.length;
-          missingAccesses = 3 - totalAccesses;
+          totalAccesses = filteredAccesses.length;
           classesAttended = totalAccesses;
           totalClassesConsidered = 3;
           frequencyValue = (totalAccesses / 3) * 100;
           frequency = `${frequencyValue.toFixed(1)}%`;
           
-          // Determinar situação com base na nova regra
-          situacao = getEADSituacao(totalAccesses, cycleStatus, cycleEndDate);
+          // Encontrar a data mais recente
+          if (filteredAccesses.length > 0) {
+            const mostRecent = getMostRecentDate(filteredAccesses);
+            ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
+          }
+
+          // Determinar situação: APROVADO ou INCOMPLETO
+          // No encerramento do ciclo, aprovado só com 3 acessos
+          if (!isCycleActive) {
+            // Ciclo encerrado
+            situacao = totalAccesses === 3 ? 'APROVADO' : 'INCOMPLETO';
+          } else {
+            // Ciclo ativo - sempre INCOMPLETO até ter 3 acessos E ciclo encerrar
+            situacao = 'INCOMPLETO';
+          }
         }
 
         allReportData.push({
@@ -420,36 +368,20 @@ export function ReportsTab() {
           modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
           classesAttended,
           totalClassesConsidered,
-          accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
+          ultimoAcesso,
           frequency,
           frequencyValue,
           situacao,
           totalAccesses,
-          missingAccesses,
         });
       }
     }
 
-    // Ordenar por situação e depois por nome
+    // Ordenar por situação (aprovados primeiro) e depois por nome
     allReportData.sort((a, b) => {
-      // Primeiro por status do ciclo (ativos primeiro)
-      if (a.cycleStatus !== b.cycleStatus) {
-        return a.cycleStatus === 'active' ? -1 : 1;
+      if (a.situacao !== b.situacao) {
+        return a.situacao === 'APROVADO' ? -1 : 1;
       }
-      // Depois por situação
-      const situacaoOrder = {
-        '✅': 1,
-        '🔵': 2,
-        '🟣': 3,
-        '📝': 4,
-        '❌': 5
-      };
-      const orderA = situacaoOrder[a.situacao.icon as keyof typeof situacaoOrder] || 99;
-      const orderB = situacaoOrder[b.situacao.icon as keyof typeof situacaoOrder] || 99;
-      if (orderA !== orderB) {
-        return orderA - orderB;
-      }
-      // Por fim por nome
       return a.studentName.localeCompare(b.studentName);
     });
 
@@ -458,11 +390,8 @@ export function ReportsTab() {
     // Calcular estatísticas
     const stats = {
       totalStudents: allReportData.length,
-      frequentes: allReportData.filter(d => d.situacao.icon === '✅' || d.situacao.icon === '🔵' || d.situacao.icon === '🟣').length,
-      aprovados: allReportData.filter(d => d.situacao.label === 'Aprovado').length,
-      reprovados: allReportData.filter(d => d.situacao.label.includes('Reprovado')).length,
-      semAcessos: allReportData.filter(d => d.situacao.label === 'Sem Acessos').length,
-      emAndamento: allReportData.filter(d => d.cycleStatus === 'active' && d.totalAccesses > 0 && d.totalAccesses < 3).length,
+      aprovados: allReportData.filter(d => d.situacao === 'APROVADO').length,
+      incompletos: allReportData.filter(d => d.situacao === 'INCOMPLETO').length,
     };
 
     setStats(stats);
@@ -477,7 +406,7 @@ export function ReportsTab() {
     if (reportData.length === 0) return;
 
     const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'STATUS CICLO', 'MODALIDADE', 
-      'AULAS/ACESSOS', 'TOTAL CONSIDERADO', 'DATAS', 'FREQUÊNCIA', 'SITUAÇÃO', 'DETALHES'];
+      'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQUÊNCIA', 'SITUAÇÃO'];
 
     const rows = reportData.map((row) => [
       row.unitName,
@@ -487,14 +416,10 @@ export function ReportsTab() {
       row.cycleName,
       row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
       row.modality,
-      row.classesAttended.toString(),
-      row.totalClassesConsidered.toString(),
-      row.accesses,
+      row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
+      row.ultimoAcesso,
       row.frequency,
-      `${row.situacao.icon} ${row.situacao.label}`,
-      row.modality.includes('EAD') && row.cycleStatus === 'active' 
-        ? `${row.totalAccesses}/3 acessos - Faltam ${row.missingAccesses}`
-        : '',
+      row.situacao,
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -538,7 +463,7 @@ export function ReportsTab() {
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       
-      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS', 'SITUAÇÃO'];
+      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'SITUAÇÃO'];
 
       headers.forEach(headerText => {
         const th = document.createElement('th');
@@ -567,7 +492,9 @@ export function ReportsTab() {
           row.cycleName,
           row.modality,
           row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
-          `${row.situacao.icon} ${row.situacao.label}`,
+          row.ultimoAcesso,
+          row.frequency,
+          row.situacao,
         ];
 
         cells.forEach((cellText, idx) => {
@@ -579,10 +506,11 @@ export function ReportsTab() {
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
           
           // Cor de fundo baseada na situação (última coluna)
-          if (idx === 6) {
-            td.style.backgroundColor = row.situacao.bgColor;
-            td.style.color = row.situacao.color;
+          if (idx === 8) {
+            td.style.backgroundColor = row.situacao === 'APROVADO' ? '#dcfce7' : '#fee2e2';
+            td.style.color = row.situacao === 'APROVADO' ? '#166534' : '#991b1b';
             td.style.fontWeight = 'bold';
+            td.style.textAlign = 'center';
           }
           
           tr.appendChild(td);
@@ -595,7 +523,7 @@ export function ReportsTab() {
       return tableElement;
     };
 
-    const rowsPerPage = 18;
+    const rowsPerPage = 15;
     const totalPages = Math.ceil(reportData.length / rowsPerPage);
 
     for (let page = 0; page < totalPages; page++) {
@@ -651,36 +579,28 @@ export function ReportsTab() {
       
       // Cards de estatísticas
       pdf.setFillColor(59, 130, 246);
-      pdf.roundedRect(margin, yPos, 35, 14, 2, 2, 'F');
+      pdf.roundedRect(margin, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Total', margin + 5, yPos + 5);
+      pdf.text('Total Alunos', margin + 5, yPos + 5);
       pdf.setFontSize(10);
       pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
       
       pdf.setFillColor(34, 197, 94);
-      pdf.roundedRect(margin + 45, yPos, 35, 14, 2, 2, 'F');
+      pdf.roundedRect(margin + 60, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Aprovados', margin + 48, yPos + 5);
+      pdf.text('Aprovados', margin + 65, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.aprovados.toString(), margin + 48, yPos + 11);
+      pdf.text(stats.aprovados.toString(), margin + 65, yPos + 11);
       
       pdf.setFillColor(239, 68, 68);
-      pdf.roundedRect(margin + 90, yPos, 35, 14, 2, 2, 'F');
+      pdf.roundedRect(margin + 120, yPos, 45, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Reprovados', margin + 93, yPos + 5);
+      pdf.text('Incompletos', margin + 125, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.reprovados.toString(), margin + 93, yPos + 11);
-
-      pdf.setFillColor(100, 116, 139);
-      pdf.roundedRect(margin + 135, yPos, 40, 14, 2, 2, 'F');
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(8);
-      pdf.text('Em Andamento', margin + 138, yPos + 5);
-      pdf.setFontSize(10);
-      pdf.text(stats.emAndamento.toString(), margin + 138, yPos + 11);
+      pdf.text(stats.incompletos.toString(), margin + 125, yPos + 11);
 
       yPos += 20;
 
@@ -725,6 +645,13 @@ export function ReportsTab() {
 
     pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
+
+  const aprovadosPercentage = stats.totalStudents > 0
+    ? (stats.aprovados / stats.totalStudents) * 100
+    : 0;
+  const incompletosPercentage = stats.totalStudents > 0
+    ? (stats.incompletos / stats.totalStudents) * 100
+    : 0;
 
   return (
     <div className="space-y-6" ref={reportRef}>
@@ -867,61 +794,63 @@ export function ReportsTab() {
       </div>
 
       {/* Cards de Estatísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
           <p className="text-2xl font-bold text-blue-700">{stats.totalStudents}</p>
         </div>
 
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-sm text-green-600 font-medium">Aprovados (EAD)</p>
+          <p className="text-sm text-green-600 font-medium">Aprovados</p>
           <p className="text-2xl font-bold text-green-700">{stats.aprovados}</p>
         </div>
 
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-sm text-red-600 font-medium">Reprovados (EAD)</p>
-          <p className="text-2xl font-bold text-red-700">{stats.reprovados}</p>
-        </div>
-
-        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
-          <p className="text-sm text-indigo-600 font-medium">Em Andamento</p>
-          <p className="text-2xl font-bold text-indigo-700">{stats.emAndamento}</p>
-        </div>
-
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-          <p className="text-sm text-slate-600 font-medium">Sem Acessos</p>
-          <p className="text-2xl font-bold text-slate-700">{stats.semAcessos}</p>
+          <p className="text-sm text-red-600 font-medium">Incompletos</p>
+          <p className="text-2xl font-bold text-red-700">{stats.incompletos}</p>
         </div>
       </div>
 
-      {/* Legenda de Situações */}
+      {/* Barra de distribuição */}
       <div className="bg-white border border-slate-200 rounded-lg p-4">
-        <h4 className="text-sm font-semibold text-slate-700 mb-2">Legenda de Situações - EAD</h4>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-green-100 rounded-full flex items-center justify-center text-green-700">✅</span>
-            <span className="text-slate-600">Aprovado (3 acessos) - Ciclo encerrado</span>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-medium text-slate-700">Distribuição</h4>
+          <div className="flex space-x-4 text-xs">
+            <span className="text-green-600 font-medium">Aprovados: {stats.aprovados} ({aprovadosPercentage.toFixed(1)}%)</span>
+            <span className="text-red-600 font-medium">Incompletos: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)</span>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-green-100 rounded-full flex items-center justify-center text-green-700">✅</span>
-            <span className="text-slate-600">3º Acesso - Ciclo ativo</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700">🟣</span>
-            <span className="text-slate-600">2º Acesso - Ciclo ativo</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-blue-100 rounded-full flex items-center justify-center text-blue-700">🔵</span>
-            <span className="text-slate-600">1º Acesso - Ciclo ativo</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-slate-100 rounded-full flex items-center justify-center text-slate-700">📝</span>
-            <span className="text-slate-600">Sem acessos - Ciclo ativo</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-4 h-4 bg-red-100 rounded-full flex items-center justify-center text-red-700">❌</span>
-            <span className="text-slate-600">Reprovado (menos de 3) - Ciclo encerrado</span>
-          </div>
+        </div>
+        
+        <div className="w-full h-10 bg-slate-200 rounded-lg overflow-hidden flex shadow-inner">
+          {stats.totalStudents > 0 ? (
+            <>
+              <div
+                className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
+                style={{ width: `${aprovadosPercentage}%` }}
+              >
+                {aprovadosPercentage > 8 && (
+                  <span className="drop-shadow-md">
+                    {aprovadosPercentage.toFixed(0)}%
+                  </span>
+                )}
+              </div>
+              
+              <div
+                className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
+                style={{ width: `${incompletosPercentage}%` }}
+              >
+                {incompletosPercentage > 8 && (
+                  <span className="drop-shadow-md">
+                    {incompletosPercentage.toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
+              {loading ? 'Carregando...' : 'Sem dados para exibir'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -953,7 +882,7 @@ export function ReportsTab() {
                   AULAS/ACESSOS
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  DATAS
+                  ÚLTIMO ACESSO
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
                   FREQ.
@@ -985,22 +914,18 @@ export function ReportsTab() {
                       ? `${row.totalAccesses}/3` 
                       : `${row.classesAttended}/${row.totalClassesConsidered}`}
                   </td>
-                  <td className="px-4 py-2 text-sm text-center text-slate-600 max-w-[200px] truncate" title={row.accesses}>
-                    {row.accesses}
+                  <td className="px-4 py-2 text-sm text-center text-slate-600">
+                    {row.ultimoAcesso}
                   </td>
                   <td className="px-4 py-2 text-sm text-center font-medium">{row.frequency}</td>
                   <td className="px-4 py-2 text-sm text-center">
-                    <div className="flex flex-col items-center">
-                      <span className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold ${row.situacao.bgColor} ${row.situacao.color}`}>
-                        <span>{row.situacao.icon}</span>
-                        <span>{row.situacao.label}</span>
-                      </span>
-                      {row.modality.includes('EAD') && row.cycleStatus === 'active' && row.missingAccesses > 0 && (
-                        <span className="text-xs text-amber-600 mt-1">
-                          Faltam {row.missingAccesses} acesso(s)
-                        </span>
-                      )}
-                    </div>
+                    <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
+                      row.situacao === 'APROVADO' 
+                        ? 'bg-green-500 text-white shadow-md' 
+                        : 'bg-red-500 text-white shadow-md'
+                    }`}>
+                      {row.situacao}
+                    </span>
                   </td>
                 </tr>
               ))}
