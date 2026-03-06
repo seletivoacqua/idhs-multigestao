@@ -2740,7 +2740,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement (MODIFICADO APENAS OS CAMPOS DE DATA)
+// COMPONENTE - EADAccessManagement (CORRIGIDO - ÚLTIMO ACESSO)
 // ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
@@ -2755,10 +2755,17 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   useEffect(() => {
     const initial: Record<string, any> = {};
     students.forEach((student: any) => {
+      // Converte as datas do banco (ISO) para o formato de exibição (DD/MM/AAAA)
       initial[student.student_id] = {
-        access_date_1: student.accessData?.access_date_1 || '',
-        access_date_2: student.accessData?.access_date_2 || '',
-        access_date_3: student.accessData?.access_date_3 || '',
+        access_date_1: student.accessData?.access_date_1 
+          ? formatDateForInput(student.accessData.access_date_1) 
+          : '',
+        access_date_2: student.accessData?.access_date_2 
+          ? formatDateForInput(student.accessData.access_date_2) 
+          : '',
+        access_date_3: student.accessData?.access_date_3 
+          ? formatDateForInput(student.accessData.access_date_3) 
+          : '',
       };
     });
     setAccessData(initial);
@@ -2804,6 +2811,36 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }
 
     return true;
+  };
+
+  // Função para encontrar o acesso mais recente
+  const getMostRecentAccess = (studentId: string) => {
+    const data = accessData[studentId];
+    if (!data) return null;
+    
+    const dates = [
+      { num: 1, date: data.access_date_1 },
+      { num: 2, date: data.access_date_2 },
+      { num: 3, date: data.access_date_3 }
+    ].filter(d => d.date);
+    
+    if (dates.length === 0) return null;
+    
+    // Converte para ISO para comparação
+    const datesWithISO = dates.map(d => {
+      let isoDate = d.date;
+      if (d.date.includes('/')) {
+        const [day, month, year] = d.date.split('/');
+        isoDate = `${year}-${month}-${day}`;
+      } else {
+        isoDate = d.date.split('T')[0];
+      }
+      return { ...d, isoDate };
+    });
+    
+    // Ordena por data (mais recente primeiro)
+    datesWithISO.sort((a, b) => b.isoDate.localeCompare(a.isoDate));
+    return datesWithISO[0];
   };
 
   const handleSaveAccess = async (studentId: string) => {
@@ -2928,15 +2965,26 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📌 Regra EAD:</strong> O aluno precisa realizar <strong>3 acessos</strong> para ser aprovado.
-          {classData.status === 'active' && (
-            <span className="block mt-1 text-blue-600">
-              Ciclo ativo: os acessos podem ser registrados a qualquer momento.
-            </span>
-          )}
+          <strong>📌 Regra EAD ATUALIZADA:</strong> O aluno é aprovado se tiver <strong>PELO MENOS UM ACESSO</strong> registrado.
+          O sistema considera o <strong>acesso mais recente</strong> como data de conclusão.
         </p>
+        {classData.status === 'active' && (
+          <span className="block mt-1 text-blue-600 text-sm">
+            Ciclo ativo: os acessos podem ser registrados a qualquer momento.
+          </span>
+        )}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <div className="flex items-center space-x-1">
+            <span className="w-3 h-3 bg-green-100 rounded-full"></span>
+            <span>✅ Aprovado (1+ acessos)</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <span className="w-3 h-3 bg-slate-100 rounded-full"></span>
+            <span>📝 Sem acessos</span>
+          </div>
+        </div>
         <p className="text-xs text-blue-600 mt-2">
-          Formato da data: <strong>DD/MM/AAAA</strong> (digite manualmente)
+          ⚠️ Formato da data: <strong>DD/MM/AAAA</strong> (digite manualmente)
         </p>
       </div>
 
@@ -2980,23 +3028,35 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filteredStudents.map((student: any) => {
-                const accessCount = [
-                  accessData[student.student_id]?.access_date_1,
-                  accessData[student.student_id]?.access_date_2,
-                  accessData[student.student_id]?.access_date_3
-                ].filter(Boolean).length;
+                const a1 = accessData[student.student_id]?.access_date_1;
+                const a2 = accessData[student.student_id]?.access_date_2;
+                const a3 = accessData[student.student_id]?.access_date_3;
+                
+                const dates = [
+                  { num: 1, date: a1 },
+                  { num: 2, date: a2 },
+                  { num: 3, date: a3 }
+                ].filter(d => d.date);
+                
+                const totalAccesses = dates.length;
+                const mostRecent = getMostRecentAccess(student.student_id);
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
                     <td className="px-6 py-4 text-sm text-slate-800">
-                      {student.students?.full_name || 'Nome não disponível'}
+                      <div className="font-medium">{student.students?.full_name || 'Nome não disponível'}</div>
+                      {student.enrollment_date && (
+                        <div className="text-xs text-slate-500 mt-1">
+                          Matrícula: {forceDateToDisplay(student.enrollment_date)}
+                        </div>
+                      )}
                     </td>
                     
                     {[1, 2, 3].map((num) => (
                       <td key={num} className="px-6 py-4">
                         <input
                           type="text"
-                          value={formatDateForInput(accessData[student.student_id]?.[`access_date_${num}`] || '')}
+                          value={accessData[student.student_id]?.[`access_date_${num}`] || ''}
                           onChange={(e) => {
                             const formatted = formatDateInput(e.target.value);
                             setAccessData({
@@ -3015,25 +3075,43 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                           }}
                           placeholder="DD/MM/AAAA"
                           maxLength={10}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
+                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm ${
+                            mostRecent?.num === num 
+                              ? 'border-green-500 bg-green-50' 
+                              : 'border-slate-300'
+                          }`}
+                          style={mostRecent?.num === num ? { borderWidth: '2px' } : {}}
                         />
+                        {mostRecent?.num === num && (
+                          <div className="text-xs text-green-600 mt-1 font-medium">
+                            ⭐ Último acesso
+                          </div>
+                        )}
                       </td>
                     ))}
                     
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        accessCount === 3
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {accessCount === 3 ? '✅ Aprovado' : `${accessCount}/3 acessos`}
-                      </span>
+                      <div className="flex flex-col space-y-2">
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                          totalAccesses > 0 ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-800'
+                        }`}>
+                          {totalAccesses > 0 ? '✅ Aprovado' : '📝 Aguardando'}
+                        </span>
+                        {mostRecent && (
+                          <div className="text-xs text-slate-600">
+                            <span className="font-medium">Último:</span> {mostRecent.num}º em {mostRecent.date}
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-500">
+                          Total: {totalAccesses}/3 acessos
+                        </div>
+                      </div>
                     </td>
                     
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleSaveAccess(student.student_id)}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm whitespace-nowrap"
                       >
                         Salvar
                       </button>
