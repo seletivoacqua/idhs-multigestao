@@ -247,34 +247,121 @@ export function formatDateObjectToInput(date: Date): string {
   return `${day}/${month}/${year}`;
 }
 
+// ===========================================
+// FUNÇÃO CORRIGIDA - EAD (ÚLTIMO ACESSO = MAIS RECENTE)
+// ===========================================
+
+/**
+ * Encontra a data mais recente entre os acessos
+ */
+export function getMostRecentAccessDate(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null
+): string | null {
+  const dates = [
+    access_date_1,
+    access_date_2, 
+    access_date_3
+  ].filter(Boolean) as string[];
+  
+  if (dates.length === 0) return null;
+  
+  // Converte todas para o formato YYYY-MM-DD para comparação
+  const datesISO = dates.map(d => {
+    // Se estiver no formato DD/MM/AAAA, converte para ISO
+    if (d.includes('/')) {
+      const [day, month, year] = d.split('/');
+      return `${year}-${month}-${day}`;
+    }
+    // Se já for ISO, extrai apenas a data
+    return d.split('T')[0];
+  });
+  
+  // Ordena e pega a mais recente (maior)
+  datesISO.sort();
+  const mostRecentISO = datesISO[datesISO.length - 1];
+  
+  // Retorna no formato original que estava armazenado
+  const index = datesISO.indexOf(mostRecentISO);
+  return dates[index];
+}
+
+/**
+ * Valida se o aluno está aprovado no EAD baseado no acesso mais recente
+ * @param access_date_1 - Data do primeiro acesso (opcional)
+ * @param access_date_2 - Data do segundo acesso (opcional) 
+ * @param access_date_3 - Data do terceiro acesso (opcional)
+ * @returns boolean - true se tiver pelo menos UM acesso (o mais recente é o que importa)
+ */
+export function validateEADAccess(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null
+): boolean {
+  // ✅ Aluno aprovado se tiver PELO MENOS UM ACESSO
+  // O acesso mais recente é o que indica a conclusão
+  const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
+  return dates.length > 0;
+}
+
+/**
+ * Função que retorna detalhes sobre os acessos, incluindo o mais recente
+ */
 export function getEADAccessStatus(
   access_date_1: string | null, 
   access_date_2: string | null, 
   access_date_3: string | null
 ): { 
   isApproved: boolean; 
-  lastAccessDate: string | null;
+  mostRecentAccess: string | null;
+  mostRecentAccessNumber: 1 | 2 | 3 | null;
   totalAccesses: number;
   message: string;
 } {
-  const totalAccesses = [access_date_1, access_date_2, access_date_3].filter(Boolean).length;
-  const lastAccessDate = access_date_3 || access_date_2 || access_date_1 || null;
-  const isApproved = !!access_date_3; // Aprovado apenas se tiver o 3º acesso
+  const dates = [
+    { number: 1, date: access_date_1 },
+    { number: 2, date: access_date_2 },
+    { number: 3, date: access_date_3 }
+  ].filter(d => d.date) as { number: 1 | 2 | 3; date: string }[];
+  
+  const totalAccesses = dates.length;
+  const isApproved = totalAccesses > 0; // Aprovado se tiver pelo menos 1 acesso
+  
+  // Encontra o acesso mais recente
+  let mostRecentAccess = null;
+  let mostRecentAccessNumber = null;
+  
+  if (dates.length > 0) {
+    // Converte todas para ISO para comparação
+    const datesWithISO = dates.map(d => {
+      let isoDate = d.date;
+      if (d.date.includes('/')) {
+        const [day, month, year] = d.date.split('/');
+        isoDate = `${year}-${month}-${day}`;
+      } else {
+        isoDate = d.date.split('T')[0];
+      }
+      return { ...d, isoDate };
+    });
+    
+    // Ordena por data ISO (mais recente primeiro)
+    datesWithISO.sort((a, b) => b.isoDate.localeCompare(a.isoDate));
+    mostRecentAccess = datesWithISO[0].date;
+    mostRecentAccessNumber = datesWithISO[0].number;
+  }
   
   let message = '';
   if (isApproved) {
-    message = '✅ Aprovado - Concluiu o curso';
-  } else if (access_date_2) {
-    message = '⏳ Em andamento - Falta o último acesso';
-  } else if (access_date_1) {
-    message = '⏳ Em andamento - Faltam 2 acessos';
+    message = `✅ Aprovado - Último acesso: ${mostRecentAccessNumber}º em ${formatDateToDisplay(mostRecentAccess)}`;
   } else {
     message = '⏳ Sem acessos registrados';
   }
   
   return {
     isApproved,
-    lastAccessDate,
+    mostRecentAccess,
+    mostRecentAccessNumber,
     totalAccesses,
     message
   };
