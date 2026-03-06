@@ -4,7 +4,18 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { CertificateModal } from './CertificateModal';
 import { CertificateModalEAD } from './CertificateModalEAD';
-import { formatDateToDisplay, forceDateToDisplay, formatDateToDatabase, extractDatePart, formatDateInput, isDateGreaterOrEqual } from '../../utils/dateUtils';
+import { 
+  formatDateToDisplay, 
+  forceDateToDisplay, 
+  formatDateToDatabase, 
+  extractDatePart, 
+  isDateGreaterOrEqual,
+  formatDateInput,
+  parseDateInput,
+  formatDateForInput,
+  isValidDate,
+  compareDates
+} from '../../utils/dateUtils';
 
 interface Cycle {
   id: string;
