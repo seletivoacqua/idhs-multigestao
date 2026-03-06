@@ -19,6 +19,7 @@ interface Cycle {
   name: string;
   start_date: string;
   end_date: string;
+  status: 'active' | 'closed';
 }
 
 interface Class {
@@ -30,19 +31,28 @@ interface Class {
   modality: string;
 }
 
+// Interface atualizada com SITUAÇÃO em vez de STATUS
 interface ReportData {
   unitName: string;
   studentName: string;
   studentCpf: string;
   className: string;
   cycleName: string;
+  cycleStatus: 'active' | 'closed';
   modality: string;
   classesAttended: number;
   totalClassesConsidered: number;
   accesses: string;
   frequency: string;
   frequencyValue: number;
-  status: 'Frequente' | 'Ausente';
+  situacao: {
+    label: string;
+    color: string;
+    bgColor: string;
+    icon: string;
+  };
+  totalAccesses: number;
+  missingAccesses: number;
 }
 
 export function ReportsTab() {
@@ -66,14 +76,77 @@ export function ReportsTab() {
 
   const [stats, setStats] = useState({
     totalStudents: 0,
-    presentCount: 0,
-    absentCount: 0,
+    frequentes: 0,
+    aprovados: 0,
+    reprovados: 0,
+    semAcessos: 0,
+    emAndamento: 0,
   });
 
   // Função auxiliar para extrair data
   const extractDatePart = (dateStr: string | null | undefined): string | null => {
     if (!dateStr) return null;
     return dateStr.split('T')[0];
+  };
+
+  // Função para determinar a situação do aluno EAD
+  const getEADSituacao = (
+    totalAccesses: number,
+    cycleStatus: 'active' | 'closed',
+    cycleEndDate: string
+  ) => {
+    const today = new Date().toISOString().split('T')[0];
+    const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+
+    // Se o ciclo ainda está ativo
+    if (isCycleActive) {
+      if (totalAccesses === 0) {
+        return {
+          label: 'Sem Acessos',
+          color: 'text-slate-700',
+          bgColor: 'bg-slate-100',
+          icon: '📝'
+        };
+      } else if (totalAccesses === 1) {
+        return {
+          label: '1º Acesso',
+          color: 'text-blue-700',
+          bgColor: 'bg-blue-100',
+          icon: '🔵'
+        };
+      } else if (totalAccesses === 2) {
+        return {
+          label: '2º Acesso',
+          color: 'text-indigo-700',
+          bgColor: 'bg-indigo-100',
+          icon: '🟣'
+        };
+      } else if (totalAccesses === 3) {
+        return {
+          label: '3º Acesso (Completo)',
+          color: 'text-green-700',
+          bgColor: 'bg-green-100',
+          icon: '✅'
+        };
+      }
+    }
+
+    // Se o ciclo está encerrado
+    if (totalAccesses === 3) {
+      return {
+        label: 'Aprovado',
+        color: 'text-green-700',
+        bgColor: 'bg-green-100',
+        icon: '✅'
+      };
+    } else {
+      return {
+        label: `Reprovado (${totalAccesses}/3)`,
+        color: 'text-red-700',
+        bgColor: 'bg-red-100',
+        icon: '❌'
+      };
+    }
   };
 
   useEffect(() => {
@@ -111,7 +184,7 @@ export function ReportsTab() {
 
     const { data, error } = await supabase
       .from('cycles')
-      .select('id, name, start_date, end_date')
+      .select('id, name, start_date, end_date, status')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -155,7 +228,8 @@ export function ReportsTab() {
           id,
           name,
           start_date,
-          end_date
+          end_date,
+          status
         )
       `);
 
@@ -204,7 +278,6 @@ export function ReportsTab() {
 
       for (const cs of classStudents) {
         if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
-
         if (filters.studentName && !cs.students?.full_name?.toLowerCase().includes(filters.studentName.toLowerCase())) continue;
 
         let unitName = 'Não informado';
@@ -222,19 +295,27 @@ export function ReportsTab() {
         let accessesArray: string[] = [];
         let frequency = '';
         let frequencyValue = 0;
-        let status: 'Frequente' | 'Ausente' = 'Ausente';
+        let situacao = {
+          label: '',
+          color: '',
+          bgColor: '',
+          icon: ''
+        };
+        let totalAccesses = 0;
+        let missingAccesses = 0;
 
         const enrollmentDate = extractDatePart(cs.enrollment_date);
+        const cycleStatus = cls.cycles?.status || 'active';
+        const cycleEndDate = cls.cycles?.end_date || '';
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
-          // 🔥 NOVO: Buscar attendance considerando matrícula excepcional
+          // Lógica para Videoconferência (mantida)
           let attendanceQuery = supabase
             .from('attendance')
             .select('*')
             .eq('class_id', cls.id)
             .eq('student_id', cs.student_id);
 
-          // Aplicar filtro de período se necessário
           if (filters.startDate) {
             attendanceQuery = attendanceQuery.gte('class_date', filters.startDate);
           }
@@ -244,30 +325,47 @@ export function ReportsTab() {
 
           const { data: attendanceData } = await attendanceQuery;
 
-          // Filtrar apenas aulas após a matrícula
           const relevantAttendance = attendanceData?.filter(att => {
             if (!enrollmentDate) return true;
             return extractDatePart(att.class_date) >= enrollmentDate;
           }) || [];
 
-          // Contar presenças
           classesAttended = relevantAttendance.filter(a => a.present).length;
           
-          // Total de aulas consideradas (após matrícula)
           const uniqueClasses = new Set(relevantAttendance.map(a => a.class_number));
           totalClassesConsidered = uniqueClasses.size;
 
-          // Calcular frequência baseada nas aulas consideradas
           frequencyValue = totalClassesConsidered > 0 
             ? (classesAttended / totalClassesConsidered) * 100 
             : 0;
           frequency = `${frequencyValue.toFixed(1)}%`;
           
-          // Status baseado na frequência
-          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+          // Situação para Videoconferência
+          if (totalClassesConsidered === 0) {
+            situacao = {
+              label: 'Sem Registro',
+              color: 'text-slate-700',
+              bgColor: 'bg-slate-100',
+              icon: '📝'
+            };
+          } else if (frequencyValue >= 60) {
+            situacao = {
+              label: 'Frequente',
+              color: 'text-green-700',
+              bgColor: 'bg-green-100',
+              icon: '✅'
+            };
+          } else {
+            situacao = {
+              label: 'Ausente',
+              color: 'text-red-700',
+              bgColor: 'bg-red-100',
+              icon: '❌'
+            };
+          }
 
         } else {
-          // EAD - manter como está
+          // EAD - NOVA LÓGICA
           const { data: accessData } = await supabase
             .from('ead_access')
             .select('*')
@@ -281,6 +379,7 @@ export function ReportsTab() {
             accessData?.access_date_3,
           ];
 
+          // Filtrar por período se necessário
           if (filters.startDate || filters.endDate) {
             const start = filters.startDate ? new Date(filters.startDate) : null;
             const end = filters.endDate ? new Date(filters.endDate) : null;
@@ -300,11 +399,15 @@ export function ReportsTab() {
               .map(date => new Date(date).toLocaleDateString('pt-BR'));
           }
 
-          classesAttended = accessesArray.length;
-          totalClassesConsidered = 3; // EAD sempre considera 3 acessos possíveis
-          frequencyValue = (classesAttended / 3) * 100;
+          totalAccesses = accessesArray.length;
+          missingAccesses = 3 - totalAccesses;
+          classesAttended = totalAccesses;
+          totalClassesConsidered = 3;
+          frequencyValue = (totalAccesses / 3) * 100;
           frequency = `${frequencyValue.toFixed(1)}%`;
-          status = frequencyValue >= 60 ? 'Frequente' : 'Ausente';
+          
+          // Determinar situação com base na nova regra
+          situacao = getEADSituacao(totalAccesses, cycleStatus, cycleEndDate);
         }
 
         allReportData.push({
@@ -313,36 +416,56 @@ export function ReportsTab() {
           studentCpf: cs.students?.cpf || '',
           className: cls.name,
           cycleName: cls.cycles?.name || 'Sem ciclo',
+          cycleStatus: cls.cycles?.status || 'active',
           modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
           classesAttended,
           totalClassesConsidered,
           accesses: accessesArray.length > 0 ? accessesArray.join(', ') : '-',
           frequency,
           frequencyValue,
-          status,
+          situacao,
+          totalAccesses,
+          missingAccesses,
         });
       }
     }
 
-    // Ordenar por status (frequentes primeiro) e depois por nome
+    // Ordenar por situação e depois por nome
     allReportData.sort((a, b) => {
-      if (a.status === b.status) {
-        return a.studentName.localeCompare(b.studentName);
+      // Primeiro por status do ciclo (ativos primeiro)
+      if (a.cycleStatus !== b.cycleStatus) {
+        return a.cycleStatus === 'active' ? -1 : 1;
       }
-      return a.status === 'Frequente' ? -1 : 1;
+      // Depois por situação
+      const situacaoOrder = {
+        '✅': 1,
+        '🔵': 2,
+        '🟣': 3,
+        '📝': 4,
+        '❌': 5
+      };
+      const orderA = situacaoOrder[a.situacao.icon as keyof typeof situacaoOrder] || 99;
+      const orderB = situacaoOrder[b.situacao.icon as keyof typeof situacaoOrder] || 99;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      // Por fim por nome
+      return a.studentName.localeCompare(b.studentName);
     });
 
     setReportData(allReportData);
 
-    const presentCount = allReportData.filter((d) => d.status === 'Frequente').length;
-    const absentCount = allReportData.filter((d) => d.status === 'Ausente').length;
-
-    setStats({
+    // Calcular estatísticas
+    const stats = {
       totalStudents: allReportData.length,
-      presentCount,
-      absentCount,
-    });
+      frequentes: allReportData.filter(d => d.situacao.icon === '✅' || d.situacao.icon === '🔵' || d.situacao.icon === '🟣').length,
+      aprovados: allReportData.filter(d => d.situacao.label === 'Aprovado').length,
+      reprovados: allReportData.filter(d => d.situacao.label.includes('Reprovado')).length,
+      semAcessos: allReportData.filter(d => d.situacao.label === 'Sem Acessos').length,
+      emAndamento: allReportData.filter(d => d.cycleStatus === 'active' && d.totalAccesses > 0 && d.totalAccesses < 3).length,
+    };
 
+    setStats(stats);
     setLoading(false);
   };
 
@@ -353,8 +476,8 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'MODALIDADE', 
-      'AULAS ASSISTIDAS', 'AULAS CONSIDERADAS', 'ACESSOS', 'FREQUÊNCIA', 'STATUS'];
+    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'STATUS CICLO', 'MODALIDADE', 
+      'AULAS/ACESSOS', 'TOTAL CONSIDERADO', 'DATAS', 'FREQUÊNCIA', 'SITUAÇÃO', 'DETALHES'];
 
     const rows = reportData.map((row) => [
       row.unitName,
@@ -362,12 +485,16 @@ export function ReportsTab() {
       row.studentCpf,
       row.className,
       row.cycleName,
+      row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado',
       row.modality,
       row.classesAttended.toString(),
       row.totalClassesConsidered.toString(),
       row.accesses,
       row.frequency,
-      row.status,
+      `${row.situacao.icon} ${row.situacao.label}`,
+      row.modality.includes('EAD') && row.cycleStatus === 'active' 
+        ? `${row.totalAccesses}/3 acessos - Faltam ${row.missingAccesses}`
+        : '',
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -400,13 +527,6 @@ export function ReportsTab() {
     const margin = 10;
     const contentWidth = pageWidth - 2 * margin;
 
-    const presentPercentage = stats.totalStudents > 0
-      ? (stats.presentCount / stats.totalStudents) * 100
-      : 0;
-    const absentPercentage = stats.totalStudents > 0
-      ? (stats.absentCount / stats.totalStudents) * 100
-      : 0;
-
     // Criar elemento para a tabela
     const createTableElement = (startRow: number, endRow: number) => {
       const tableElement = document.createElement('table');
@@ -418,7 +538,7 @@ export function ReportsTab() {
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       
-      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS', 'ACESSOS', 'FREQ.', 'STATUS'];
+      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS', 'SITUAÇÃO'];
 
       headers.forEach(headerText => {
         const th = document.createElement('th');
@@ -446,10 +566,8 @@ export function ReportsTab() {
           row.className,
           row.cycleName,
           row.modality,
-          row.classesAttended.toString(),
-          row.accesses,
-          row.frequency,
-          row.status,
+          row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
+          `${row.situacao.icon} ${row.situacao.label}`,
         ];
 
         cells.forEach((cellText, idx) => {
@@ -460,10 +578,10 @@ export function ReportsTab() {
           td.style.fontSize = '8px';
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
           
-          // Cor de fundo baseada no status
-          if (idx === 8) { // Coluna STATUS
-            td.style.backgroundColor = row.status === 'Frequente' ? '#dcfce7' : '#fee2e2';
-            td.style.color = row.status === 'Frequente' ? '#166534' : '#991b1b';
+          // Cor de fundo baseada na situação (última coluna)
+          if (idx === 6) {
+            td.style.backgroundColor = row.situacao.bgColor;
+            td.style.color = row.situacao.color;
             td.style.fontWeight = 'bold';
           }
           
@@ -509,7 +627,7 @@ export function ReportsTab() {
       const filterInfo: string[] = [];
       
       const selectedCycle = cycles.find(c => c.id === filters.cycleId);
-      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
+      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name} (${selectedCycle.status === 'active' ? 'Ativo' : 'Encerrado'})`);
       
       const selectedUnit = units.find(u => u.id === filters.unitId);
       if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
@@ -531,80 +649,42 @@ export function ReportsTab() {
 
       yPos += 8;
       
-      // Cards de estatísticas com cores
+      // Cards de estatísticas
       pdf.setFillColor(59, 130, 246);
-      pdf.roundedRect(margin, yPos, 45, 14, 2, 2, 'F');
+      pdf.roundedRect(margin, yPos, 35, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
       pdf.text('Total', margin + 5, yPos + 5);
       pdf.setFontSize(10);
       pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
       
-      pdf.setFillColor(34, 197, 94); // Verde para frequentes
-      pdf.roundedRect(margin + 55, yPos, 45, 14, 2, 2, 'F');
+      pdf.setFillColor(34, 197, 94);
+      pdf.roundedRect(margin + 45, yPos, 35, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Frequentes', margin + 60, yPos + 5);
+      pdf.text('Aprovados', margin + 48, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.presentCount.toString(), margin + 60, yPos + 11);
+      pdf.text(stats.aprovados.toString(), margin + 48, yPos + 11);
       
-      pdf.setFillColor(239, 68, 68); // Vermelho para ausentes
-      pdf.roundedRect(margin + 110, yPos, 45, 14, 2, 2, 'F');
+      pdf.setFillColor(239, 68, 68);
+      pdf.roundedRect(margin + 90, yPos, 35, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Ausentes', margin + 115, yPos + 5);
+      pdf.text('Reprovados', margin + 93, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.absentCount.toString(), margin + 115, yPos + 11);
+      pdf.text(stats.reprovados.toString(), margin + 93, yPos + 11);
+
+      pdf.setFillColor(100, 116, 139);
+      pdf.roundedRect(margin + 135, yPos, 40, 14, 2, 2, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text('Em Andamento', margin + 138, yPos + 5);
+      pdf.setFontSize(10);
+      pdf.text(stats.emAndamento.toString(), margin + 138, yPos + 11);
 
       yPos += 20;
-      
-      // Barra de distribuição
-      pdf.setFontSize(9);
-      pdf.setFont('helvetica', 'bold');
-      pdf.setTextColor(30, 41, 59);
-      pdf.text('DISTRIBUIÇÃO DE FREQUÊNCIA', margin, yPos);
-      
-      pdf.setFontSize(8);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setTextColor(34, 197, 94);
-      pdf.text(`Frequentes: ${stats.presentCount} (${presentPercentage.toFixed(1)}%)`, margin, yPos + 4);
-      
-      pdf.setTextColor(239, 68, 68);
-      pdf.text(`Ausentes: ${stats.absentCount} (${absentPercentage.toFixed(1)}%)`, margin + 80, yPos + 4);
-      
-      yPos += 8;
-      const barHeight = 10;
-      pdf.setFillColor(226, 232, 240);
-      pdf.roundedRect(margin, yPos, contentWidth, barHeight, 3, 3, 'F');
-      
-      if (stats.totalStudents > 0) {
-        const presentWidth = (presentPercentage / 100) * contentWidth;
-        const absentWidth = (absentPercentage / 100) * contentWidth;
-        
-        if (presentWidth > 0) {
-          pdf.setFillColor(34, 197, 94);
-          pdf.roundedRect(margin, yPos, presentWidth, barHeight, 3, 3, 'F');
-          
-          if (presentWidth > 20) {
-            pdf.setTextColor(255, 255, 255);
-            pdf.setFontSize(7);
-            pdf.text(`${presentPercentage.toFixed(0)}%`, margin + 5, yPos + 7);
-          }
-        }
-        
-        if (absentWidth > 0) {
-          pdf.setFillColor(239, 68, 68);
-          pdf.roundedRect(margin + presentWidth, yPos, absentWidth, barHeight, 3, 3, 'F');
-          
-          if (absentWidth > 20) {
-            pdf.setTextColor(255, 255, 255);
-            pdf.setFontSize(7);
-            pdf.text(`${absentPercentage.toFixed(0)}%`, margin + presentWidth + 5, yPos + 7);
-          }
-        }
-      }
 
-      const tableStartY = yPos + barHeight + 10;
+      const tableStartY = yPos;
       const startRow = page * rowsPerPage;
       const endRow = Math.min(startRow + rowsPerPage, reportData.length);
       
@@ -645,13 +725,6 @@ export function ReportsTab() {
 
     pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
-
-  const presentPercentage = stats.totalStudents > 0
-    ? (stats.presentCount / stats.totalStudents) * 100
-    : 0;
-  const absentPercentage = stats.totalStudents > 0
-    ? (stats.absentCount / stats.totalStudents) * 100
-    : 0;
 
   return (
     <div className="space-y-6" ref={reportRef}>
@@ -709,7 +782,7 @@ export function ReportsTab() {
               <option value="">Todos os ciclos</option>
               {cycles.map((cycle) => (
                 <option key={cycle.id} value={cycle.id}>
-                  {cycle.name}
+                  {cycle.name} - {cycle.status === 'active' ? 'Ativo' : 'Encerrado'}
                 </option>
               ))}
             </select>
@@ -793,76 +866,66 @@ export function ReportsTab() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-6">
-        <h3 className="font-semibold text-slate-800 mb-4">Resumo Estatístico</h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
-            <p className="text-2xl font-bold text-blue-700">{stats.totalStudents}</p>
-          </div>
-
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-sm text-green-600 font-medium">Frequentes (≥60%)</p>
-            <p className="text-2xl font-bold text-green-700">{stats.presentCount}</p>
-          </div>
-
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <p className="text-sm text-red-600 font-medium">Ausentes (&lt;60%)</p>
-            <p className="text-2xl font-bold text-red-700">{stats.absentCount}</p>
-          </div>
+      {/* Cards de Estatísticas */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
+          <p className="text-2xl font-bold text-blue-700">{stats.totalStudents}</p>
         </div>
 
-        {/* Barra de distribuição com cores */}
-        <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium text-slate-700">Distribuição de Frequência</h4>
-            <div className="flex space-x-4 text-xs">
-              <span className="text-green-600 font-medium">Frequentes: {stats.presentCount} ({presentPercentage.toFixed(1)}%)</span>
-              <span className="text-red-600 font-medium">Ausentes: {stats.absentCount} ({absentPercentage.toFixed(1)}%)</span>
-            </div>
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+          <p className="text-sm text-green-600 font-medium">Aprovados (EAD)</p>
+          <p className="text-2xl font-bold text-green-700">{stats.aprovados}</p>
+        </div>
+
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="text-sm text-red-600 font-medium">Reprovados (EAD)</p>
+          <p className="text-2xl font-bold text-red-700">{stats.reprovados}</p>
+        </div>
+
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+          <p className="text-sm text-indigo-600 font-medium">Em Andamento</p>
+          <p className="text-2xl font-bold text-indigo-700">{stats.emAndamento}</p>
+        </div>
+
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+          <p className="text-sm text-slate-600 font-medium">Sem Acessos</p>
+          <p className="text-2xl font-bold text-slate-700">{stats.semAcessos}</p>
+        </div>
+      </div>
+
+      {/* Legenda de Situações */}
+      <div className="bg-white border border-slate-200 rounded-lg p-4">
+        <h4 className="text-sm font-semibold text-slate-700 mb-2">Legenda de Situações - EAD</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-green-100 rounded-full flex items-center justify-center text-green-700">✅</span>
+            <span className="text-slate-600">Aprovado (3 acessos) - Ciclo encerrado</span>
           </div>
-          
-          <div className="w-full h-10 bg-slate-200 rounded-lg overflow-hidden flex shadow-inner">
-            {stats.totalStudents > 0 ? (
-              <>
-                <div
-                  className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
-                  style={{ width: `${presentPercentage}%` }}
-                >
-                  {presentPercentage > 8 && (
-                    <span className="drop-shadow-md">
-                      {presentPercentage.toFixed(0)}%
-                    </span>
-                  )}
-                </div>
-                
-                <div
-                  className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
-                  style={{ width: `${absentPercentage}%` }}
-                >
-                  {absentPercentage > 8 && (
-                    <span className="drop-shadow-md">
-                      {absentPercentage.toFixed(0)}%
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-sm text-slate-500">
-                {loading ? 'Carregando...' : 'Sem dados para exibir'}
-              </div>
-            )}
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-green-100 rounded-full flex items-center justify-center text-green-700">✅</span>
+            <span className="text-slate-600">3º Acesso - Ciclo ativo</span>
           </div>
-          
-          <div className="flex justify-between mt-1 text-xs text-slate-400">
-            <span>0%</span>
-            <span>50%</span>
-            <span>100%</span>
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700">🟣</span>
+            <span className="text-slate-600">2º Acesso - Ciclo ativo</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-blue-100 rounded-full flex items-center justify-center text-blue-700">🔵</span>
+            <span className="text-slate-600">1º Acesso - Ciclo ativo</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-slate-100 rounded-full flex items-center justify-center text-slate-700">📝</span>
+            <span className="text-slate-600">Sem acessos - Ciclo ativo</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="w-4 h-4 bg-red-100 rounded-full flex items-center justify-center text-red-700">❌</span>
+            <span className="text-slate-600">Reprovado (menos de 3) - Ciclo encerrado</span>
           </div>
         </div>
       </div>
 
+      {/* Tabela de Resultados */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -881,19 +944,22 @@ export function ReportsTab() {
                   CICLO
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                  STATUS CICLO
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
                   MODALIDADE
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  AULAS
+                  AULAS/ACESSOS
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  ACESSOS
+                  DATAS
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
                   FREQ.
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  STATUS
+                  SITUAÇÃO
                 </th>
               </tr>
             </thead>
@@ -904,24 +970,43 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm font-medium text-slate-800">{row.studentName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                      row.cycleStatus === 'active' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {row.cycleStatus === 'active' ? 'Ativo' : 'Encerrado'}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
-                  <td className="px-4 py-2 text-sm text-center text-slate-700">{row.classesAttended}</td>
-                  <td className="px-4 py-2 text-sm text-center text-slate-700">{row.accesses}</td>
+                  <td className="px-4 py-2 text-sm text-center font-medium">
+                    {row.modality.includes('EAD') 
+                      ? `${row.totalAccesses}/3` 
+                      : `${row.classesAttended}/${row.totalClassesConsidered}`}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center text-slate-600 max-w-[200px] truncate" title={row.accesses}>
+                    {row.accesses}
+                  </td>
                   <td className="px-4 py-2 text-sm text-center font-medium">{row.frequency}</td>
                   <td className="px-4 py-2 text-sm text-center">
-                    <span className={`inline-flex px-3 py-1 text-xs font-bold rounded-full ${
-                      row.status === 'Frequente' 
-                        ? 'bg-green-500 text-white shadow-md' 
-                        : 'bg-red-500 text-white shadow-md'
-                    }`}>
-                      {row.status}
-                    </span>
+                    <div className="flex flex-col items-center">
+                      <span className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold ${row.situacao.bgColor} ${row.situacao.color}`}>
+                        <span>{row.situacao.icon}</span>
+                        <span>{row.situacao.label}</span>
+                      </span>
+                      {row.modality.includes('EAD') && row.cycleStatus === 'active' && row.missingAccesses > 0 && (
+                        <span className="text-xs text-amber-600 mt-1">
+                          Faltam {row.missingAccesses} acesso(s)
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
               {reportData.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
