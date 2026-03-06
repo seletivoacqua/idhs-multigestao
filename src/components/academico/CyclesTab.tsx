@@ -135,9 +135,6 @@ async function calculateAttendancePercentage(
   };
 }
 
-// ===========================================
-// FUNÇÃO CORRIGIDA - ATUALIZAR STATUS
-// ===========================================
 async function updateStudentStatusOnClose(
   classId: string, 
   studentId: string, 
@@ -193,6 +190,7 @@ async function updateStudentStatusOnClose(
       isApproved = percentage >= 60;
       
     } else {
+      // EAD: Busca os acessos do aluno
       const { data: accessData } = await supabase
         .from('ead_access')
         .select('*')
@@ -200,14 +198,21 @@ async function updateStudentStatusOnClose(
         .eq('student_id', studentId)
         .single();
 
-      const accessCount = [
-    accessData?.access_date_1,
-    accessData?.access_date_2,
-    accessData?.access_date_3
-  ].filter(Boolean).length;
-  
-  isApproved = accessCount > 0; // ✅ Aprovado se tiver PELO MENOS 1 acesso
-}
+      // ✅ REGRA DE ENCERRAMENTO: Aprovado apenas com os 3 ACESSOS
+      const hasAccess1 = !!accessData?.access_date_1;
+      const hasAccess2 = !!accessData?.access_date_2;
+      const hasAccess3 = !!accessData?.access_date_3;
+      
+      isApproved = hasAccess1 && hasAccess2 && hasAccess3;
+
+      console.log(`Aluno ${studentId}:`, {
+        acesso1: hasAccess1,
+        acesso2: hasAccess2, 
+        acesso3: hasAccess3,
+        aprovado: isApproved
+      });
+    }
+    
     currentStatus = isApproved ? 'aprovado' : 'reprovado';
 
     await supabase
@@ -237,22 +242,6 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       .eq('id', classId)
       .single();
 
-    const { data: attendanceData } = await supabase
-      .from('attendance')
-      .select('class_number')
-      .eq('class_id', classId);
-
-    const uniqueClasses = [...new Set(attendanceData?.map(a => a.class_number) || [])];
-    const totalClassesGiven = uniqueClasses.length;
-
-    if (totalClassesGiven < classData.total_classes) {
-      const confirm = window.confirm(
-        `Atenção: Foram dadas apenas ${totalClassesGiven} de ${classData.total_classes} aulas. ` +
-        `Deseja encerrar mesmo assim? Os alunos serão avaliados com base nas aulas realizadas.`
-      );
-      if (!confirm) return;
-    }
-
     const { data: students } = await supabase
       .from('class_students')
       .select('student_id, enrollment_date, enrollment_type')
@@ -260,8 +249,33 @@ async function updateAllStudentsStatusOnClose(classId: string) {
 
     if (!students) return;
 
+    let aprovados = 0;
+    let reprovados = 0;
+    const detalhes: string[] = [];
+
     for (const student of students) {
-      await updateStudentStatusOnClose(classId, student.student_id, classData, student);
+      const status = await updateStudentStatusOnClose(classId, student.student_id, classData, student);
+      
+      if (classData.modality === 'EAD') {
+        // Busca os acessos para mostrar no resumo
+        const { data: accessData } = await supabase
+          .from('ead_access')
+          .select('*')
+          .eq('class_id', classId)
+          .eq('student_id', student.student_id)
+          .single();
+          
+        const totalAccesses = [
+          accessData?.access_date_1,
+          accessData?.access_date_2,
+          accessData?.access_date_3
+        ].filter(Boolean).length;
+        
+        detalhes.push(`${student.student_id}: ${totalAccesses}/3 acessos`);
+      }
+      
+      if (status === 'aprovado') aprovados++;
+      if (status === 'reprovado') reprovados++;
     }
 
     await supabase
@@ -269,7 +283,19 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       .update({ status: 'closed' })
       .eq('id', classId);
 
-    alert('Turma encerrada e status dos alunos atualizados!');
+    // Mensagem personalizada para EAD
+    if (classData.modality === 'EAD') {
+      alert(`✅ Turma EAD encerrada!\n\n` +
+            `📊 RESULTADO FINAL:\n` +
+            `✅ Aprovados: ${aprovados} alunos (3 acessos completos)\n` +
+            `❌ Reprovados: ${reprovados} alunos (menos de 3 acessos)\n\n` +
+            `📋 Detalhamento:\n${detalhes.join('\n')}`);
+    } else {
+      alert(`✅ Turma de Videoconferência encerrada!\n\n` +
+            `📊 RESULTADO FINAL:\n` +
+            `✅ Aprovados: ${aprovados} alunos (frequência ≥ 60%)\n` +
+            `❌ Reprovados: ${reprovados} alunos (frequência < 60%)`);
+    }
     
   } catch (error) {
     console.error('Error updating all students status:', error);
@@ -2740,13 +2766,14 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement (CORRIGIDO - ÚLTIMO ACESSO)
+// COMPONENTE - EADAccessManagement (REGRAS ATUALIZADAS)
 // ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
+  const [cycleStatus, setCycleStatus] = useState<string>('');
 
   useEffect(() => {
     loadCycleDates();
@@ -2755,7 +2782,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   useEffect(() => {
     const initial: Record<string, any> = {};
     students.forEach((student: any) => {
-      // Converte as datas do banco (ISO) para o formato de exibição (DD/MM/AAAA)
       initial[student.student_id] = {
         access_date_1: student.accessData?.access_date_1 
           ? formatDateForInput(student.accessData.access_date_1) 
@@ -2775,29 +2801,31 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     try {
       const { data } = await supabase
         .from('cycles')
-        .select('start_date, end_date')
+        .select('start_date, end_date, status')
         .eq('id', classData.cycle_id)
         .single();
 
       if (data) {
         setCycleStartDate(data.start_date);
         setCycleEndDate(data.end_date);
+        setCycleStatus(data.status);
       }
     } catch (error) {
       console.error('Erro ao carregar datas do ciclo:', error);
     }
   };
 
+  const today = new Date().toISOString().split('T')[0];
+  const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+
   const validateAccessDate = (date: string): boolean => {
     if (!date) return true;
     
-    // Valida se a data está no formato DD/MM/AAAA e é válida
     if (!isValidDate(date)) {
       alert(`Data de acesso inválida: ${date}. Use o formato DD/MM/AAAA`);
       return false;
     }
     
-    // Converte para ISO para comparar com as datas do ciclo
     const dateISO = parseDateInput(date);
     
     if (cycleStartDate && dateISO < cycleStartDate) {
@@ -2813,36 +2841,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     return true;
   };
 
-  // Função para encontrar o acesso mais recente
-  const getMostRecentAccess = (studentId: string) => {
-    const data = accessData[studentId];
-    if (!data) return null;
-    
-    const dates = [
-      { num: 1, date: data.access_date_1 },
-      { num: 2, date: data.access_date_2 },
-      { num: 3, date: data.access_date_3 }
-    ].filter(d => d.date);
-    
-    if (dates.length === 0) return null;
-    
-    // Converte para ISO para comparação
-    const datesWithISO = dates.map(d => {
-      let isoDate = d.date;
-      if (d.date.includes('/')) {
-        const [day, month, year] = d.date.split('/');
-        isoDate = `${year}-${month}-${day}`;
-      } else {
-        isoDate = d.date.split('T')[0];
-      }
-      return { ...d, isoDate };
-    });
-    
-    // Ordena por data (mais recente primeiro)
-    datesWithISO.sort((a, b) => b.isoDate.localeCompare(a.isoDate));
-    return datesWithISO[0];
-  };
-
   const handleSaveAccess = async (studentId: string) => {
     const data = accessData[studentId];
 
@@ -2852,7 +2850,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }
 
     try {
-      // Converte as datas para ISO antes de salvar no banco
       const accessDataISO = {
         access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
         access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
@@ -2910,7 +2907,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         }
 
         try {
-          // Converte as datas para ISO antes de salvar
           const accessDataISO = {
             access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
             access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
@@ -2965,22 +2961,32 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📌 Regra EAD ATUALIZADA:</strong> O aluno é aprovado se tiver <strong>PELO MENOS UM ACESSO</strong> registrado.
-          O sistema considera o <strong>acesso mais recente</strong> como data de conclusão.
+          <strong>📌 REGRAS EAD:</strong>
         </p>
-        {classData.status === 'active' && (
-          <span className="block mt-1 text-blue-600 text-sm">
-            Ciclo ativo: os acessos podem ser registrados a qualquer momento.
-          </span>
-        )}
+        <ul className="list-disc list-inside text-sm text-blue-700 mt-2 space-y-1">
+          <li>
+            <span className="font-medium">Durante o ciclo:</span> Aluno é considerado <strong>FREQUENTE</strong> com pelo menos 1 acesso
+          </li>
+          <li>
+            <span className="font-medium">No encerramento:</span> Aluno será <strong>APROVADO</strong> apenas com os <strong>3 ACESSOS COMPLETOS</strong>
+          </li>
+        </ul>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div className="flex items-center space-x-1">
+            <span className="w-3 h-3 bg-blue-100 rounded-full"></span>
+            <span>🔵 Frequente (1-2 acessos)</span>
+          </div>
+          <div className="flex items-center space-x-1">
             <span className="w-3 h-3 bg-green-100 rounded-full"></span>
-            <span>✅ Aprovado (1+ acessos)</span>
+            <span>✅ Aprovado (3 acessos) - só no fim</span>
           </div>
           <div className="flex items-center space-x-1">
             <span className="w-3 h-3 bg-slate-100 rounded-full"></span>
-            <span>📝 Sem acessos</span>
+            <span>⚪ Sem acessos</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <span className="w-3 h-3 bg-red-100 rounded-full"></span>
+            <span>❌ Reprovado (fim do ciclo sem 3 acessos)</span>
           </div>
         </div>
         <p className="text-xs text-blue-600 mt-2">
@@ -3032,14 +3038,40 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                 const a2 = accessData[student.student_id]?.access_date_2;
                 const a3 = accessData[student.student_id]?.access_date_3;
                 
-                const dates = [
-                  { num: 1, date: a1 },
-                  { num: 2, date: a2 },
-                  { num: 3, date: a3 }
-                ].filter(d => d.date);
-                
-                const totalAccesses = dates.length;
-                const mostRecent = getMostRecentAccess(student.student_id);
+                const totalAccesses = [a1, a2, a3].filter(Boolean).length;
+
+                // Define o status baseado na fase do ciclo
+                let statusBadge = {
+                  color: 'bg-slate-100 text-slate-800',
+                  text: 'Sem acessos',
+                  icon: '📝'
+                };
+
+                if (totalAccesses > 0) {
+                  if (isCycleActive) {
+                    // Durante o ciclo: status é "Frequente"
+                    statusBadge = {
+                      color: 'bg-blue-100 text-blue-800',
+                      text: `Frequente (${totalAccesses}/3)`,
+                      icon: '🔵'
+                    };
+                  } else {
+                    // Ciclo encerrado: aprovado só com 3 acessos
+                    if (totalAccesses === 3) {
+                      statusBadge = {
+                        color: 'bg-green-100 text-green-800',
+                        text: 'Aprovado',
+                        icon: '✅'
+                      };
+                    } else {
+                      statusBadge = {
+                        color: 'bg-red-100 text-red-800',
+                        text: `Reprovado (${totalAccesses}/3)`,
+                        icon: '❌'
+                      };
+                    }
+                  }
+                }
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
@@ -3068,52 +3100,49 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                             });
                           }}
                           onBlur={(e) => {
-                            // Valida a data quando o campo perde o foco
                             if (e.target.value && !isValidDate(e.target.value)) {
                               alert(`Data inválida: ${e.target.value}. Use o formato DD/MM/AAAA`);
                             }
                           }}
                           placeholder="DD/MM/AAAA"
                           maxLength={10}
+                          disabled={!isCycleActive} // Desabilita edição se ciclo estiver encerrado
                           className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm ${
-                            mostRecent?.num === num 
-                              ? 'border-green-500 bg-green-50' 
-                              : 'border-slate-300'
+                            !isCycleActive ? 'bg-slate-100 cursor-not-allowed' : ''
                           }`}
-                          style={mostRecent?.num === num ? { borderWidth: '2px' } : {}}
                         />
-                        {mostRecent?.num === num && (
-                          <div className="text-xs text-green-600 mt-1 font-medium">
-                            ⭐ Último acesso
-                          </div>
-                        )}
                       </td>
                     ))}
                     
                     <td className="px-6 py-4">
                       <div className="flex flex-col space-y-2">
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                          totalAccesses > 0 ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-800'
-                        }`}>
-                          {totalAccesses > 0 ? '✅ Aprovado' : '📝 Aguardando'}
+                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusBadge.color}`}>
+                          {statusBadge.icon} {statusBadge.text}
                         </span>
-                        {mostRecent && (
-                          <div className="text-xs text-slate-600">
-                            <span className="font-medium">Último:</span> {mostRecent.num}º em {mostRecent.date}
-                          </div>
+                        {!isCycleActive && totalAccesses === 3 && (
+                          <span className="text-xs text-green-600 font-medium">
+                            ✅ Pode emitir certificado
+                          </span>
                         )}
-                        <div className="text-xs text-slate-500">
-                          Total: {totalAccesses}/3 acessos
-                        </div>
+                        {!isCycleActive && totalAccesses > 0 && totalAccesses < 3 && (
+                          <span className="text-xs text-red-600 font-medium">
+                            ❌ Faltam {3 - totalAccesses} acesso(s)
+                          </span>
+                        )}
                       </div>
                     </td>
                     
                     <td className="px-6 py-4">
                       <button
                         onClick={() => handleSaveAccess(student.student_id)}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm whitespace-nowrap"
+                        disabled={!isCycleActive}
+                        className={`px-4 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
+                          isCycleActive 
+                            ? 'bg-green-600 hover:bg-green-700' 
+                            : 'bg-slate-400 cursor-not-allowed'
+                        }`}
                       >
-                        Salvar
+                        {isCycleActive ? 'Salvar' : 'Ciclo encerrado'}
                       </button>
                     </td>
                   </tr>
