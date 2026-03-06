@@ -246,3 +246,36 @@ export function formatDateObjectToInput(date: Date): string {
   
   return `${day}/${month}/${year}`;
 }
+
+export function getEADAccessStatus(
+  access_date_1: string | null, 
+  access_date_2: string | null, 
+  access_date_3: string | null
+): { 
+  isApproved: boolean; 
+  lastAccessDate: string | null;
+  totalAccesses: number;
+  message: string;
+} {
+  const totalAccesses = [access_date_1, access_date_2, access_date_3].filter(Boolean).length;
+  const lastAccessDate = access_date_3 || access_date_2 || access_date_1 || null;
+  const isApproved = !!access_date_3; // Aprovado apenas se tiver o 3º acesso
+  
+  let message = '';
+  if (isApproved) {
+    message = '✅ Aprovado - Concluiu o curso';
+  } else if (access_date_2) {
+    message = '⏳ Em andamento - Falta o último acesso';
+  } else if (access_date_1) {
+    message = '⏳ Em andamento - Faltam 2 acessos';
+  } else {
+    message = '⏳ Sem acessos registrados';
+  }
+  
+  return {
+    isApproved,
+    lastAccessDate,
+    totalAccesses,
+    message
+  };
+}
