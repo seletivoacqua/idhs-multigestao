@@ -2766,7 +2766,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement (COM CHECKBOX MANUAL DE PRESENÇA)
+// COMPONENTE - EADAccessManagement (CHECKBOX INDIVIDUAL DE FREQUÊNCIA)
 // ===========================================
 function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [accessData, setAccessData] = useState<Record<string, any>>({});
@@ -2774,19 +2774,19 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [cycleStatus, setCycleStatus] = useState<string>('');
-  const [showAttendanceModal, setShowAttendanceModal] = useState(false);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [attendanceRecords, setAttendanceRecords] = useState<Record<string, boolean>>({});
-  const [currentAttendanceDate, setCurrentAttendanceDate] = useState<string>('');
+  const [frequenciaManual, setFrequenciaManual] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadCycleDates();
   }, [classData.cycle_id]);
 
   useEffect(() => {
-    const initial: Record<string, any> = {};
+    const initialAccess: Record<string, any> = {};
+    const initialFrequencia: Record<string, boolean> = {};
+    
     students.forEach((student: any) => {
-      initial[student.student_id] = {
+      // Dados de acesso
+      initialAccess[student.student_id] = {
         access_date_1: student.accessData?.access_date_1 
           ? formatDateForInput(student.accessData.access_date_1) 
           : '',
@@ -2797,8 +2797,19 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
           ? formatDateForInput(student.accessData.access_date_3) 
           : '',
       };
+      
+      // Frequência manual baseada nos acessos existentes
+      // Se tiver pelo menos 1 acesso, considera frequente
+      const hasAccess = !!(
+        student.accessData?.access_date_1 ||
+        student.accessData?.access_date_2 ||
+        student.accessData?.access_date_3
+      );
+      initialFrequencia[student.student_id] = hasAccess;
     });
-    setAccessData(initial);
+    
+    setAccessData(initialAccess);
+    setFrequenciaManual(initialFrequencia);
   }, [students]);
 
   const loadCycleDates = async () => {
@@ -2845,146 +2856,12 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     return true;
   };
 
-  // Função para abrir o modal de presença manual
-  const handleOpenAttendanceModal = () => {
-    setSelectedDate(new Date().toISOString().split('T')[0]);
-    
-    // Inicializar todos os alunos como ausentes (false)
-    const initialAttendance: Record<string, boolean> = {};
-    students.forEach((student: any) => {
-      initialAttendance[student.student_id] = false;
-    });
-    setAttendanceRecords(initialAttendance);
-    
-    setShowAttendanceModal(true);
-  };
-
-  // Função para salvar a presença manual
-  const handleSaveManualAttendance = async () => {
-    if (!selectedDate) {
-      alert('Selecione uma data para o registro de presença');
-      return;
-    }
-
-    // Validar data
-    if (cycleStartDate && selectedDate < cycleStartDate) {
-      alert(`Data não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
-      return;
-    }
-
-    if (cycleEndDate && selectedDate > cycleEndDate) {
-      alert(`Data não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
-      return;
-    }
-
-    // Contar presentes e ausentes
-    const presentes = Object.values(attendanceRecords).filter(v => v).length;
-    const ausentes = Object.values(attendanceRecords).filter(v => !v).length;
-
-    if (!confirm(`Registrar presença para ${formatDateToDisplay(selectedDate)}?\n\n` +
-                 `✅ Presentes: ${presentes}\n` +
-                 `❌ Ausentes: ${ausentes}`)) {
-      return;
-    }
-
-    try {
-      // Para cada aluno, encontrar o próximo slot de acesso vazio
-      for (const student of students) {
-        const isPresent = attendanceRecords[student.student_id] || false;
-        
-        if (isPresent) {
-          // Se o aluno está presente, adicionar a data em um slot vazio
-          const currentAccess = accessData[student.student_id] || {};
-          
-          // Encontrar o primeiro slot vazio
-          let slotUpdated = false;
-          for (let i = 1; i <= 3; i++) {
-            if (!currentAccess[`access_date_${i}`]) {
-              // Slot vazio encontrado, preencher com a data selecionada
-              currentAccess[`access_date_${i}`] = formatDateInput(selectedDate);
-              slotUpdated = true;
-              break;
-            }
-          }
-          
-          if (!slotUpdated) {
-            // Se todos os slots estão preenchidos, não fazer nada (já tem 3 acessos)
-            console.log(`Aluno ${student.students.full_name} já tem 3 acessos`);
-          }
-          
-          // Atualizar o state
-          setAccessData({
-            ...accessData,
-            [student.student_id]: currentAccess
-          });
-        }
-      }
-
-      // Salvar todos os acessos no banco
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (const student of students) {
-        const data = accessData[student.student_id];
-        
-        if (data) {
-          const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
-          let isValid = true;
-          
-          for (const date of dates) {
-            if (!validateAccessDate(date)) {
-              isValid = false;
-              break;
-            }
-          }
-
-          if (!isValid) {
-            errorCount++;
-            continue;
-          }
-
-          try {
-            const accessDataISO = {
-              access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
-              access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
-              access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
-            };
-
-            const { error } = await supabase
-              .from('ead_access')
-              .upsert(
-                [
-                  {
-                    class_id: classData.id,
-                    student_id: student.student_id,
-                    ...accessDataISO,
-                    updated_at: new Date().toISOString(),
-                  },
-                ],
-                { onConflict: 'class_id,student_id' }
-              );
-
-            if (error) throw error;
-            successCount++;
-            
-          } catch (error) {
-            console.error(`Erro ao salvar aluno ${student.students.full_name}:`, error);
-            errorCount++;
-          }
-        }
-      }
-      
-      alert(`✅ Presença registrada para ${formatDateToDisplay(selectedDate)}!\n` +
-            `${presentes} presentes, ${ausentes} ausentes\n` +
-            `Acessos salvos: ${successCount} sucesso(s), ${errorCount} erro(s)`);
-      
-      setShowAttendanceModal(false);
-      onUpdate();
-      
-    } catch (error) {
-      console.error('Erro ao registrar presença:', error);
-      alert('Erro ao registrar presença. Tente novamente.');
-    }
+  // Função para alternar a frequência manual de um aluno
+  const toggleFrequencia = (studentId: string) => {
+    setFrequenciaManual(prev => ({
+      ...prev,
+      [studentId]: !prev[studentId]
+    }));
   };
 
   const handleSaveAccess = async (studentId: string) => {
@@ -3027,64 +2904,88 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }
   };
 
-  const handleSaveAll = async () => {
-    if (!confirm('Salvar todos os acessos?')) return;
+  const handleSaveFrequencia = async (studentId: string) => {
+    const isFrequente = frequenciaManual[studentId];
     
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const student of students) {
-      const data = accessData[student.student_id];
+    try {
+      // Se marcou como frequente, precisamos garantir que tenha pelo menos 1 acesso
+      // Se desmarcou, podemos limpar os acessos ou manter? Vou considerar que desmarcar = sem acessos
+      const currentAccess = accessData[studentId] || {};
       
-      if (data) {
-        const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
-        let isValid = true;
+      let accessDataISO;
+      
+      if (isFrequente) {
+        // Se é frequente, garantir pelo menos 1 acesso (hoje, se não tiver nenhum)
+        const hasAnyAccess = currentAccess.access_date_1 || currentAccess.access_date_2 || currentAccess.access_date_3;
         
-        for (const date of dates) {
-          if (!validateAccessDate(date)) {
-            isValid = false;
-            break;
-          }
-        }
-
-        if (!isValid) {
-          errorCount++;
-          continue;
-        }
-
-        try {
-          const accessDataISO = {
-            access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
-            access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
-            access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
+        if (!hasAnyAccess) {
+          // Se não tem nenhum acesso, colocar a data de hoje no primeiro slot
+          const todayFormatted = formatDateInput(new Date().toISOString().split('T')[0]);
+          accessDataISO = {
+            access_date_1: parseDateInput(todayFormatted),
+            access_date_2: null,
+            access_date_3: null,
           };
-
-          const { error } = await supabase
-            .from('ead_access')
-            .upsert(
-              [
-                {
-                  class_id: classData.id,
-                  student_id: student.student_id,
-                  ...accessDataISO,
-                  updated_at: new Date().toISOString(),
-                },
-              ],
-              { onConflict: 'class_id,student_id' }
-            );
-
-          if (error) throw error;
-          successCount++;
           
-        } catch (error) {
-          console.error(`Erro ao salvar aluno ${student.students.full_name}:`, error);
-          errorCount++;
+          // Atualizar o state também
+          setAccessData({
+            ...accessData,
+            [studentId]: {
+              access_date_1: todayFormatted,
+              access_date_2: '',
+              access_date_3: '',
+            }
+          });
+        } else {
+          // Mantém os acessos existentes
+          accessDataISO = {
+            access_date_1: currentAccess.access_date_1 ? parseDateInput(currentAccess.access_date_1) : null,
+            access_date_2: currentAccess.access_date_2 ? parseDateInput(currentAccess.access_date_2) : null,
+            access_date_3: currentAccess.access_date_3 ? parseDateInput(currentAccess.access_date_3) : null,
+          };
         }
+      } else {
+        // Se não é frequente, limpar todos os acessos
+        accessDataISO = {
+          access_date_1: null,
+          access_date_2: null,
+          access_date_3: null,
+        };
+        
+        // Atualizar o state
+        setAccessData({
+          ...accessData,
+          [studentId]: {
+            access_date_1: '',
+            access_date_2: '',
+            access_date_3: '',
+          }
+        });
       }
+
+      const { error } = await supabase
+        .from('ead_access')
+        .upsert(
+          [
+            {
+              class_id: classData.id,
+              student_id: studentId,
+              ...accessDataISO,
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          { onConflict: 'class_id,student_id' }
+        );
+
+      if (error) throw error;
+
+      alert(isFrequente ? 'Aluno marcado como frequente!' : 'Aluno marcado como não frequente');
+      onUpdate();
+      
+    } catch (error) {
+      console.error('Erro ao salvar frequência:', error);
+      alert('Erro ao salvar frequência. Tente novamente.');
     }
-    
-    alert(`Acessos salvos! ${successCount} sucesso(s), ${errorCount} erro(s).`);
-    onUpdate();
   };
 
   const filteredStudents = students.filter((student: any) => {
@@ -3097,69 +2998,36 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     <div className="space-y-6">
       <div className="flex justify-between items-center mb-4">
         <h4 className="text-lg font-semibold text-slate-800">Controle de Acessos EAD</h4>
-        <div className="flex space-x-3">
-          <button
-            onClick={handleOpenAttendanceModal}
-            disabled={!isCycleActive}
-            className={`px-4 py-2 text-white rounded-lg transition-colors text-sm font-medium flex items-center space-x-2 ${
-              isCycleActive 
-                ? 'bg-blue-600 hover:bg-blue-700' 
-                : 'bg-slate-400 cursor-not-allowed'
-            }`}
-          >
-            <CheckSquare className="w-4 h-4" />
-            <span>Registrar Presença Manual</span>
-          </button>
-          <button
-            onClick={handleSaveAll}
-            disabled={!isCycleActive}
-            className={`px-4 py-2 text-white rounded-lg transition-colors text-sm font-medium ${
-              isCycleActive 
-                ? 'bg-green-600 hover:bg-green-700' 
-                : 'bg-slate-400 cursor-not-allowed'
-            }`}
-          >
-            Salvar Todos
-          </button>
-        </div>
       </div>
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📌 REGRAS EAD - PRESENÇA MANUAL:</strong>
+          <strong>📌 CONTROLE INDIVIDUAL DE FREQUÊNCIA:</strong>
         </p>
         <ul className="list-disc list-inside text-sm text-blue-700 mt-2 space-y-1">
           <li>
-            <span className="font-medium">Registro de presença:</span> Use o botão "Registrar Presença Manual" para marcar alunos presentes em uma data específica
+            <span className="font-medium">Frequência:</span> Marque o checkbox para indicar que o aluno é frequente
           </li>
           <li>
-            <span className="font-medium">Durante o ciclo:</span> Aluno é considerado <strong>FREQUENTE</strong> com pelo menos 1 acesso
+            <span className="font-medium">Individual:</span> Cada aluno é controlado separadamente
           </li>
           <li>
-            <span className="font-medium">No encerramento:</span> Aluno será <strong>APROVADO</strong> apenas com os <strong>3 ACESSOS COMPLETOS</strong>
+            <span className="font-medium">Sem registro automático:</span> O sistema NÃO registra falta para ninguém
+          </li>
+          <li>
+            <span className="font-medium">Acessos:</span> Você ainda pode registrar as datas manualmente se desejar
           </li>
         </ul>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <div className="flex items-center space-x-1">
-            <span className="w-3 h-3 bg-blue-100 rounded-full"></span>
-            <span>🔵 Frequente (1-2 acessos)</span>
-          </div>
-          <div className="flex items-center space-x-1">
             <span className="w-3 h-3 bg-green-100 rounded-full"></span>
-            <span>✅ Aprovado (3 acessos) - só no fim</span>
+            <span>✅ Frequente (checkbox marcado)</span>
           </div>
           <div className="flex items-center space-x-1">
             <span className="w-3 h-3 bg-slate-100 rounded-full"></span>
-            <span>⚪ Sem acessos</span>
-          </div>
-          <div className="flex items-center space-x-1">
-            <span className="w-3 h-3 bg-red-100 rounded-full"></span>
-            <span>❌ Reprovado (fim do ciclo sem 3 acessos)</span>
+            <span>⚪ Não frequente (checkbox desmarcado)</span>
           </div>
         </div>
-        <p className="text-xs text-blue-600 mt-2">
-          ⚠️ Formato da data: <strong>DD/MM/AAAA</strong> (digite manualmente ou use o registro manual)
-        </p>
       </div>
 
       <div className="mb-4">
@@ -3193,7 +3061,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                   Acesso 3
                 </th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Status
+                  Frequência
                 </th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
                   Ações
@@ -3202,44 +3070,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filteredStudents.map((student: any) => {
-                const a1 = accessData[student.student_id]?.access_date_1;
-                const a2 = accessData[student.student_id]?.access_date_2;
-                const a3 = accessData[student.student_id]?.access_date_3;
-                
-                const totalAccesses = [a1, a2, a3].filter(Boolean).length;
-
-                // Define o status baseado na fase do ciclo
-                let statusBadge = {
-                  color: 'bg-slate-100 text-slate-800',
-                  text: 'Sem acessos',
-                  icon: '📝'
-                };
-
-                if (totalAccesses > 0) {
-                  if (isCycleActive) {
-                    // Durante o ciclo: status é "Frequente"
-                    statusBadge = {
-                      color: 'bg-blue-100 text-blue-800',
-                      text: `Frequente (${totalAccesses}/3)`,
-                      icon: '🔵'
-                    };
-                  } else {
-                    // Ciclo encerrado: aprovado só com 3 acessos
-                    if (totalAccesses === 3) {
-                      statusBadge = {
-                        color: 'bg-green-100 text-green-800',
-                        text: 'Aprovado',
-                        icon: '✅'
-                      };
-                    } else {
-                      statusBadge = {
-                        color: 'bg-red-100 text-red-800',
-                        text: `Reprovado (${totalAccesses}/3)`,
-                        icon: '❌'
-                      };
-                    }
-                  }
-                }
+                const isFrequente = frequenciaManual[student.student_id] || false;
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
@@ -3283,35 +3114,47 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                     ))}
                     
                     <td className="px-6 py-4">
-                      <div className="flex flex-col space-y-2">
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${statusBadge.color}`}>
-                          {statusBadge.icon} {statusBadge.text}
-                        </span>
-                        {!isCycleActive && totalAccesses === 3 && (
-                          <span className="text-xs text-green-600 font-medium">
-                            ✅ Pode emitir certificado
+                      <div className="flex items-center space-x-3">
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={isFrequente}
+                            onChange={() => toggleFrequencia(student.student_id)}
+                            disabled={!isCycleActive}
+                            className="w-5 h-5 text-green-600 rounded focus:ring-green-500"
+                          />
+                          <span className={`text-sm font-medium ${isFrequente ? 'text-green-700' : 'text-slate-600'}`}>
+                            {isFrequente ? 'Frequente' : 'Não frequente'}
                           </span>
-                        )}
-                        {!isCycleActive && totalAccesses > 0 && totalAccesses < 3 && (
-                          <span className="text-xs text-red-600 font-medium">
-                            ❌ Faltam {3 - totalAccesses} acesso(s)
-                          </span>
-                        )}
+                        </label>
                       </div>
                     </td>
                     
                     <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleSaveAccess(student.student_id)}
-                        disabled={!isCycleActive}
-                        className={`px-4 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
-                          isCycleActive 
-                            ? 'bg-green-600 hover:bg-green-700' 
-                            : 'bg-slate-400 cursor-not-allowed'
-                        }`}
-                      >
-                        {isCycleActive ? 'Salvar' : 'Ciclo encerrado'}
-                      </button>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => handleSaveAccess(student.student_id)}
+                          disabled={!isCycleActive}
+                          className={`px-3 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
+                            isCycleActive 
+                              ? 'bg-blue-600 hover:bg-blue-700' 
+                              : 'bg-slate-400 cursor-not-allowed'
+                          }`}
+                        >
+                          Salvar Acessos
+                        </button>
+                        <button
+                          onClick={() => handleSaveFrequencia(student.student_id)}
+                          disabled={!isCycleActive}
+                          className={`px-3 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
+                            isCycleActive 
+                              ? 'bg-green-600 hover:bg-green-700' 
+                              : 'bg-slate-400 cursor-not-allowed'
+                          }`}
+                        >
+                          Salvar Frequência
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -3331,115 +3174,6 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
           </table>
         </div>
       </div>
-
-      {/* Modal de Registro Manual de Presença */}
-      {showAttendanceModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[70] p-4">
-          <div className="bg-white rounded-xl shadow-xl 
-            w-[95vw] md:w-[80vw] lg:w-[70vw] xl:w-[60vw] max-w-4xl
-            max-h-[90vh] overflow-y-auto">
-            
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-6">
-                <div>
-                  <h3 className="text-2xl font-bold text-slate-800">Registrar Presença Manual</h3>
-                  <p className="text-slate-600 mt-1">
-                    Selecione a data e marque os alunos presentes
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowAttendanceModal(false)}
-                  className="text-slate-400 hover:text-slate-600 text-3xl p-1"
-                >
-                  ×
-                </button>
-              </div>
-
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-700 mb-2">
-                  Data da Presença <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  min={cycleStartDate}
-                  max={cycleEndDate}
-                  required
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
-                />
-                <p className="text-xs text-slate-500 mt-2">
-                  Data em que os alunos estiveram presentes no ambiente EAD
-                </p>
-              </div>
-
-              <div className="mb-4 p-3 bg-blue-50 rounded-lg flex justify-between items-center">
-                <p className="text-sm text-blue-800">
-                  Total de alunos: {students.length}
-                </p>
-                <p className="text-sm text-green-600">
-                  Presentes: {Object.values(attendanceRecords).filter(v => v).length}
-                </p>
-              </div>
-
-              <div className="border border-slate-200 rounded-lg max-h-[400px] overflow-y-auto">
-                <div className="divide-y divide-slate-200">
-                  {students.map((student: any) => (
-                    <label
-                      key={student.id}
-                      className="flex items-center p-4 hover:bg-slate-50 cursor-pointer transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={attendanceRecords[student.student_id] || false}
-                        onChange={(e) => {
-                          setAttendanceRecords({
-                            ...attendanceRecords,
-                            [student.student_id]: e.target.checked
-                          });
-                        }}
-                        className="w-5 h-5 text-green-600 rounded focus:ring-green-500 mr-3"
-                      />
-                      <div className="flex-1">
-                        <span className="text-slate-800 font-medium">
-                          {student.students?.full_name || 'Nome não disponível'}
-                        </span>
-                        <span className="ml-3 text-xs text-slate-500">
-                          {student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}
-                        </span>
-                      </div>
-                      
-                      {/* Mostrar acessos atuais */}
-                      <div className="text-xs text-slate-500">
-                        Acessos: {[
-                          accessData[student.student_id]?.access_date_1,
-                          accessData[student.student_id]?.access_date_2,
-                          accessData[student.student_id]?.access_date_3
-                        ].filter(Boolean).length}/3
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex space-x-3 mt-6">
-                <button
-                  onClick={() => setShowAttendanceModal(false)}
-                  className="flex-1 px-4 py-3 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleSaveManualAttendance}
-                  className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-                >
-                  Registrar Presença
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
