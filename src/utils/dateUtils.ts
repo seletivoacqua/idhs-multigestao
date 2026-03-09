@@ -41,6 +41,13 @@ export function forceDateToDisplay(dateStr: string | null | undefined): string {
     return `${day}/${month}/${year}`;
   }
   
+  // Tenta converter de timestamp ISO (YYYY-MM-DDTHH:MM:SS.sssZ)
+  const timestampMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+  if (timestampMatch) {
+    const [_, year, month, day] = timestampMatch;
+    return `${day}/${month}/${year}`;
+  }
+  
   return dateStr;
 }
 
@@ -66,12 +73,12 @@ export function formatDateToDatabase(dateStr: string | null | undefined): string
 }
 
 /**
- * Extrai apenas a parte da data (YYYY-MM-DD) de uma string ISO
+ * Extrai apenas a parte da data (YYYY-MM-DD) de uma string ISO ou timestamp
  */
 export function extractDatePart(dateStr: string | null | undefined): string | null {
   if (!dateStr) return null;
   
-  // Se for ISO com hora
+  // Se for timestamp ISO com hora (YYYY-MM-DDTHH:MM:SS)
   if (dateStr.includes('T')) {
     return dateStr.split('T')[0];
   }
@@ -94,7 +101,7 @@ export function extractDatePart(dateStr: string | null | undefined): string | nu
 }
 
 /**
- * Verifica se data1 é maior ou igual a data2
+ * Verifica se data1 é maior ou igual a data2 (formato YYYY-MM-DD)
  */
 export function isDateGreaterOrEqual(date1: string, date2: string): boolean {
   const d1 = extractDatePart(date1);
@@ -104,10 +111,6 @@ export function isDateGreaterOrEqual(date1: string, date2: string): boolean {
   
   return d1 >= d2;
 }
-
-// ===========================================
-// NOVAS FUNÇÕES PARA INPUT MANUAL DE DATAS
-// ===========================================
 
 /**
  * Formata a data enquanto o usuário digita (máscara DD/MM/AAAA)
@@ -151,7 +154,7 @@ export function parseDateInput(dateStr: string): string {
 }
 
 /**
- * Converte data do formato YYYY-MM-DD para DD/MM/AAAA (exibição)
+ * Converte data do formato YYYY-MM-DD para DD/MM/AAAA (exibição em inputs)
  */
 export function formatDateForInput(dateStr: string): string {
   if (!dateStr) return '';
@@ -195,12 +198,12 @@ export function isValidDate(dateStr: string): boolean {
 }
 
 /**
- * Compara duas datas no formato DD/MM/AAAA
+ * Compara duas datas no formato DD/MM/AAAA ou YYYY-MM-DD
  * Retorna: -1 se date1 < date2, 0 se igual, 1 se date1 > date2
  */
 export function compareDates(date1: string, date2: string): number {
-  const d1 = parseDateInput(date1).replace(/-/g, '');
-  const d2 = parseDateInput(date2).replace(/-/g, '');
+  const d1 = extractDatePart(date1)?.replace(/-/g, '') || '';
+  const d2 = extractDatePart(date2)?.replace(/-/g, '') || '';
   
   if (d1 < d2) return -1;
   if (d1 > d2) return 1;
@@ -248,7 +251,36 @@ export function formatDateObjectToInput(date: Date): string {
 }
 
 // ===========================================
-// FUNÇÃO CORRIGIDA - EAD (ÚLTIMO ACESSO = MAIS RECENTE)
+// FUNÇÕES PARA FORMATAR TIMESTAMP DO BANCO
+// ===========================================
+
+/**
+ * Converte uma data simples para timestamp com timezone (formato do banco)
+ * @param dateStr - Data no formato YYYY-MM-DD ou DD/MM/AAAA
+ * @returns timestamp no formato ISO (YYYY-MM-DDTHH:MM:SS.sssZ)
+ */
+export function dateToTimestamp(dateStr: string): string {
+  if (!dateStr) return '';
+  
+  // Converter para YYYY-MM-DD primeiro
+  const dateFormatted = formatDateToDatabase(dateStr);
+  
+  // Adicionar horário (meia-noite UTC)
+  return `${dateFormatted}T00:00:00.000Z`;
+}
+
+/**
+ * Extrai apenas a data de um timestamp do banco
+ * @param timestamp - Timestamp no formato ISO (YYYY-MM-DDTHH:MM:SS.sssZ)
+ * @returns Data no formato YYYY-MM-DD
+ */
+export function timestampToDate(timestamp: string | null): string | null {
+  if (!timestamp) return null;
+  return timestamp.split('T')[0];
+}
+
+// ===========================================
+// FUNÇÕES ESPECÍFICAS PARA EAD (ACESSOS)
 // ===========================================
 
 /**
@@ -269,13 +301,8 @@ export function getMostRecentAccessDate(
   
   // Converte todas para o formato YYYY-MM-DD para comparação
   const datesISO = dates.map(d => {
-    // Se estiver no formato DD/MM/AAAA, converte para ISO
-    if (d.includes('/')) {
-      const [day, month, year] = d.split('/');
-      return `${year}-${month}-${day}`;
-    }
-    // Se já for ISO, extrai apenas a data
-    return d.split('T')[0];
+    const extracted = extractDatePart(d);
+    return extracted || d.split('T')[0];
   });
   
   // Ordena e pega a mais recente (maior)
@@ -288,30 +315,19 @@ export function getMostRecentAccessDate(
 }
 
 /**
- * Valida se o aluno está aprovado no EAD baseado no acesso mais recente
- * @param access_date_1 - Data do primeiro acesso (opcional)
- * @param access_date_2 - Data do segundo acesso (opcional) 
- * @param access_date_3 - Data do terceiro acesso (opcional)
- * @returns boolean - true se tiver pelo menos UM acesso (o mais recente é o que importa)
+ * Valida se o aluno tem pelo menos UM acesso (para frequência durante o ciclo)
  */
 export function validateEADAccess(
   access_date_1: string | null, 
   access_date_2: string | null, 
   access_date_3: string | null
 ): boolean {
-  // ✅ Aluno aprovado se tiver PELO MENOS UM ACESSO
-  // O acesso mais recente é o que indica a conclusão
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
   return dates.length > 0;
 }
 
-// ===========================================
-// FUNÇÕES ATUALIZADAS - EAD (REGRAS DIFERENCIADAS)
-// ===========================================
-
 /**
  * Verifica se o aluno é frequente (durante o ciclo)
- * @returns boolean - true se tiver PELO MENOS 1 ACESSO
  */
 export function isStudentActive(
   access_date_1: string | null, 
@@ -319,24 +335,24 @@ export function isStudentActive(
   access_date_3: string | null
 ): boolean {
   const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
-  return dates.length > 0; // Frequente se tiver pelo menos 1 acesso
+  return dates.length > 0;
 }
 
 /**
- * Verifica se o aluno está aprovado (no encerramento do ciclo)
- * @returns boolean - true se tiver os 3 ACESSOS COMPLETOS
+ * Verifica se o aluno está aprovado (no encerramento do ciclo) - VERSÃO ANTIGA
+ * @deprecated Use a nova regra baseada em is_frequente
  */
 export function isStudentApproved(
   access_date_1: string | null, 
   access_date_2: string | null, 
   access_date_3: string | null
 ): boolean {
-  // Precisa ter os 3 acessos preenchidos
   return !!(access_date_1 && access_date_2 && access_date_3);
 }
 
 /**
- * Retorna o status detalhado do aluno EAD
+ * Retorna o status detalhado do aluno EAD - VERSÃO ANTIGA
+ * @deprecated Use a nova regra baseada em is_frequente
  */
 export function getEADStudentStatus(
   access_date_1: string | null, 
@@ -352,7 +368,6 @@ export function getEADStudentStatus(
 } {
   const totalAccesses = [access_date_1, access_date_2, access_date_3].filter(Boolean).length;
   
-  // Se o ciclo ainda está ativo
   if (isCycleActive) {
     if (totalAccesses > 0) {
       return {
@@ -373,7 +388,6 @@ export function getEADStudentStatus(
     }
   }
   
-  // Se o ciclo está encerrado
   if (totalAccesses === 3) {
     return {
       status: 'aprovado',
@@ -391,4 +405,108 @@ export function getEADStudentStatus(
       totalAccesses
     };
   }
+}
+
+// ===========================================
+// NOVAS FUNÇÕES PARA A REGRA ATUALIZADA DO EAD
+// ===========================================
+
+/**
+ * Determina a situação do aluno EAD baseada no campo is_frequente (NOVA REGRA)
+ * @param isFrequente - Campo booleano do banco de dados
+ * @param totalAccesses - Número de acessos registrados (apenas informativo)
+ * @param isCycleActive - Se o ciclo ainda está ativo
+ */
+export function getEADStatusByFrequencia(
+  isFrequente: boolean,
+  totalAccesses: number = 0,
+  isCycleActive: boolean = true
+): {
+  status: 'frequente' | 'nao_frequente' | 'aprovado' | 'reprovado' | 'em_andamento';
+  color: string;
+  message: string;
+  canCertify: boolean;
+} {
+  if (isCycleActive) {
+    // Durante o ciclo, mostramos o status atual
+    if (isFrequente) {
+      return {
+        status: 'frequente',
+        color: 'bg-green-100 text-green-800',
+        message: `Frequente (${totalAccesses}/3 acessos)`,
+        canCertify: false
+      };
+    } else {
+      return {
+        status: 'nao_frequente',
+        color: 'bg-slate-100 text-slate-600',
+        message: totalAccesses > 0 
+          ? `Não frequente (${totalAccesses}/3 acessos)` 
+          : 'Não frequente',
+        canCertify: false
+      };
+    }
+  } else {
+    // Ciclo encerrado - aprovação baseada em is_frequente
+    if (isFrequente) {
+      return {
+        status: 'aprovado',
+        color: 'bg-green-500 text-white',
+        message: `Aprovado - ${totalAccesses}/3 acessos`,
+        canCertify: true
+      };
+    } else {
+      return {
+        status: 'reprovado',
+        color: 'bg-red-500 text-white',
+        message: `Reprovado - ${totalAccesses}/3 acessos`,
+        canCertify: false
+      };
+    }
+  }
+}
+
+/**
+ * Formata um timestamp do banco para exibição em input date
+ * @param timestamp - Timestamp do banco (ex: 2024-03-15T00:00:00.000Z)
+ * @returns Data no formato YYYY-MM-DD para input type="date"
+ */
+export function formatTimestampForInput(timestamp: string | null): string {
+  if (!timestamp) return '';
+  return timestamp.split('T')[0];
+}
+
+/**
+ * Valida se uma data está dentro do período do ciclo
+ */
+export function validateEnrollmentDate(
+  enrollmentDate: string,
+  cycleStartDate: string | null,
+  cycleEndDate: string | null
+): { valid: boolean; message: string } {
+  if (!enrollmentDate) {
+    return { valid: false, message: 'Data obrigatória' };
+  }
+
+  const dateOnly = extractDatePart(enrollmentDate);
+  
+  if (cycleStartDate && dateOnly) {
+    if (!isDateGreaterOrEqual(dateOnly, cycleStartDate)) {
+      return {
+        valid: false,
+        message: `Data não pode ser anterior a ${formatDateToDisplay(cycleStartDate)}`
+      };
+    }
+  }
+
+  if (cycleEndDate && dateOnly) {
+    if (!isDateGreaterOrEqual(cycleEndDate, dateOnly)) {
+      return {
+        valid: false,
+        message: `Data não pode ser posterior a ${formatDateToDisplay(cycleEndDate)}`
+      };
+    }
+  }
+
+  return { valid: true, message: 'OK' };
 }
