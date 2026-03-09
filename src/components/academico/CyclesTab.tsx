@@ -1309,59 +1309,91 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   };
 
   // NOVA FUNÇÃO: Abrir modal de edição de matrícula
-  const handleOpenEditEnrollment = (student: any) => {
-    setEditEnrollmentModal({
-      show: true,
-      student: student,
-      enrollmentDate: student.enrollment_date ? extractDatePart(student.enrollment_date) : new Date().toISOString().split('T')[0],
-      enrollmentType: student.enrollment_type,
-    });
-  };
+ const handleOpenEditEnrollment = (student: any) => {
+  // Extrair apenas a data do timestamp para mostrar no input date
+  const enrollmentDate = student.enrollment_date 
+    ? extractDateFromTimestamp(student.enrollment_date) 
+    : new Date().toISOString().split('T')[0];
+
+  setEditEnrollmentModal({
+    show: true,
+    student: student,
+    enrollmentDate: enrollmentDate, // Agora é YYYY-MM-DD
+    enrollmentType: student.enrollment_type,
+  });
+};
 
   // NOVA FUNÇÃO: Salvar edição da matrícula
-  const handleSaveEditEnrollment = async () => {
-    if (!editEnrollmentModal) return;
+const handleSaveEditEnrollment = async () => {
+  if (!editEnrollmentModal) return;
 
-    const { student, enrollmentDate, enrollmentType } = editEnrollmentModal;
+  const { student, enrollmentDate, enrollmentType } = editEnrollmentModal;
 
-    if (!enrollmentDate) {
-      alert('Por favor, selecione a data da matrícula');
-      return;
-    }
+  // Validações básicas
+  if (!enrollmentDate) {
+    alert('Por favor, selecione a data da matrícula');
+    return;
+  }
 
-    if (cycleStartDate && enrollmentDate < cycleStartDate) {
-      alert(`Data de matrícula não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
-      return;
-    }
+  if (!student?.student_id || !classData?.id) {
+    alert('Dados incompletos para atualização');
+    return;
+  }
 
-    if (cycleEndDate && enrollmentDate > cycleEndDate) {
-      alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
-      return;
-    }
+  // Validar período do ciclo
+  if (cycleStartDate && enrollmentDate < cycleStartDate) {
+    alert(`Data de matrícula não pode ser anterior ao início do ciclo (${formatDateToDisplay(cycleStartDate)})`);
+    return;
+  }
 
-    const enrollmentDateTime = formatDateToDatabase(enrollmentDate);
+  if (cycleEndDate && enrollmentDate > cycleEndDate) {
+    alert(`Data de matrícula não pode ser posterior ao fim do ciclo (${formatDateToDisplay(cycleEndDate)})`);
+    return;
+  }
 
-    const { error } = await supabase
+  try {
+    // 🔥 CORREÇÃO CRÍTICA: Criar timestamp completo com timezone
+    // O campo enrollment_date é TIMESTAMP WITH TIME ZONE
+    
+    // Opção 1: Usar o início do dia no fuso local (recomendado)
+    const dateObj = new Date(enrollmentDate + 'T00:00:00');
+    const enrollmentTimestamp = dateObj.toISOString(); // Formato: 2024-03-15T00:00:00.000Z
+    
+    // Opção 2: Se quiser manter apenas a data, mas como timestamp
+    // const enrollmentTimestamp = enrollmentDate + 'T00:00:00-03:00'; // Horário de Brasília
+
+    console.log('📅 Data original:', enrollmentDate);
+    console.log('📅 Timestamp gerado:', enrollmentTimestamp);
+
+    // Realizar o update com timestamp completo
+    const { error, data } = await supabase
       .from('class_students')
       .update({
-        enrollment_date: enrollmentDateTime,
+        enrollment_date: enrollmentTimestamp, // Agora é um timestamp válido
         enrollment_type: enrollmentType,
         updated_at: new Date().toISOString(),
       })
       .eq('class_id', classData.id)
-      .eq('student_id', student.student_id);
+      .eq('student_id', student.student_id)
+      .select();
 
     if (error) {
-      console.error('Error updating enrollment:', error);
-      alert('Erro ao atualizar matrícula');
+      console.error('❌ Erro no update:', error);
+      alert(`Erro: ${error.message}`);
       return;
     }
 
-    setEditEnrollmentModal(null);
-    loadClassStudents();
-    alert('Matrícula atualizada com sucesso!');
-  };
+    console.log('✅ Update realizado:', data);
 
+    setEditEnrollmentModal(null);
+    await loadClassStudents();
+    alert('✅ Matrícula atualizada com sucesso!');
+
+  } catch (error) {
+    console.error('❌ Erro inesperado:', error);
+    alert('Erro inesperado ao atualizar matrícula');
+  }
+};
   const handleRemoveStudent = async (studentId: string) => {
     if (!confirm('Tem certeza que deseja remover este aluno da turma?')) return;
 
