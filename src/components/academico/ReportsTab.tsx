@@ -31,7 +31,7 @@ interface Class {
   modality: string;
 }
 
-// Interface atualizada
+// Interface atualizada com campos para EAD
 interface ReportData {
   unitName: string;
   studentName: string;
@@ -41,11 +41,15 @@ interface ReportData {
   modality: string;
   classesAttended: number;
   totalClassesConsidered: number;
-  ultimoAcesso: string; // Apenas a data mais recente
+  ultimoAcesso: string;
   frequency: string;
   frequencyValue: number;
   situacao: 'FREQUENTE' | 'INCOMPLETO';
   totalAccesses: number;
+  isFrequente?: boolean; // Campo específico para EAD (status manual)
+  accessDates?: string[]; // Datas de acesso para EAD
+  enrollmentDate?: string; // Data de matrícula
+  enrollmentType?: 'regular' | 'exceptional'; // Tipo de matrícula
 }
 
 export function ReportsTab() {
@@ -62,6 +66,7 @@ export function ReportsTab() {
     unitId: '',
     modality: 'all',
     studentName: '',
+    situacao: 'all', // Novo filtro: all, frequentes, incompletos
   });
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
@@ -71,6 +76,8 @@ export function ReportsTab() {
     totalStudents: 0,
     frequentes: 0,
     incompletos: 0,
+    totalEAD: 0,
+    totalVideoconferencia: 0,
   });
 
   // Função auxiliar para extrair data
@@ -95,7 +102,6 @@ export function ReportsTab() {
     const validDates = dates.filter(d => d !== null) as string[];
     if (validDates.length === 0) return null;
     
-    // Converte para Date e encontra a mais recente
     const dateObjects = validDates.map(d => new Date(d));
     const mostRecent = new Date(Math.max(...dateObjects.map(d => d.getTime())));
     return mostRecent.toISOString().split('T')[0];
@@ -249,11 +255,14 @@ export function ReportsTab() {
         let frequencyValue = 0;
         let situacao: 'FREQUENTE' | 'INCOMPLETO' = 'INCOMPLETO';
         let totalAccesses = 0;
+        let isFrequente = false;
+        let accessDates: string[] = [];
 
         const enrollmentDate = extractDatePart(cs.enrollment_date);
+        const enrollmentType = cs.enrollment_type;
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
-          // Lógica para Videoconferência
+          // Lógica para Videoconferência (mantida igual)
           let attendanceQuery = supabase
             .from('attendance')
             .select('*')
@@ -284,7 +293,6 @@ export function ReportsTab() {
             : 0;
           frequency = `${frequencyValue.toFixed(1)}%`;
           
-          // Para videoconferência, considera a data da última presença
           if (relevantAttendance.length > 0) {
             const dates = relevantAttendance.map(a => a.class_date);
             const mostRecent = getMostRecentDate(dates);
@@ -295,7 +303,7 @@ export function ReportsTab() {
           situacao = classesAttended > 0 ? 'FREQUENTE' : 'INCOMPLETO';
 
         } else {
-          // EAD - NOVA LÓGICA
+          // EAD - NOVA LÓGICA com campo is_frequente
           const { data: accessData } = await supabase
             .from('ead_access')
             .select('*')
@@ -303,14 +311,19 @@ export function ReportsTab() {
             .eq('student_id', cs.student_id)
             .maybeSingle();
 
+          // Status manual de frequência
+          isFrequente = accessData?.is_frequente === true;
+
           const allAccesses = [
             accessData?.access_date_1,
             accessData?.access_date_2,
             accessData?.access_date_3,
           ];
 
+          accessDates = allAccesses.filter(date => date !== null) as string[];
+          
           // Filtrar por período se necessário
-          let filteredAccesses = allAccesses.filter(date => date !== null) as string[];
+          let filteredAccesses = [...accessDates];
           
           if (filters.startDate || filters.endDate) {
             const start = filters.startDate ? new Date(filters.startDate) : null;
@@ -326,7 +339,7 @@ export function ReportsTab() {
 
           totalAccesses = filteredAccesses.length;
           classesAttended = totalAccesses;
-          totalClassesConsidered = 3;
+          totalClassesConsidered = 3; // Total possível de acessos
           frequencyValue = (totalAccesses / 3) * 100;
           frequency = `${frequencyValue.toFixed(1)}%`;
           
@@ -336,12 +349,13 @@ export function ReportsTab() {
             ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
           }
 
-          // ✅ REGRA CORRETA: FREQUENTE se tiver 1 ou mais acessos
-          // INCOMPLETO apenas se tiver 0 acessos
-          situacao = totalAccesses > 0 ? 'FREQUENTE' : 'INCOMPLETO';
+          // ✅ REGRA CORRETA PARA EAD:
+          // FREQUENTE se is_frequente = true (independente da quantidade de acessos)
+          // INCOMPLETO se is_frequente = false
+          situacao = isFrequente ? 'FREQUENTE' : 'INCOMPLETO';
         }
 
-        allReportData.push({
+        const reportItem: ReportData = {
           unitName,
           studentName: cs.students?.full_name || 'Nome não informado',
           studentCpf: cs.students?.cpf || '',
@@ -355,25 +369,41 @@ export function ReportsTab() {
           frequencyValue,
           situacao,
           totalAccesses,
-        });
+          isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
+          accessDates: cls.modality === 'EAD' ? accessDates : undefined,
+          enrollmentDate: enrollmentDate || undefined,
+          enrollmentType,
+        };
+
+        allReportData.push(reportItem);
       }
     }
 
+    // Aplicar filtro de situação
+    let filteredData = allReportData;
+    if (filters.situacao !== 'all') {
+      filteredData = allReportData.filter(d => 
+        d.situacao === (filters.situacao === 'frequentes' ? 'FREQUENTE' : 'INCOMPLETO')
+      );
+    }
+
     // Ordenar por situação (frequentes primeiro) e depois por nome
-    allReportData.sort((a, b) => {
+    filteredData.sort((a, b) => {
       if (a.situacao !== b.situacao) {
         return a.situacao === 'FREQUENTE' ? -1 : 1;
       }
       return a.studentName.localeCompare(b.studentName);
     });
 
-    setReportData(allReportData);
+    setReportData(filteredData);
 
     // Calcular estatísticas
     const stats = {
-      totalStudents: allReportData.length,
-      frequentes: allReportData.filter(d => d.situacao === 'FREQUENTE').length,
-      incompletos: allReportData.filter(d => d.situacao === 'INCOMPLETO').length,
+      totalStudents: filteredData.length,
+      frequentes: filteredData.filter(d => d.situacao === 'FREQUENTE').length,
+      incompletos: filteredData.filter(d => d.situacao === 'INCOMPLETO').length,
+      totalEAD: filteredData.filter(d => d.modality.includes('EAD')).length,
+      totalVideoconferencia: filteredData.filter(d => d.modality.includes('Videoconferência')).length,
     };
 
     setStats(stats);
@@ -387,8 +417,11 @@ export function ReportsTab() {
   const exportToXLSX = () => {
     if (reportData.length === 0) return;
 
-    const headers = ['UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'MODALIDADE', 
-      'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQUÊNCIA', 'SITUAÇÃO'];
+    const headers = [
+      'UNIDADE', 'ALUNO', 'CPF', 'TURMA', 'CICLO', 'MODALIDADE', 
+      'TIPO MATRÍCULA', 'DATA MATRÍCULA',
+      'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQUÊNCIA', 'STATUS MANUAL (EAD)', 'SITUAÇÃO'
+    ];
 
     const rows = reportData.map((row) => [
       row.unitName,
@@ -397,9 +430,16 @@ export function ReportsTab() {
       row.className,
       row.cycleName,
       row.modality,
-      row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
+      row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
+      row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
+      row.modality.includes('EAD') 
+        ? `${row.totalAccesses}/3 acessos` 
+        : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
       row.ultimoAcesso,
       row.frequency,
+      row.modality.includes('EAD') 
+        ? (row.isFrequente ? '✅ FREQUENTE (manual)' : '❌ NÃO FREQUENTE (manual)')
+        : 'N/A',
       row.situacao,
     ]);
 
@@ -438,24 +478,27 @@ export function ReportsTab() {
       const tableElement = document.createElement('table');
       tableElement.style.width = '100%';
       tableElement.style.borderCollapse = 'collapse';
-      tableElement.style.fontSize = '9px';
+      tableElement.style.fontSize = '8px';
       tableElement.style.fontFamily = 'Arial, sans-serif';
 
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
       
-      const headers = ['UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'SITUAÇÃO'];
+      const headers = [
+        'UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 
+        'MATRÍCULA', 'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'SITUAÇÃO'
+      ];
 
       headers.forEach(headerText => {
         const th = document.createElement('th');
         th.textContent = headerText;
-        th.style.padding = '6px 4px';
+        th.style.padding = '4px 2px';
         th.style.backgroundColor = '#1e293b';
         th.style.color = 'white';
         th.style.border = '1px solid #334155';
         th.style.textAlign = 'left';
         th.style.fontWeight = 'bold';
-        th.style.fontSize = '9px';
+        th.style.fontSize = '8px';
         headerRow.appendChild(th);
       });
       thead.appendChild(headerRow);
@@ -466,13 +509,20 @@ export function ReportsTab() {
         const row = reportData[i];
         const tr = document.createElement('tr');
         
+        const enrollmentInfo = row.enrollmentType === 'exceptional' 
+          ? `Exc: ${formatDateBR(row.enrollmentDate)}` 
+          : `Reg: ${formatDateBR(row.enrollmentDate)}`;
+
         const cells = [
-          row.unitName,
-          row.studentName,
-          row.className,
-          row.cycleName,
-          row.modality,
-          row.modality.includes('EAD') ? `${row.totalAccesses}/3` : `${row.classesAttended}/${row.totalClassesConsidered}`,
+          row.unitName.substring(0, 20),
+          row.studentName.substring(0, 25),
+          row.className.substring(0, 15),
+          row.cycleName.substring(0, 15),
+          row.modality.includes('EAD') ? 'EAD' : 'VC',
+          enrollmentInfo,
+          row.modality.includes('EAD') 
+            ? `${row.totalAccesses}/3` 
+            : `${row.classesAttended}/${row.totalClassesConsidered}`,
           row.ultimoAcesso,
           row.frequency,
           row.situacao,
@@ -481,13 +531,13 @@ export function ReportsTab() {
         cells.forEach((cellText, idx) => {
           const td = document.createElement('td');
           td.textContent = cellText;
-          td.style.padding = '5px 4px';
+          td.style.padding = '3px 2px';
           td.style.border = '1px solid #cbd5e1';
-          td.style.fontSize = '8px';
+          td.style.fontSize = '7px';
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
           
           // Cor de fundo baseada na situação (última coluna)
-          if (idx === 8) {
+          if (idx === 9) {
             td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
             td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
             td.style.fontWeight = 'bold';
@@ -504,7 +554,7 @@ export function ReportsTab() {
       return tableElement;
     };
 
-    const rowsPerPage = 15;
+    const rowsPerPage = 18;
     const totalPages = Math.ceil(reportData.length / rowsPerPage);
 
     for (let page = 0; page < totalPages; page++) {
@@ -560,28 +610,33 @@ export function ReportsTab() {
       
       // Cards de estatísticas
       pdf.setFillColor(59, 130, 246);
-      pdf.roundedRect(margin, yPos, 45, 14, 2, 2, 'F');
+      pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Total Alunos', margin + 5, yPos + 5);
+      pdf.text('Total', margin + 5, yPos + 5);
       pdf.setFontSize(10);
       pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
       
       pdf.setFillColor(34, 197, 94);
-      pdf.roundedRect(margin + 60, yPos, 45, 14, 2, 2, 'F');
+      pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Frequentes', margin + 65, yPos + 5);
+      pdf.text('Frequentes', margin + 55, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.frequentes.toString(), margin + 65, yPos + 11);
+      pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
       
       pdf.setFillColor(239, 68, 68);
-      pdf.roundedRect(margin + 120, yPos, 45, 14, 2, 2, 'F');
+      pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(8);
-      pdf.text('Incompletos', margin + 125, yPos + 5);
+      pdf.text('Incompletos', margin + 105, yPos + 5);
       pdf.setFontSize(10);
-      pdf.text(stats.incompletos.toString(), margin + 125, yPos + 11);
+      pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
+
+      // Informação adicional sobre EAD
+      pdf.setTextColor(100, 116, 139);
+      pdf.setFontSize(8);
+      pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
 
       yPos += 20;
 
@@ -679,7 +734,7 @@ export function ReportsTab() {
           <h3 className="font-semibold text-slate-800">Filtros</h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
             <select
@@ -742,6 +797,19 @@ export function ReportsTab() {
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Situação</label>
+            <select
+              value={filters.situacao}
+              onChange={(e) => handleFilterChange('situacao', e.target.value)}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            >
+              <option value="all">Todas</option>
+              <option value="frequentes">Apenas Frequentes</option>
+              <option value="incompletos">Apenas Incompletos</option>
+            </select>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
             <input
               type="date"
@@ -775,7 +843,7 @@ export function ReportsTab() {
       </div>
 
       {/* Cards de Estatísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
           <p className="text-2xl font-bold text-blue-700">{stats.totalStudents}</p>
@@ -790,15 +858,29 @@ export function ReportsTab() {
           <p className="text-sm text-red-600 font-medium">Incompletos</p>
           <p className="text-2xl font-bold text-red-700">{stats.incompletos}</p>
         </div>
+
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+          <p className="text-sm text-purple-600 font-medium">EAD</p>
+          <p className="text-2xl font-bold text-purple-700">{stats.totalEAD}</p>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <p className="text-sm text-amber-600 font-medium">Videoconferência</p>
+          <p className="text-2xl font-bold text-amber-700">{stats.totalVideoconferencia}</p>
+        </div>
       </div>
 
       {/* Barra de distribuição */}
       <div className="bg-white border border-slate-200 rounded-lg p-4">
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-sm font-medium text-slate-700">Distribuição</h4>
+          <h4 className="text-sm font-medium text-slate-700">Distribuição por Situação</h4>
           <div className="flex space-x-4 text-xs">
-            <span className="text-green-600 font-medium">Frequentes: {stats.frequentes} ({frequentesPercentage.toFixed(1)}%)</span>
-            <span className="text-red-600 font-medium">Incompletos: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)</span>
+            <span className="text-green-600 font-medium">
+              Frequentes: {stats.frequentes} ({frequentesPercentage.toFixed(1)}%)
+            </span>
+            <span className="text-red-600 font-medium">
+              Incompletos: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)
+            </span>
           </div>
         </div>
         
@@ -856,6 +938,9 @@ export function ReportsTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
                   MODALIDADE
                 </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
+                  MATRÍCULA
+                </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
                   AULAS/ACESSOS
                 </th>
@@ -864,6 +949,9 @@ export function ReportsTab() {
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
                   FREQ.
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
+                  STATUS EAD
                 </th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
                   SITUAÇÃO
@@ -878,15 +966,40 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <div className="flex flex-col">
+                      <span className={`text-xs font-medium ${
+                        row.enrollmentType === 'exceptional' ? 'text-amber-600' : 'text-blue-600'
+                      }`}>
+                        {row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular'}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-'}
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-4 py-2 text-sm text-center font-medium">
                     {row.modality.includes('EAD') 
-                      ? `${row.totalAccesses}/3` 
-                      : `${row.classesAttended}/${row.totalClassesConsidered}`}
+                      ? `${row.totalAccesses}/3 acessos` 
+                      : `${row.classesAttended}/${row.totalClassesConsidered} aulas`}
                   </td>
                   <td className="px-4 py-2 text-sm text-center text-slate-600">
                     {row.ultimoAcesso}
                   </td>
                   <td className="px-4 py-2 text-sm text-center font-medium">{row.frequency}</td>
+                  <td className="px-4 py-2 text-sm text-center">
+                    {row.modality.includes('EAD') ? (
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                        row.isFrequente 
+                          ? 'bg-green-100 text-green-800 border border-green-300' 
+                          : 'bg-slate-100 text-slate-600 border border-slate-300'
+                      }`}>
+                        {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-sm text-center">
                     <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
                       row.situacao === 'FREQUENTE' 
@@ -900,7 +1013,7 @@ export function ReportsTab() {
               ))}
               {reportData.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={11} className="px-6 py-12 text-center text-slate-500">
                     Nenhum dado encontrado com os filtros selecionados
                   </td>
                 </tr>
@@ -909,6 +1022,17 @@ export function ReportsTab() {
           </table>
         </div>
       </div>
+
+      {/* Rodapé com informações adicionais */}
+      {reportData.length > 0 && (
+        <div className="text-xs text-slate-500 text-right">
+          Total de registros: {reportData.length} • 
+          Frequentes: {stats.frequentes} • 
+          Incompletos: {stats.incompletos} • 
+          EAD: {stats.totalEAD} • 
+          VC: {stats.totalVideoconferencia}
+        </div>
+      )}
     </div>
   );
 }
