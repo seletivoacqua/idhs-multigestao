@@ -6,11 +6,13 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
-import SyntheticReportModal from './SyntheticReportModal'; // assumindo export default
+import SyntheticReportModal from './SyntheticReportModal';
 import {
   formatDateToDisplay,
   extractDatePart,
-  // outras funções se necessário, mas vamos importar só as usadas
+  isDateGreaterOrEqual,
+  compareDates,
+  isDateInRange
 } from '../../utils/dateUtils';
 
 interface Unit {
@@ -66,7 +68,7 @@ export function ReportsTab() {
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [filteredReportData, setFilteredReportData] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -78,7 +80,7 @@ export function ReportsTab() {
     situacao: 'all',
   });
 
-  const [shouldGenerateReport, setShouldGenerateReport] = useState(true);
+  const [shouldGenerateReport, setShouldGenerateReport] = useState(false);
 
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
@@ -92,7 +94,17 @@ export function ReportsTab() {
     totalVideoconferencia: 0,
   });
 
-  // Função local para encontrar a data mais recente (genérica)
+  // --- Funções auxiliares locais ---
+  const formatDateBR = (dateStr: string | null | undefined): string => {
+    if (!dateStr) return '-';
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('pt-BR');
+    } catch {
+      return '-';
+    }
+  };
+
   const getMostRecentDate = (dates: (string | null)[]): string | null => {
     const validDates = dates.filter(d => d !== null) as string[];
     if (validDates.length === 0) return null;
@@ -101,7 +113,7 @@ export function ReportsTab() {
     return mostRecent.toISOString().split('T')[0];
   };
 
-  // Carregar dados iniciais apenas uma vez
+  // Carregar dados auxiliares apenas uma vez
   useEffect(() => {
     if (user) {
       loadUnits();
@@ -158,15 +170,12 @@ export function ReportsTab() {
     if (filters.cycleId) {
       filtered = filtered.filter(item => item.cycleId === filters.cycleId);
     }
-
     if (filters.classId) {
       filtered = filtered.filter(item => item.classId === filters.classId);
     }
-
     if (filters.unitId) {
       filtered = filtered.filter(item => item.unitId === filters.unitId);
     }
-
     if (filters.modality !== 'all') {
       filtered = filtered.filter(item =>
         filters.modality === 'EAD'
@@ -174,20 +183,17 @@ export function ReportsTab() {
           : item.modality.includes('Videoconferência')
       );
     }
-
     if (filters.studentName) {
       const search = filters.studentName.toLowerCase();
       filtered = filtered.filter(item =>
         item.studentName.toLowerCase().includes(search)
       );
     }
-
     if (filters.situacao !== 'all') {
       filtered = filtered.filter(item =>
         item.situacao === (filters.situacao === 'frequentes' ? 'FREQUENTE' : 'INCOMPLETO')
       );
     }
-
     if (filters.startDate || filters.endDate) {
       filtered = filtered.filter(item => {
         const ultimoAcessoParts = item.ultimoAcesso.split('/');
@@ -332,7 +338,7 @@ export function ReportsTab() {
               if (relevantAttendance.length > 0) {
                 const dates = relevantAttendance.map(a => a.class_date);
                 const mostRecent = getMostRecentDate(dates);
-                ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+                ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
               }
             } else {
               classesAttended = 0;
@@ -369,7 +375,7 @@ export function ReportsTab() {
 
             if (validAccesses.length > 0) {
               const mostRecent = getMostRecentDate(validAccesses);
-              ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+              ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
             }
 
             situacao = isFrequente ? 'FREQUENTE' : 'INCOMPLETO';
@@ -422,6 +428,11 @@ export function ReportsTab() {
     setShouldGenerateReport(true);
   };
 
+  const handleGenerateReport = () => {
+    setShouldGenerateReport(true);
+  };
+
+  // Exportar para XLSX
   const exportToXLSX = () => {
     if (filteredReportData.length === 0) return;
 
@@ -449,7 +460,7 @@ export function ReportsTab() {
       row.cycleName,
       row.modality,
       row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
-      row.enrollmentDate ? formatDateToDisplay(row.enrollmentDate) : '-',
+      row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
       row.modality.includes('EAD')
         ? `${row.totalAccesses}/3 acessos`
         : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
@@ -462,7 +473,6 @@ export function ReportsTab() {
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-
     const colWidths = headers.map((_, idx) => {
       const maxLength = Math.max(
         headers[idx].length,
@@ -477,6 +487,7 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  // Exportar para PDF
   const exportToPDF = async () => {
     if (!reportRef.current || filteredReportData.length === 0) return;
 
@@ -501,9 +512,10 @@ export function ReportsTab() {
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
 
+      // HEADERS ATUALIZADOS: ALUNO + demais, sem MATRÍCULA
       const headers = [
-        'UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
-        'MATRÍCULA', 'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'SITUAÇÃO'
+        'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
+        'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
       ];
 
       headers.forEach(headerText => {
@@ -526,23 +538,21 @@ export function ReportsTab() {
         const row = filteredReportData[i];
         const tr = document.createElement('tr');
 
-        const enrollmentInfo = row.enrollmentType === 'exceptional'
-          ? `Exc: ${formatDateToDisplay(row.enrollmentDate)}`
-          : `Reg: ${formatDateToDisplay(row.enrollmentDate)}`;
-
+        // Células na nova ordem: ALUNO, TURMA, CICLO, MODALIDADE, ...
         const cells = [
-          row.unitName.substring(0, 20),
-          row.studentName.substring(0, 25),
-          row.className.substring(0, 15),
-          row.cycleName.substring(0, 15),
-          row.modality.includes('EAD') ? 'EAD' : 'VC',
-          enrollmentInfo,
-          row.modality.includes('EAD')
+          row.studentName.substring(0, 30),               // ALUNO (com limite)
+          row.className.substring(0, 15),                 // TURMA
+          row.cycleName.substring(0, 15),                 // CICLO
+          row.modality.includes('EAD') ? 'EAD' : 'VC',    // MODALIDADE (abreviada)
+          row.modality.includes('EAD')                    // AULAS/ACESSOS
             ? `${row.totalAccesses}/3`
             : `${row.classesAttended}/${row.totalClassesConsidered}`,
-          row.ultimoAcesso,
-          row.frequency,
-          row.situacao,
+          row.ultimoAcesso,                                // ÚLTIMO ACESSO
+          row.frequency,                                   // FREQ.
+          row.modality.includes('EAD')                     // STATUS EAD
+            ? (row.isFrequente ? 'FREQ' : 'NÃO FREQ')
+            : '-',
+          row.situacao,                                    // SITUAÇÃO
         ];
 
         cells.forEach((cellText, idx) => {
@@ -553,13 +563,17 @@ export function ReportsTab() {
           td.style.fontSize = '7px';
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
 
-          if (idx === 9) {
+          // Destaque para a coluna SITUAÇÃO (índice 8)
+          if (idx === 8) {
             td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
             td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
             td.style.fontWeight = 'bold';
             td.style.textAlign = 'center';
           }
-
+          // Alinhamento para colunas numéricas
+          if (idx === 4 || idx === 5 || idx === 6) {
+            td.style.textAlign = 'center';
+          }
           tr.appendChild(td);
         });
 
@@ -761,110 +775,126 @@ export function ReportsTab() {
           {loading && <span className="text-sm text-blue-600 ml-2">(Atualizando...)</span>}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
-            <select
-              value={filters.cycleId}
-              onChange={(e) => handleFilterChange('cycleId', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">Todos os ciclos</option>
-              {cycles.map((cycle) => (
-                <option key={cycle.id} value={cycle.id}>
-                  {cycle.name} {cycle.status === 'closed' ? '(Encerrado)' : ''}
-                </option>
-              ))}
-            </select>
+        <div className="space-y-4">
+          {/* Primeira linha: selects principais */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
+              <select
+                value={filters.cycleId}
+                onChange={(e) => handleFilterChange('cycleId', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">Todos os ciclos</option>
+                {cycles.map((cycle) => (
+                  <option key={cycle.id} value={cycle.id}>
+                    {cycle.name} {cycle.status === 'closed' ? '(Encerrado)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Turma</label>
+              <select
+                value={filters.classId}
+                onChange={(e) => handleFilterChange('classId', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">Todas as turmas</option>
+                {classes.map((cls) => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name} ({cls.modality})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+              <select
+                value={filters.unitId}
+                onChange={(e) => handleFilterChange('unitId', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">Todas as unidades</option>
+                {units.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.name} - {unit.municipality}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
+              <select
+                value={filters.modality}
+                onChange={(e) => handleFilterChange('modality', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="all">Todas</option>
+                <option value="VIDEOCONFERENCIA">Videoconferência</option>
+                <option value="EAD">EAD 24h</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Situação</label>
+              <select
+                value={filters.situacao}
+                onChange={(e) => handleFilterChange('situacao', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="all">Todas</option>
+                <option value="frequentes">Apenas Frequentes</option>
+                <option value="incompletos">Apenas Incompletos</option>
+              </select>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Turma</label>
-            <select
-              value={filters.classId}
-              onChange={(e) => handleFilterChange('classId', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">Todas as turmas</option>
-              {classes.map((cls) => (
-                <option key={cls.id} value={cls.id}>
-                  {cls.name} ({cls.modality})
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Segunda linha: datas, busca e botão gerar */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              />
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
-            <select
-              value={filters.unitId}
-              onChange={(e) => handleFilterChange('unitId', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="">Todas as unidades</option>
-              {units.map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.name} - {unit.municipality}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Data Fim</label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              />
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Modalidade</label>
-            <select
-              value={filters.modality}
-              onChange={(e) => handleFilterChange('modality', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="all">Todas</option>
-              <option value="VIDEOCONFERENCIA">Videoconferência</option>
-              <option value="EAD">EAD 24h</option>
-            </select>
-          </div>
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Aluno</label>
+              <input
+                type="text"
+                placeholder="Digite o nome do aluno..."
+                value={filters.studentName}
+                onChange={(e) => handleFilterChange('studentName', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              />
+            </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Situação</label>
-            <select
-              value={filters.situacao}
-              onChange={(e) => handleFilterChange('situacao', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            >
-              <option value="all">Todas</option>
-              <option value="frequentes">Apenas Frequentes</option>
-              <option value="incompletos">Apenas Incompletos</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
-            <input
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => handleFilterChange('startDate', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Data Fim</label>
-            <input
-              type="date"
-              value={filters.endDate}
-              onChange={(e) => handleFilterChange('endDate', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Buscar Aluno</label>
-            <input
-              type="text"
-              placeholder="Digite o nome do aluno..."
-              value={filters.studentName}
-              onChange={(e) => handleFilterChange('studentName', e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
-            />
+            <div>
+              <button
+                onClick={handleGenerateReport}
+                disabled={loading}
+                className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 font-medium"
+              >
+                Gerar Relatório
+              </button>
+            </div>
           </div>
         </div>
 
@@ -948,95 +978,105 @@ export function ReportsTab() {
         </div>
       )}
 
-      {/* Tabela de Resultados */}
+      {/* Tabela de Resultados - COM ALUNO E SEM MATRÍCULA */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
-          <thead className="bg-slate-800 text-white">
-  <tr>
-    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">ALUNO</th>
-    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">TURMA</th>
-    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CICLO</th>
-    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MODALIDADE</th>
-    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">AULAS/ACESSOS</th>
-    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">ÚLTIMO ACESSO</th>
-    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
-    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
-    <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
-  </tr>
-</thead>
-           <tbody className="divide-y divide-slate-200">
-  {displayData.map((row, index) => (
-    <tr key={`${row.studentCpf}-${row.classId}-${index}`} className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.studentName}</td> {/* NOVA COLUNA */}
-      <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
-      {/* REMOVIDA a coluna de matrícula */}
-      <td className="px-4 py-2 text-sm text-center font-medium">
-        {row.modality.includes('EAD')
-          ? `${row.totalAccesses}/3 acessos`
-          : `${row.classesAttended}/${row.totalClassesConsidered} aulas`}
-      </td>
-      <td className="px-4 py-2 text-sm text-center text-slate-600">{row.ultimoAcesso}</td>
-      <td className="px-4 py-2 text-sm text-center font-medium">
-        <span className={
-          row.modality.includes('EAD')
-            ? 'text-slate-600'
-            : row.frequencyValue >= 60
-              ? 'text-green-600'
-              : 'text-red-600'
-        }>
-          {row.frequency}
-        </span>
-      </td>
-      {/* COLUNA STATUS EAD */}
-      {row.modality.includes('EAD') ? (
-        <td className="px-4 py-2 text-sm text-center">
-          <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${row.isFrequente
-              ? 'bg-green-100 text-green-800 border border-green-300'
-              : 'bg-slate-100 text-slate-600 border border-slate-300'
-            }`}>
-            {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
-          </span>
-        </td>
-      ) : (
-        <td className="px-4 py-2 text-sm text-center">
-          <span className="text-xs text-slate-400">-</span>
-        </td>
-      )}
-      {/* COLUNA SITUAÇÃO */}
-      <td className="px-4 py-2 text-sm text-center">
-        <div className="flex flex-col items-center">
-          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${row.situacao === 'FREQUENTE'
-              ? 'bg-green-500 text-white shadow-md'
-              : 'bg-red-500 text-white shadow-md'
-            }`}>
-            {row.situacao}
-          </span>
-          {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
-            <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
-              {row.frequencyValue.toFixed(1)}% &lt; 60%
-            </div>
-          )}
-        </div>
-      </td>
-    </tr>
-  ))}
+            <thead className="bg-slate-800 text-white">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">ALUNO</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">TURMA</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CICLO</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MODALIDADE</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">AULAS/ACESSOS</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">ÚLTIMO ACESSO</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {displayData.map((row, index) => (
+                <tr
+                  key={`${row.studentCpf}-${row.classId}-${index}`}
+                  className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}
+                >
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.studentName}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
+                  <td className="px-4 py-2 text-sm text-center font-medium">
+                    {row.modality.includes('EAD')
+                      ? `${row.totalAccesses}/3 acessos`
+                      : `${row.classesAttended}/${row.totalClassesConsidered} aulas`}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center text-slate-600">{row.ultimoAcesso}</td>
+                  <td className="px-4 py-2 text-sm text-center font-medium">
+                    <span className={
+                      row.modality.includes('EAD')
+                        ? 'text-slate-600'
+                        : row.frequencyValue >= 60
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                    }>
+                      {row.frequency}
+                    </span>
+                  </td>
 
-  {/* Linha de "nenhum dado encontrado" - colSpan continua 9 (pois agora temos 9 colunas) */}
-  {displayData.length === 0 && !loading && !initialLoading && (
-    <tr>
-      <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
-        {/* conteúdo existente */}
-      </td>
-    </tr>
-  )}
+                  {/* COLUNA STATUS EAD */}
+                  {row.modality.includes('EAD') ? (
+                    <td className="px-4 py-2 text-sm text-center">
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${row.isFrequente
+                          ? 'bg-green-100 text-green-800 border border-green-300'
+                          : 'bg-slate-100 text-slate-600 border border-slate-300'
+                        }`}>
+                        {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
+                      </span>
+                    </td>
+                  ) : (
+                    <td className="px-4 py-2 text-sm text-center">
+                      <span className="text-xs text-slate-400">-</span>
+                    </td>
+                  )}
 
-  {/* Linha de loading - colSpan continua 9 */}
-  {loading && (
-    <tr>
-      <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  {/* COLUNA SITUAÇÃO */}
+                  <td className="px-4 py-2 text-sm text-center">
+                    <div className="flex flex-col items-center">
+                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${row.situacao === 'FREQUENTE'
+                          ? 'bg-green-500 text-white shadow-md'
+                          : 'bg-red-500 text-white shadow-md'
+                        }`}>
+                        {row.situacao}
+                      </span>
+                      {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
+                        <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
+                          {row.frequencyValue.toFixed(1)}% &lt; 60%
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {/* Linha de "nenhum dado encontrado" - colSpan 9 */}
+              {displayData.length === 0 && !loading && !initialLoading && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                    <div className="flex flex-col items-center">
+                      <FileBarChart className="w-12 h-12 text-slate-300 mb-3" />
+                      <p className="text-lg">Nenhum dado encontrado</p>
+                      <p className="text-sm text-slate-400 mt-1">
+                        Selecione os filtros e clique em "Gerar Relatório"
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {/* Linha de loading - colSpan 9 */}
+              {loading && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <RefreshCw className="w-12 h-12 text-slate-300 mb-3 animate-spin" />
                       <p className="text-lg">Carregando dados...</p>
