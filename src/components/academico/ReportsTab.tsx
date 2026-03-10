@@ -220,7 +220,7 @@ export function ReportsTab() {
     });
   };
 
- const generateReport = async () => {
+const generateReport = async () => {
   if (!user) return;
 
   setLoading(true);
@@ -248,13 +248,8 @@ export function ReportsTab() {
 
     const { data: classes, error: classesError } = await classesQuery;
 
-    if (classesError) {
-      console.error('Erro ao carregar turmas:', classesError);
-      throw classesError;
-    }
-
+    if (classesError) throw classesError;
     if (!classes || classes.length === 0) {
-      console.log('Nenhuma turma encontrada');
       setReportData([]);
       setFilteredReportData([]);
       setLoading(false);
@@ -265,9 +260,8 @@ export function ReportsTab() {
 
     // 2. IDs das turmas
     const classIds = classes.map(c => c.id);
-    console.log('classIds:', classIds.length);
 
-    // 3. Buscar todos os alunos matriculados nessas turmas
+    // 3. Buscar todos os alunos
     const { data: classStudents, error: studentsError } = await supabase
       .from('class_students')
       .select(`
@@ -291,13 +285,8 @@ export function ReportsTab() {
       `)
       .in('class_id', classIds);
 
-    if (studentsError) {
-      console.error('Erro ao carregar alunos:', studentsError);
-      throw studentsError;
-    }
-
+    if (studentsError) throw studentsError;
     if (!classStudents || classStudents.length === 0) {
-      console.log('Nenhum aluno matriculado');
       setReportData([]);
       setFilteredReportData([]);
       setLoading(false);
@@ -309,7 +298,6 @@ export function ReportsTab() {
     // 4. Separar por modalidade
     const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
     const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
-    console.log('EAD classIds:', eadClassIds.length, 'Video classIds:', videoClassIds.length);
 
     // Mapa de alunos por turma
     const studentsByClass: Record<string, typeof classStudents> = {};
@@ -318,18 +306,18 @@ export function ReportsTab() {
       studentsByClass[cs.class_id].push(cs);
     });
 
-    // 5. Buscar dados de EAD em lote
+    // 5. Buscar dados de EAD (funciona bem)
     let eadAccessData: any[] = [];
     if (eadClassIds.length > 0) {
-      // Coletar todos os student_ids das turmas EAD
-      const studentIds = classStudents
-        .filter(cs => eadClassIds.includes(cs.class_id))
-        .map(cs => cs.student_id)
-        .filter((id, index, self) => self.indexOf(id) === index); // remover duplicatas
-      console.log('studentIds (EAD):', studentIds.length);
+      const studentIds = [
+        ...new Set(
+          classStudents
+            .filter(cs => eadClassIds.includes(cs.class_id))
+            .map(cs => cs.student_id)
+        )
+      ];
 
       if (studentIds.length > 0) {
-        // Dividir em lotes para evitar limite de 1000
         const batchSize = 900;
         for (let i = 0; i < eadClassIds.length; i += batchSize) {
           const classBatch = eadClassIds.slice(i, i + batchSize);
@@ -341,57 +329,51 @@ export function ReportsTab() {
               .in('class_id', classBatch)
               .in('student_id', studentBatch);
 
-            if (error) {
-              console.error('Erro ao buscar ead_access (lote):', error);
-            } else {
-              console.log(`Lote EAD: classBatch ${classBatch.length}, studentBatch ${studentBatch.length}, retornou ${data?.length} registros`);
-              eadAccessData = [...eadAccessData, ...(data || [])];
-            }
+            if (error) console.error('Erro EAD:', error);
+            else eadAccessData = [...eadAccessData, ...(data || [])];
           }
         }
       }
     }
-    console.log('Total eadAccessData:', eadAccessData.length);
 
-    // 6. Buscar dados de attendance (videoconferência) em lote
+    // 6. Buscar dados de ATTENDANCE (videoconferência) - OTIMIZADO
     let attendanceData: any[] = [];
     if (videoClassIds.length > 0) {
-      const studentIds = classStudents
-        .filter(cs => videoClassIds.includes(cs.class_id))
-        .map(cs => cs.student_id)
-        .filter((id, index, self) => self.indexOf(id) === index);
-      console.log('studentIds (Video):', studentIds.length);
+      // Processar cada turma individualmente para evitar URLs longas
+      for (const classId of videoClassIds) {
+        const studentsInClass = studentsByClass[classId] || [];
+        if (studentsInClass.length === 0) continue;
 
-      if (studentIds.length > 0) {
-        const batchSize = 900;
-        for (let i = 0; i < videoClassIds.length; i += batchSize) {
-          const classBatch = videoClassIds.slice(i, i + batchSize);
-          for (let j = 0; j < studentIds.length; j += batchSize) {
-            const studentBatch = studentIds.slice(j, j + batchSize);
-            const { data, error } = await supabase
-              .from('attendance')
-              .select('class_id, student_id, class_number, class_date, present')
-              .in('class_id', classBatch)
-              .in('student_id', studentBatch)
-              .order('class_number');
+        const studentIds = studentsInClass.map(cs => cs.student_id);
+        
+        // Dividir os alunos da turma em lotes de 300
+        const batchSize = 300;
+        for (let i = 0; i < studentIds.length; i += batchSize) {
+          const studentBatch = studentIds.slice(i, i + batchSize);
+          
+          const { data, error } = await supabase
+            .from('attendance')
+            .select('class_id, student_id, class_number, class_date, present')
+            .eq('class_id', classId)
+            .in('student_id', studentBatch)
+            .order('class_number');
 
-            if (error) {
-              console.error('Erro ao buscar attendance (lote):', error);
-            } else {
-              console.log(`Lote Video: classBatch ${classBatch.length}, studentBatch ${studentBatch.length}, retornou ${data?.length} registros`);
-              attendanceData = [...attendanceData, ...(data || [])];
-            }
+          if (error) {
+            console.error(`Erro attendance turma ${classId}:`, error);
+          } else {
+            attendanceData = [...attendanceData, ...(data || [])];
           }
         }
       }
     }
-    console.log('Total attendanceData:', attendanceData.length);
+
+    console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
+    console.log(`📊 Total attendanceData: ${attendanceData.length}`);
 
     // 7. Construir mapas
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
-      const key = `${item.class_id}-${item.student_id}`;
-      eadMap[key] = item;
+      eadMap[`${item.class_id}-${item.student_id}`] = item;
     });
 
     const attendanceMap: Record<string, any[]> = {};
@@ -401,18 +383,15 @@ export function ReportsTab() {
       attendanceMap[key].push(item);
     });
 
-    // 8. Montar relatório
+    // 8. Montar relatório final
     const allReportData: ReportData[] = [];
 
     for (const cls of classes) {
       const students = studentsByClass[cls.id] || [];
-      console.log(`Processando turma ${cls.name} (${cls.modality}), ${students.length} alunos`);
+      console.log(`🔄 Processando turma ${cls.name} (${cls.modality}) → ${students.length} alunos`);
 
       for (const cs of students) {
-        // Aplicar filtro de unidade
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
-          continue;
-        }
+        if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
 
         const unitId = cs.students?.unit_id || '';
         const unitName = cs.students?.units?.name || 'Não informado';
@@ -431,6 +410,7 @@ export function ReportsTab() {
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}-${cs.student_id}`;
           const attendanceList = attendanceMap[key] || [];
+
           if (attendanceList.length > 0) {
             const relevantAttendance = attendanceList.filter(att => {
               if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
@@ -454,7 +434,6 @@ export function ReportsTab() {
               ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
           } else {
-            // Sem registros de attendance
             classesAttended = 0;
             totalClassesConsidered = 0;
             frequency = '0.0%';
@@ -463,7 +442,6 @@ export function ReportsTab() {
             ultimoAcesso = '-';
           }
         } else {
-          // EAD
           const key = `${cls.id}-${cs.student_id}`;
           const accessData = eadMap[key];
           isFrequente = accessData?.is_frequente === true;
@@ -516,7 +494,6 @@ export function ReportsTab() {
     console.log(`📊 Total de registros gerados: ${allReportData.length}`);
 
     allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-
     setReportData(allReportData);
     applyFilters();
 
