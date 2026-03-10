@@ -1169,7 +1169,7 @@ export function ReportsTab() {
       </div>
 
       {/* Rodapé com informações adicionais */}
-      {displayData.length > 0 && (
+     {displayData.length > 0 && (
         <div className="flex justify-between items-center text-xs text-slate-500">
           <div>
             Total de registros: {displayData.length} • 
