@@ -6,12 +6,12 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
-import { SyntheticReportModal } from './SyntheticReportModal';
-import { 
-  formatDateToDisplay, 
-  forceDateToDisplay, 
-  formatDateToDatabase, 
-  extractDatePart, 
+import SyntheticReportModal from './SyntheticReportModal'; // assumindo export default
+import {
+  formatDateToDisplay,
+  forceDateToDisplay,
+  formatDateToDatabase,
+  extractDatePart, // já importada, não precisa redeclarar
   isDateGreaterOrEqual,
   formatDateInput,
   parseDateInput,
@@ -85,10 +85,9 @@ export function ReportsTab() {
     studentName: '',
     situacao: 'all',
   });
-  
-  // Controle para gerar relatório apenas quando necessário
+
   const [shouldGenerateReport, setShouldGenerateReport] = useState(true);
-  
+
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
   const [isSyntheticModalOpen, setIsSyntheticModalOpen] = useState(false);
@@ -100,12 +99,6 @@ export function ReportsTab() {
     totalEAD: 0,
     totalVideoconferencia: 0,
   });
-
-  // Função auxiliar para extrair data
-  const extractDatePart = (dateStr: string | null | undefined): string | null => {
-    if (!dateStr) return null;
-    return dateStr.split('T')[0];
-  };
 
   // Função para formatar data no padrão brasileiro
   const formatDateBR = (dateStr: string | null | undefined): string => {
@@ -122,7 +115,7 @@ export function ReportsTab() {
   const getMostRecentDate = (dates: (string | null)[]): string | null => {
     const validDates = dates.filter(d => d !== null) as string[];
     if (validDates.length === 0) return null;
-    
+
     const dateObjects = validDates.map(d => new Date(d));
     const mostRecent = new Date(Math.max(...dateObjects.map(d => d.getTime())));
     return mostRecent.toISOString().split('T')[0];
@@ -182,53 +175,44 @@ export function ReportsTab() {
   const applyFilters = () => {
     let filtered = [...reportData];
 
-    // Filtrar por ciclo
     if (filters.cycleId) {
       filtered = filtered.filter(item => item.cycleId === filters.cycleId);
     }
 
-    // Filtrar por turma
     if (filters.classId) {
       filtered = filtered.filter(item => item.classId === filters.classId);
     }
 
-    // Filtrar por unidade
     if (filters.unitId) {
       filtered = filtered.filter(item => item.unitId === filters.unitId);
     }
 
-    // Filtrar por modalidade
     if (filters.modality !== 'all') {
-      filtered = filtered.filter(item => 
-        filters.modality === 'EAD' 
+      filtered = filtered.filter(item =>
+        filters.modality === 'EAD'
           ? item.modality.includes('EAD')
           : item.modality.includes('Videoconferência')
       );
     }
 
-    // Filtrar por nome
     if (filters.studentName) {
       const search = filters.studentName.toLowerCase();
-      filtered = filtered.filter(item => 
+      filtered = filtered.filter(item =>
         item.studentName.toLowerCase().includes(search)
       );
     }
 
-    // Filtrar por situação
     if (filters.situacao !== 'all') {
-      filtered = filtered.filter(item => 
+      filtered = filtered.filter(item =>
         item.situacao === (filters.situacao === 'frequentes' ? 'FREQUENTE' : 'INCOMPLETO')
       );
     }
 
-    // Filtrar por período (datas)
     if (filters.startDate || filters.endDate) {
       filtered = filtered.filter(item => {
-        // Extrair data do último acesso
         const ultimoAcessoParts = item.ultimoAcesso.split('/');
         if (ultimoAcessoParts.length === 3) {
           const ultimoAcessoISO = `${ultimoAcessoParts[2]}-${ultimoAcessoParts[1]}-${ultimoAcessoParts[0]}`;
-          
           if (filters.startDate && ultimoAcessoISO < filters.startDate) return false;
           if (filters.endDate && ultimoAcessoISO > filters.endDate) return false;
         }
@@ -240,7 +224,6 @@ export function ReportsTab() {
     calculateStats(filtered);
   };
 
-  // Calcular estatísticas
   const calculateStats = (data: ReportData[]) => {
     setStats({
       totalStudents: data.length,
@@ -251,17 +234,15 @@ export function ReportsTab() {
     });
   };
 
-  // Gerar relatório completo
   const generateReport = async () => {
     if (!user) return;
-    
+
     setLoading(true);
     setInitialLoading(false);
 
     try {
       console.log('🔄 Gerando relatório...');
-      
-      // Buscar todas as turmas
+
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -274,7 +255,6 @@ export function ReportsTab() {
           cycles (id, name, start_date, end_date, status)
         `);
 
-      // Aplicar filtro de ciclo se selecionado
       if (filters.cycleId) {
         classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
       }
@@ -290,7 +270,6 @@ export function ReportsTab() {
 
       const allReportData: ReportData[] = [];
 
-      // Para cada turma, buscar alunos matriculados
       for (const cls of classes || []) {
         const { data: classStudents, error: studentsError } = await supabase
           .from('class_students')
@@ -323,9 +302,7 @@ export function ReportsTab() {
 
         console.log(`👥 Turma ${cls.name}: ${classStudents.length} alunos`);
 
-        // Para cada aluno, buscar dados específicos da modalidade
         for (const cs of classStudents) {
-          // Dados da unidade
           let unitName = 'Não informado';
           let unitId = cs.students?.unit_id || '';
 
@@ -334,11 +311,9 @@ export function ReportsTab() {
             unitId = cs.students.units.id;
           }
 
-          // Dados de matrícula
           const enrollmentDate = extractDatePart(cs.enrollment_date);
           const enrollmentType = cs.enrollment_type;
 
-          // Variáveis para armazenar os dados calculados
           let classesAttended = 0;
           let totalClassesConsidered = 0;
           let ultimoAcesso = '-';
@@ -349,11 +324,6 @@ export function ReportsTab() {
           let isFrequente = false;
 
           if (cls.modality === 'VIDEOCONFERENCIA') {
-            // ===========================================
-            // VIDEOCONFERÊNCIA: Calcular frequência real
-            // ===========================================
-            
-            // Buscar todas as frequências do aluno
             const { data: attendanceData } = await supabase
               .from('attendance')
               .select('class_number, class_date, present')
@@ -362,36 +332,29 @@ export function ReportsTab() {
               .order('class_number');
 
             if (attendanceData && attendanceData.length > 0) {
-              // Filtrar por data de matrícula (se for matrícula excepcional)
               const relevantAttendance = attendanceData.filter(att => {
                 if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
                 const attDate = extractDatePart(att.class_date);
                 return attDate && attDate >= enrollmentDate;
               });
 
-              // Contar presenças
               classesAttended = relevantAttendance.filter(a => a.present).length;
-              
-              // Contar aulas únicas realizadas (para este aluno)
               const uniqueClasses = new Set(relevantAttendance.map(a => a.class_number));
               totalClassesConsidered = uniqueClasses.size;
 
-              // 🔥 REGRA CORRETA: FREQUENTE se ≥60%
-              frequencyValue = totalClassesConsidered > 0 
-                ? (classesAttended / totalClassesConsidered) * 100 
+              frequencyValue = totalClassesConsidered > 0
+                ? (classesAttended / totalClassesConsidered) * 100
                 : 0;
               frequency = `${frequencyValue.toFixed(1)}%`;
-              
+
               situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
-              // Último acesso (data mais recente com presença ou registro)
               if (relevantAttendance.length > 0) {
                 const dates = relevantAttendance.map(a => a.class_date);
                 const mostRecent = getMostRecentDate(dates);
                 ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
               }
             } else {
-              // Aluno sem nenhuma frequência registrada
               classesAttended = 0;
               totalClassesConsidered = 0;
               frequency = '0.0%';
@@ -399,13 +362,7 @@ export function ReportsTab() {
               situacao = 'INCOMPLETO';
               ultimoAcesso = '-';
             }
-
           } else {
-            // ===========================================
-            // EAD: Usar frequência manual do professor
-            // ===========================================
-            
-            // Buscar dados de acesso EAD
             const { data: accessData } = await supabase
               .from('ead_access')
               .select('access_date_1, access_date_2, access_date_3, is_frequente')
@@ -413,10 +370,8 @@ export function ReportsTab() {
               .eq('student_id', cs.student_id)
               .maybeSingle();
 
-            // 🔥 REGRA EAD: Situação baseada no campo is_frequente (manual)
             isFrequente = accessData?.is_frequente === true;
 
-            // Contar acessos registrados (apenas para informação)
             const allAccesses = [
               accessData?.access_date_1,
               accessData?.access_date_2,
@@ -425,26 +380,21 @@ export function ReportsTab() {
 
             const validAccesses = allAccesses.filter(date => date !== null) as string[];
             totalAccesses = validAccesses.length;
-            
-            // Para EAD, consideramos 3 como total possível de acessos
+
             totalClassesConsidered = 3;
             classesAttended = totalAccesses;
-            
-            // Calcular percentual (apenas informativo, não usado para aprovação)
+
             frequencyValue = (totalAccesses / 3) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
-            
-            // Último acesso
+
             if (validAccesses.length > 0) {
               const mostRecent = getMostRecentDate(validAccesses);
               ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
             }
 
-            // 🔥 DECISÃO: Baseada APENAS no is_frequente
             situacao = isFrequente ? 'FREQUENTE' : 'INCOMPLETO';
           }
 
-          // Adicionar ao relatório
           allReportData.push({
             unitId,
             unitName,
@@ -470,13 +420,11 @@ export function ReportsTab() {
       }
 
       console.log(`📊 Total de registros: ${allReportData.length}`);
-      
-      // Ordenar por nome do aluno
+
       allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
 
       setReportData(allReportData);
-      applyFilters(); // Aplicar filtros após carregar
-
+      applyFilters();
     } catch (error) {
       console.error('❌ Erro ao gerar relatório:', error);
       alert('Erro ao carregar dados. Tente novamente.');
@@ -490,28 +438,26 @@ export function ReportsTab() {
     setFilters(prev => ({ ...prev, [key]: value }));
   };
 
-  // Recarregar relatório manualmente
   const handleRefreshReport = () => {
     setShouldGenerateReport(true);
   };
 
-  // Exportar para XLSX
   const exportToXLSX = () => {
     if (filteredReportData.length === 0) return;
 
     const headers = [
-      'UNIDADE', 
-      'ALUNO', 
-      'CPF', 
-      'TURMA', 
-      'CICLO', 
-      'MODALIDADE', 
-      'TIPO MATRÍCULA', 
+      'UNIDADE',
+      'ALUNO',
+      'CPF',
+      'TURMA',
+      'CICLO',
+      'MODALIDADE',
+      'TIPO MATRÍCULA',
       'DATA MATRÍCULA',
-      'AULAS/ACESSOS', 
-      'ÚLTIMO ACESSO', 
-      'FREQUÊNCIA', 
-      'STATUS MANUAL (EAD)', 
+      'AULAS/ACESSOS',
+      'ÚLTIMO ACESSO',
+      'FREQUÊNCIA',
+      'STATUS MANUAL (EAD)',
       'SITUAÇÃO'
     ];
 
@@ -524,12 +470,12 @@ export function ReportsTab() {
       row.modality,
       row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
       row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
-      row.modality.includes('EAD') 
-        ? `${row.totalAccesses}/3 acessos` 
+      row.modality.includes('EAD')
+        ? `${row.totalAccesses}/3 acessos`
         : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
       row.ultimoAcesso,
       row.frequency,
-      row.modality.includes('EAD') 
+      row.modality.includes('EAD')
         ? (row.isFrequente ? 'FREQUENTE (manual)' : 'NÃO FREQUENTE (manual)')
         : 'N/A',
       row.situacao,
@@ -551,7 +497,6 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Exportar para PDF
   const exportToPDF = async () => {
     if (!reportRef.current || filteredReportData.length === 0) return;
 
@@ -566,7 +511,6 @@ export function ReportsTab() {
     const margin = 10;
     const contentWidth = pageWidth - 2 * margin;
 
-    // Criar elemento para a tabela
     const createTableElement = (startRow: number, endRow: number) => {
       const tableElement = document.createElement('table');
       tableElement.style.width = '100%';
@@ -576,9 +520,9 @@ export function ReportsTab() {
 
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
-      
+
       const headers = [
-        'UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE', 
+        'UNIDADE', 'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
         'MATRÍCULA', 'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'SITUAÇÃO'
       ];
 
@@ -601,9 +545,9 @@ export function ReportsTab() {
       for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
         const row = filteredReportData[i];
         const tr = document.createElement('tr');
-        
-        const enrollmentInfo = row.enrollmentType === 'exceptional' 
-          ? `Exc: ${formatDateBR(row.enrollmentDate)}` 
+
+        const enrollmentInfo = row.enrollmentType === 'exceptional'
+          ? `Exc: ${formatDateBR(row.enrollmentDate)}`
           : `Reg: ${formatDateBR(row.enrollmentDate)}`;
 
         const cells = [
@@ -613,8 +557,8 @@ export function ReportsTab() {
           row.cycleName.substring(0, 15),
           row.modality.includes('EAD') ? 'EAD' : 'VC',
           enrollmentInfo,
-          row.modality.includes('EAD') 
-            ? `${row.totalAccesses}/3` 
+          row.modality.includes('EAD')
+            ? `${row.totalAccesses}/3`
             : `${row.classesAttended}/${row.totalClassesConsidered}`,
           row.ultimoAcesso,
           row.frequency,
@@ -628,18 +572,17 @@ export function ReportsTab() {
           td.style.border = '1px solid #cbd5e1';
           td.style.fontSize = '7px';
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
-          
-          // Cor de fundo baseada na situação (última coluna)
+
           if (idx === 9) {
             td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
             td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
             td.style.fontWeight = 'bold';
             td.style.textAlign = 'center';
           }
-          
+
           tr.appendChild(td);
         });
-        
+
         tbody.appendChild(tr);
       }
       tableElement.appendChild(tbody);
@@ -675,33 +618,32 @@ export function ReportsTab() {
       let yPos = margin + 26;
       pdf.setFontSize(9);
       pdf.setTextColor(51, 65, 85);
-      
+
       const filterInfo: string[] = [];
-      
+
       const selectedCycle = cycles.find(c => c.id === filters.cycleId);
       if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
-      
+
       const selectedUnit = units.find(u => u.id === filters.unitId);
       if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
-      
+
       const selectedClass = classes.find(c => c.id === filters.classId);
       if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
-      
+
       if (filters.modality !== 'all') {
         filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
       }
-      
+
       if (filters.startDate && filters.endDate) {
         filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
       }
-      
+
       if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
 
       pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
 
       yPos += 8;
-      
-      // Cards de estatísticas
+
       pdf.setFillColor(59, 130, 246);
       pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
@@ -709,7 +651,7 @@ export function ReportsTab() {
       pdf.text('Total', margin + 5, yPos + 5);
       pdf.setFontSize(10);
       pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
-      
+
       pdf.setFillColor(34, 197, 94);
       pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
@@ -717,7 +659,7 @@ export function ReportsTab() {
       pdf.text('Freq≥60%', margin + 55, yPos + 5);
       pdf.setFontSize(10);
       pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
-      
+
       pdf.setFillColor(239, 68, 68);
       pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
       pdf.setTextColor(255, 255, 255);
@@ -726,7 +668,6 @@ export function ReportsTab() {
       pdf.setFontSize(10);
       pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
 
-      // Informação adicional sobre EAD
       pdf.setTextColor(100, 116, 139);
       pdf.setFontSize(8);
       pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
@@ -736,10 +677,10 @@ export function ReportsTab() {
       const tableStartY = yPos;
       const startRow = page * rowsPerPage;
       const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
-      
+
       if (startRow < filteredReportData.length) {
         const tableElement = createTableElement(startRow, endRow);
-        
+
         const tempDiv = document.createElement('div');
         tempDiv.style.position = 'absolute';
         tempDiv.style.left = '-9999px';
@@ -756,9 +697,9 @@ export function ReportsTab() {
 
         const imgData = canvas.toDataURL('image/png');
         const imgHeight = (canvas.height * contentWidth) / canvas.width;
-        
+
         pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
-        
+
         document.body.removeChild(tempDiv);
       }
 
@@ -775,10 +716,8 @@ export function ReportsTab() {
     pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  // Usar filteredReportData para exibição
   const displayData = filteredReportData;
 
-  // Calcular porcentagens para os cards
   const frequentesPercentage = stats.totalStudents > 0
     ? (stats.frequentes / stats.totalStudents) * 100
     : 0;
@@ -1002,7 +941,7 @@ export function ReportsTab() {
               </span>
             </div>
           </div>
-          
+
           <div className="w-full h-10 bg-slate-200 rounded-lg overflow-hidden flex shadow-inner">
             <div
               className="bg-green-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
@@ -1014,7 +953,7 @@ export function ReportsTab() {
                 </span>
               )}
             </div>
-            
+
             <div
               className="bg-red-500 h-full flex items-center justify-center text-white text-xs font-medium transition-all duration-500 ease-out"
               style={{ width: `${incompletosPercentage}%` }}
@@ -1035,111 +974,90 @@ export function ReportsTab() {
           <table className="w-full">
             <thead className="bg-slate-800 text-white">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
-                  TURMA
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
-                  CICLO
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
-                  MODALIDADE
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">
-                  MATRÍCULA
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  AULAS/ACESSOS
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  ÚLTIMO ACESSO
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  FREQ.
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  STATUS EAD
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">
-                  SITUAÇÃO
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">TURMA</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CICLO</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MODALIDADE</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MATRÍCULA</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">AULAS/ACESSOS</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">ÚLTIMO ACESSO</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
               </tr>
             </thead>
-           <tbody className="divide-y divide-slate-200">
-  {displayData.map((row, index) => (
-    <tr key={`${row.studentCpf}-${row.classId}-${index}`} className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
-      <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
-      <td className="px-4 py-2 text-sm">
-        <div className="flex flex-col">
-          <span className={`text-xs font-medium ${
-            row.enrollmentType === 'exceptional' ? 'text-amber-600' : 'text-blue-600'
-          }`}>
-            {row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular'}
-          </span>
-          <span className="text-xs text-slate-500">
-            {row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-'}
-          </span>
-        </div>
-      </td>
-      <td className="px-4 py-2 text-sm text-center font-medium">
-        {row.modality.includes('EAD') 
-          ? `${row.totalAccesses}/3 acessos` 
-          : `${row.classesAttended}/${row.totalClassesConsidered} aulas`}
-      </td>
-      <td className="px-4 py-2 text-sm text-center text-slate-600">
-        {row.ultimoAcesso}
-      </td>
-      <td className="px-4 py-2 text-sm text-center font-medium">
-        <span className={
-          row.modality.includes('EAD')
-            ? 'text-slate-600'
-            : row.frequencyValue >= 60 
-              ? 'text-green-600' 
-              : 'text-red-600'
-        }>
-          {row.frequency}
-        </span>
-      </td>
-      
-      {/* COLUNA STATUS EAD */}
-      {row.modality.includes('EAD') ? (
-        <td className="px-4 py-2 text-sm text-center">
-          <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-            row.isFrequente 
-              ? 'bg-green-100 text-green-800 border border-green-300' 
-              : 'bg-slate-100 text-slate-600 border border-slate-300'
-          }`}>
-            {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
-          </span>
-        </td>
-      ) : (
-        <td className="px-4 py-2 text-sm text-center">
-          <span className="text-xs text-slate-400">-</span>
-        </td>
-      )}
-      
-      {/* COLUNA SITUAÇÃO */}
-      <td className="px-4 py-2 text-sm text-center">
-        <div className="flex flex-col items-center">
-          <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${
-            row.situacao === 'FREQUENTE' 
-              ? 'bg-green-500 text-white shadow-md' 
-              : 'bg-red-500 text-white shadow-md'
-          }`}>
-            {row.situacao}
-          </span>
-          {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
-            <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
-              {row.frequencyValue.toFixed(1)}% &lt; 60%
-            </div>
-          )}
-        </div>
-      </td>
-    </tr>
-  ))}
-</tbody>
-              
+            <tbody className="divide-y divide-slate-200">
+              {displayData.map((row, index) => (
+                <tr
+                  key={`${row.studentCpf}-${row.classId}-${index}`}
+                  className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}
+                >
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
+                  <td className="px-4 py-2 text-sm">
+                    <div className="flex flex-col">
+                      <span className={`text-xs font-medium ${row.enrollmentType === 'exceptional' ? 'text-amber-600' : 'text-blue-600'}`}>
+                        {row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular'}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-'}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center font-medium">
+                    {row.modality.includes('EAD')
+                      ? `${row.totalAccesses}/3 acessos`
+                      : `${row.classesAttended}/${row.totalClassesConsidered} aulas`}
+                  </td>
+                  <td className="px-4 py-2 text-sm text-center text-slate-600">{row.ultimoAcesso}</td>
+                  <td className="px-4 py-2 text-sm text-center font-medium">
+                    <span className={
+                      row.modality.includes('EAD')
+                        ? 'text-slate-600'
+                        : row.frequencyValue >= 60
+                          ? 'text-green-600'
+                          : 'text-red-600'
+                    }>
+                      {row.frequency}
+                    </span>
+                  </td>
+
+                  {/* COLUNA STATUS EAD */}
+                  {row.modality.includes('EAD') ? (
+                    <td className="px-4 py-2 text-sm text-center">
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${row.isFrequente
+                          ? 'bg-green-100 text-green-800 border border-green-300'
+                          : 'bg-slate-100 text-slate-600 border border-slate-300'
+                        }`}>
+                        {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
+                      </span>
+                    </td>
+                  ) : (
+                    <td className="px-4 py-2 text-sm text-center">
+                      <span className="text-xs text-slate-400">-</span>
+                    </td>
+                  )}
+
+                  {/* COLUNA SITUAÇÃO */}
+                  <td className="px-4 py-2 text-sm text-center">
+                    <div className="flex flex-col items-center">
+                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${row.situacao === 'FREQUENTE'
+                          ? 'bg-green-500 text-white shadow-md'
+                          : 'bg-red-500 text-white shadow-md'
+                        }`}>
+                        {row.situacao}
+                      </span>
+                      {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
+                        <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
+                          {row.frequencyValue.toFixed(1)}% &lt; 60%
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {/* Linha de "nenhum dado encontrado" */}
               {displayData.length === 0 && !loading && !initialLoading && (
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
@@ -1153,6 +1071,8 @@ export function ReportsTab() {
                   </td>
                 </tr>
               )}
+
+              {/* Linha de loading */}
               {loading && (
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
@@ -1169,13 +1089,13 @@ export function ReportsTab() {
       </div>
 
       {/* Rodapé com informações adicionais */}
-     {displayData.length > 0 && (
+      {displayData.length > 0 && (
         <div className="flex justify-between items-center text-xs text-slate-500">
           <div>
-            Total de registros: {displayData.length} • 
-            Frequentes: {stats.frequentes} • 
-            Incompletos: {stats.incompletos} • 
-            EAD: {stats.totalEAD} • 
+            Total de registros: {displayData.length} •
+            Frequentes: {stats.frequentes} •
+            Incompletos: {stats.incompletos} •
+            EAD: {stats.totalEAD} •
             VC: {stats.totalVideoconferencia}
           </div>
           <div>
