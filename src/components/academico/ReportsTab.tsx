@@ -9,16 +9,8 @@ import logoImg from '../../assets/image.png';
 import SyntheticReportModal from './SyntheticReportModal'; // assumindo export default
 import {
   formatDateToDisplay,
-  forceDateToDisplay,
-  formatDateToDatabase,
-  extractDatePart, // já importada, não precisa redeclarar
-  isDateGreaterOrEqual,
-  formatDateInput,
-  parseDateInput,
-  formatDateForInput,
-  isValidDate,
-  compareDates,
-  isDateInRange
+  extractDatePart,
+  // outras funções se necessário, mas vamos importar só as usadas
 } from '../../utils/dateUtils';
 
 interface Unit {
@@ -100,22 +92,10 @@ export function ReportsTab() {
     totalVideoconferencia: 0,
   });
 
-  // Função para formatar data no padrão brasileiro
-  const formatDateBR = (dateStr: string | null | undefined): string => {
-    if (!dateStr) return '-';
-    try {
-      const date = new Date(dateStr);
-      return date.toLocaleDateString('pt-BR');
-    } catch {
-      return '-';
-    }
-  };
-
-  // Função para encontrar a data mais recente entre os acessos
+  // Função local para encontrar a data mais recente (genérica)
   const getMostRecentDate = (dates: (string | null)[]): string | null => {
     const validDates = dates.filter(d => d !== null) as string[];
     if (validDates.length === 0) return null;
-
     const dateObjects = validDates.map(d => new Date(d));
     const mostRecent = new Date(Math.max(...dateObjects.map(d => d.getTime())));
     return mostRecent.toISOString().split('T')[0];
@@ -352,7 +332,7 @@ export function ReportsTab() {
               if (relevantAttendance.length > 0) {
                 const dates = relevantAttendance.map(a => a.class_date);
                 const mostRecent = getMostRecentDate(dates);
-                ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
+                ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
               }
             } else {
               classesAttended = 0;
@@ -389,7 +369,7 @@ export function ReportsTab() {
 
             if (validAccesses.length > 0) {
               const mostRecent = getMostRecentDate(validAccesses);
-              ultimoAcesso = mostRecent ? formatDateBR(mostRecent) : '-';
+              ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
 
             situacao = isFrequente ? 'FREQUENTE' : 'INCOMPLETO';
@@ -469,7 +449,7 @@ export function ReportsTab() {
       row.cycleName,
       row.modality,
       row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
-      row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
+      row.enrollmentDate ? formatDateToDisplay(row.enrollmentDate) : '-',
       row.modality.includes('EAD')
         ? `${row.totalAccesses}/3 acessos`
         : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
@@ -547,8 +527,8 @@ export function ReportsTab() {
         const tr = document.createElement('tr');
 
         const enrollmentInfo = row.enrollmentType === 'exceptional'
-          ? `Exc: ${formatDateBR(row.enrollmentDate)}`
-          : `Reg: ${formatDateBR(row.enrollmentDate)}`;
+          ? `Exc: ${formatDateToDisplay(row.enrollmentDate)}`
+          : `Reg: ${formatDateToDisplay(row.enrollmentDate)}`;
 
         const cells = [
           row.unitName.substring(0, 20),
@@ -1000,7 +980,7 @@ export function ReportsTab() {
                         {row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular'}
                       </span>
                       <span className="text-xs text-slate-500">
-                        {row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-'}
+                        {row.enrollmentDate ? formatDateToDisplay(row.enrollmentDate) : '-'}
                       </span>
                     </div>
                   </td>
