@@ -45,6 +45,7 @@ export function ControlePagamentoTab() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
+  const [isMigrating, setIsMigrating] = useState(false);
   
   // Estados para filtro de período
   const [startDateFilter, setStartDateFilter] = useState<string>('');
@@ -52,11 +53,13 @@ export function ControlePagamentoTab() {
   
   const { user } = useAuth();
 
+  // DATA DE CORTE PARA MIGRAÇÃO (11/03/2026)
+  const MIGRATION_CUTOFF_DATE = '2026-03-11';
+
   // Função utilitária para formatar datas sem problemas de fuso horário
   const formatDate = (dateString: string | undefined | null): string => {
     if (!dateString) return '-';
     
-    // Divide a string YYYY-MM-DD em partes e cria a data no horário local (meio-dia)
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day, 12, 0, 0);
     
@@ -67,11 +70,15 @@ export function ControlePagamentoTab() {
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
     
-    // Mantém a data no formato YYYY-MM-DD sem conversão de fuso
     const [year, month, day] = dateString.split('-').map(Number);
-    // Cria a data no UTC meio-dia para garantir que ao salvar no banco não perca o dia
     const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     return date.toISOString();
+  };
+
+  // Função para verificar se uma nota é anterior à data de corte
+  const isPreMigrationInvoice = (createdAt: string): boolean => {
+    const invoiceDate = new Date(createdAt).toISOString().split('T')[0];
+    return invoiceDate < MIGRATION_CUTOFF_DATE;
   };
 
   const [formData, setFormData] = useState({
@@ -92,15 +99,86 @@ export function ControlePagamentoTab() {
   });
 
   useEffect(() => {
-    loadInvoices();
     loadUnits();
-    updateOverdueInvoices();
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    if (units.length > 0) {
+      loadInvoices();
+      updateOverdueInvoices();
+      migrateOldInvoices(); // Tenta migrar notas antigas
+    }
+  }, [units]);
+
+  // Função para migrar notas fiscais antigas
+  const migrateOldInvoices = async () => {
+    if (!user || units.length === 0 || isMigrating) return;
+
+    setIsMigrating(true);
+    console.log('Iniciando migração de notas fiscais antigas...');
+
+    try {
+      // Busca notas que não têm unit_id ou têm unit_id nulo
+      const { data: oldInvoices, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('user_id', user.id)
+        .is('deleted_at', null)
+        .or('unit_id.is.null,unit_id.eq.') // unit_id nulo ou vazio
+        .lt('created_at', MIGRATION_CUTOFF_DATE); // Apenas anteriores à data de corte
+
+      if (error) {
+        console.error('Erro ao buscar notas para migração:', error);
+        return;
+      }
+
+      if (!oldInvoices || oldInvoices.length === 0) {
+        console.log('Nenhuma nota antiga precisa de migração.');
+        return;
+      }
+
+      console.log(`Encontradas ${oldInvoices.length} notas para migrar`);
+
+      // Processa cada nota individualmente
+      for (const invoice of oldInvoices) {
+        // Tenta encontrar a unidade pelo nome
+        const matchingUnit = units.find(u => 
+          u.name.toLowerCase().trim() === invoice.unit_name?.toLowerCase().trim()
+        );
+
+        if (matchingUnit) {
+          // Atualiza a nota com o unit_id correspondente
+          const { error: updateError } = await supabase
+            .from('invoices')
+            .update({
+              unit_id: matchingUnit.id,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', invoice.id);
+
+          if (updateError) {
+            console.error(`Erro ao migrar nota ${invoice.id}:`, updateError);
+          } else {
+            console.log(`Nota ${invoice.id} migrada com sucesso para unidade ${matchingUnit.name}`);
+          }
+        } else {
+          console.warn(`Unidade não encontrada para nota ${invoice.id}: "${invoice.unit_name}"`);
+        }
+      }
+
+      // Recarrega as notas após a migração
+      await loadInvoices();
+      console.log('Migração concluída!');
+    } catch (error) {
+      console.error('Erro durante a migração:', error);
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   const updateOverdueInvoices = async () => {
     if (!user) return;
 
-    // Criar data atual no início do dia no horário local
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -113,7 +191,6 @@ export function ControlePagamentoTab() {
 
     if (overdueInvoices) {
       for (const invoice of overdueInvoices) {
-        // Criar data de vencimento usando o mesmo método para evitar problemas de fuso
         const [year, month, day] = invoice.due_date.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day, 0, 0, 0);
 
@@ -132,7 +209,12 @@ export function ControlePagamentoTab() {
   };
 
   const loadUnits = async () => {
-    if (!user) return;
+    if (!user) {
+      console.log('Usuário não logado');
+      return;
+    }
+
+    console.log('Carregando unidades para o usuário:', user.id);
 
     const { data, error } = await supabase
       .from('units')
@@ -141,29 +223,58 @@ export function ControlePagamentoTab() {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('Error loading units:', error);
+      console.error('Erro ao carregar unidades:', error);
       return;
     }
 
+    console.log('Unidades carregadas:', data?.length || 0);
     setUnits(data || []);
   };
 
   const loadInvoices = async () => {
     if (!user) return;
 
+    console.log('Carregando notas fiscais...');
+
+    // Carrega todas as invoices
     const { data, error } = await supabase
       .from('invoices')
-      .select('*, units(id, name, municipality)')
+      .select('*')
       .eq('user_id', user.id)
       .is('deleted_at', null)
       .order('item_number', { ascending: true });
 
     if (error) {
-      console.error('Error loading invoices:', error);
+      console.error('Erro ao carregar notas fiscais:', error);
       return;
     }
 
-    setInvoices(data || []);
+    // Cria um mapa de unidades para lookup rápido
+    const unitsMap = new Map(units.map(unit => [unit.id, unit]));
+
+    // Faz o merge manual dos dados das unidades
+    const invoicesWithUnits = data?.map(invoice => {
+      // Para notas antigas sem unit_id, tenta encontrar pelo nome
+      let unitData = null;
+      
+      if (invoice.unit_id && unitsMap.has(invoice.unit_id)) {
+        // Se tem unit_id válido, usa ele
+        unitData = unitsMap.get(invoice.unit_id);
+      } else if (invoice.unit_name) {
+        // Se não tem unit_id mas tem nome, tenta encontrar pelo nome
+        unitData = units.find(u => 
+          u.name.toLowerCase().trim() === invoice.unit_name.toLowerCase().trim()
+        ) || null;
+      }
+
+      return {
+        ...invoice,
+        units: unitData
+      };
+    }) || [];
+
+    console.log('Notas fiscais carregadas:', invoicesWithUnits.length);
+    setInvoices(invoicesWithUnits);
   };
 
   const uploadDocument = async (invoiceId: string): Promise<string | null> => {
@@ -181,7 +292,7 @@ export function ControlePagamentoTab() {
         .upload(filePath, selectedFile, { upsert: true });
 
       if (uploadError) {
-        console.error('Error uploading file:', uploadError);
+        console.error('Erro ao fazer upload do arquivo:', uploadError);
         alert('Erro ao fazer upload do documento');
         return null;
       }
@@ -192,7 +303,7 @@ export function ControlePagamentoTab() {
 
       return urlData.publicUrl;
     } catch (error) {
-      console.error('Error uploading document:', error);
+      console.error('Erro ao fazer upload do documento:', error);
       alert('Erro ao fazer upload do documento');
       return null;
     } finally {
@@ -207,40 +318,59 @@ export function ControlePagamentoTab() {
     let invoiceId = editingInvoice?.id;
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
-    const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
+    
+    // Para notas novas ou atualizações, sempre usa o unit_id
+    const unitId = selectedUnit?.id || null;
+    const unitName = selectedUnit ? selectedUnit.name : '';
 
     const issueDateISO = createISODate(formData.issue_date);
     const dueDateISO = createISODate(formData.due_date);
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
 
+    // Prepara os dados para atualização/inserção
+    const invoiceData = {
+      unit_id: unitId,
+      unit_name: unitName,
+      cnpj_cpf: formData.cnpj_cpf,
+      exercise_month: formData.exercise_month,
+      exercise_year: formData.exercise_year,
+      document_type: formData.document_type,
+      invoice_number: formData.invoice_number,
+      issue_date: issueDateISO,
+      due_date: dueDateISO,
+      net_value: parseFloat(formData.net_value),
+      payment_status: formData.payment_status,
+      payment_date: paymentDateISO,
+      paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+      estado: formData.estado,
+      updated_at: new Date().toISOString(),
+    };
+
     if (editingInvoice) {
+      // Verifica se é uma nota antiga sendo atualizada
+      if (isPreMigrationInvoice(editingInvoice.created_at)) {
+        console.log('Atualizando nota antiga (pré-migração):', editingInvoice.id);
+        
+        // Para notas antigas, se o unit_id não foi selecionado, mantém o comportamento anterior
+        if (!formData.unit_id && editingInvoice.unit_name) {
+          // Se não selecionou unidade nova, mantém o nome antigo
+          invoiceData.unit_name = editingInvoice.unit_name;
+          invoiceData.unit_id = null;
+        }
+      }
+
       const { error } = await supabase
         .from('invoices')
-        .update({
-          unit_id: formData.unit_id || null,
-          unit_name: unitName,
-          cnpj_cpf: formData.cnpj_cpf,
-          exercise_month: formData.exercise_month,
-          exercise_year: formData.exercise_year,
-          document_type: formData.document_type,
-          invoice_number: formData.invoice_number,
-          issue_date: issueDateISO,
-          due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
-          payment_status: formData.payment_status,
-          payment_date: paymentDateISO,
-          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
-          estado: formData.estado,
-          updated_at: new Date().toISOString(),
-        })
+        .update(invoiceData)
         .eq('id', editingInvoice.id);
 
       if (error) {
-        console.error('Error updating invoice:', error);
+        console.error('Erro ao atualizar nota fiscal:', error);
         alert('Erro ao atualizar nota fiscal');
         return;
       }
     } else {
+      // Nova nota fiscal - sempre usa o sistema de unidades
       const { data: itemNumberData } = await supabase.rpc('get_next_item_number', {
         p_user_id: user.id,
       });
@@ -249,25 +379,12 @@ export function ControlePagamentoTab() {
         {
           user_id: user.id,
           item_number: itemNumberData || 1,
-          unit_id: formData.unit_id || null,
-          unit_name: unitName,
-          cnpj_cpf: formData.cnpj_cpf,
-          exercise_month: formData.exercise_month,
-          exercise_year: formData.exercise_year,
-          document_type: formData.document_type,
-          invoice_number: formData.invoice_number,
-          issue_date: issueDateISO,
-          due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
-          payment_status: formData.payment_status,
-          payment_date: paymentDateISO,
-          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
-          estado: formData.estado,
+          ...invoiceData,
         },
       ]).select();
 
       if (error) {
-        console.error('Error adding invoice:', error);
+        console.error('Erro ao adicionar nota fiscal:', error);
         alert('Erro ao adicionar nota fiscal');
         return;
       }
@@ -320,9 +437,13 @@ export function ControlePagamentoTab() {
 
   const handleEdit = (invoice: Invoice) => {
     setEditingInvoice(invoice);
+    
+    // Para notas antigas, se não tiver unit_id mas tiver unit_name, mantém o comportamento
+    const isOldInvoice = isPreMigrationInvoice(invoice.created_at);
+    
     setFormData({
       unit_id: invoice.unit_id || '',
-      unit_name: invoice.unit_name,
+      unit_name: isOldInvoice && !invoice.unit_id ? invoice.unit_name : '',
       cnpj_cpf: invoice.cnpj_cpf,
       exercise_month: invoice.exercise_month,
       exercise_year: invoice.exercise_year,
@@ -348,7 +469,7 @@ export function ControlePagamentoTab() {
       .eq('id', id);
 
     if (error) {
-      console.error('Error deleting invoice:', error);
+      console.error('Erro ao excluir nota fiscal:', error);
       alert('Erro ao excluir nota fiscal');
       return;
     }
@@ -382,7 +503,7 @@ export function ControlePagamentoTab() {
       .eq('id', invoiceId);
 
     if (error) {
-      console.error('Error updating payment date:', error);
+      console.error('Erro ao atualizar data de pagamento:', error);
       alert('Erro ao atualizar data de pagamento');
       return;
     }
@@ -433,18 +554,15 @@ export function ControlePagamentoTab() {
 
   // Função de filtro modificada para incluir período
   const filteredInvoices = invoices.filter((inv) => {
-    // Filtro por status
     if (statusFilter !== 'all' && inv.payment_status !== statusFilter) {
       return false;
     }
 
-    // Filtro por período (baseado na data de vencimento)
     if (startDateFilter && endDateFilter) {
       const dueDate = new Date(inv.due_date);
       const startDate = new Date(startDateFilter);
       const endDate = new Date(endDateFilter);
       
-      // Ajusta as datas para comparar corretamente
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 59, 999);
       
@@ -456,11 +574,22 @@ export function ControlePagamentoTab() {
 
   return (
     <div className="space-y-6 max-w-full">
+      {/* Banner de migração - opcional, para informar o usuário */}
+      {isMigrating && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center space-x-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+            <p className="text-blue-700">
+              Migrando notas fiscais antigas para o novo sistema de unidades...
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
           
-          {/* Filtro de Status */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -472,7 +601,6 @@ export function ControlePagamentoTab() {
             <option value="ATRASADO">Atrasado</option>
           </select>
 
-          {/* Filtro de Período */}
           <div className="flex items-center space-x-2">
             <input
               type="date"
@@ -490,7 +618,6 @@ export function ControlePagamentoTab() {
               placeholder="Data final"
             />
             
-            {/* Botão para limpar filtros */}
             {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
               <button
                 onClick={() => {
@@ -524,7 +651,6 @@ export function ControlePagamentoTab() {
         </div>
       </div>
 
-      {/* Indicador de filtros ativos */}
       {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700">
@@ -599,103 +725,116 @@ export function ControlePagamentoTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredInvoices.map((invoice) => (
-                <tr key={invoice.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
-                    {invoice.item_number}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{invoice.units?.name || invoice.unit_name}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.estado || '-'}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.cnpj_cpf}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {String(invoice.exercise_month).padStart(2, '0')}/{invoice.exercise_year}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.invoice_number}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {formatDate(invoice.issue_date)}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {formatDate(invoice.due_date)}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {editingPaymentDate === invoice.id ? (
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="date"
-                          value={tempPaymentDate}
-                          onChange={(e) => setTempPaymentDate(e.target.value)}
-                          className="px-2 py-1 border border-slate-300 rounded text-sm"
-                        />
-                        <button
-                          onClick={() => handleSavePaymentDate(invoice.id)}
-                          className="text-green-600 hover:text-green-800 text-xs font-medium"
-                        >
-                          Salvar
-                        </button>
-                        <button
-                          onClick={handleCancelEditPaymentDate}
-                          className="text-red-600 hover:text-red-800 text-xs font-medium"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center space-x-2">
-                        <span>{formatDate(invoice.payment_date)}</span>
-                        {invoice.payment_status === 'PAGO' && (
+              {filteredInvoices.map((invoice) => {
+                // Determina o nome da unidade a ser exibido
+                const displayUnitName = invoice.units?.name || invoice.unit_name || '-';
+                
+                return (
+                  <tr key={invoice.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
+                      {invoice.item_number}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-700">
+                      {displayUnitName}
+                      {/* Indicador visual para notas migradas */}
+                      {!invoice.unit_id && invoice.unit_name && (
+                        <span className="ml-2 text-xs text-amber-600" title="Nota fiscal antiga (pré-migração)">
+                          *
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.estado || '-'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.cnpj_cpf}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                      {String(invoice.exercise_month).padStart(2, '0')}/{invoice.exercise_year}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">{invoice.invoice_number}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                      {formatDate(invoice.issue_date)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                      {formatDate(invoice.due_date)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                      {editingPaymentDate === invoice.id ? (
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="date"
+                            value={tempPaymentDate}
+                            onChange={(e) => setTempPaymentDate(e.target.value)}
+                            className="px-2 py-1 border border-slate-300 rounded text-sm"
+                          />
                           <button
-                            onClick={() => handleEditPaymentDate(invoice)}
-                            className="text-blue-600 hover:text-blue-800"
-                            title="Editar data de pagamento"
+                            onClick={() => handleSavePaymentDate(invoice.id)}
+                            className="text-green-600 hover:text-green-800 text-xs font-medium"
                           >
-                            <Edit className="w-3 h-3" />
+                            Salvar
                           </button>
-                        )}
+                          <button
+                            onClick={handleCancelEditPaymentDate}
+                            className="text-red-600 hover:text-red-800 text-xs font-medium"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center space-x-2">
+                          <span>{formatDate(invoice.payment_date)}</span>
+                          {invoice.payment_status === 'PAGO' && (
+                            <button
+                              onClick={() => handleEditPaymentDate(invoice)}
+                              className="text-blue-600 hover:text-blue-800"
+                              title="Editar data de pagamento"
+                            >
+                              <Edit className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
+                      R$ {Number(invoice.net_value).toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        {getStatusIcon(invoice.payment_status)}
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invoice.payment_status)}`}>
+                          {invoice.payment_status}
+                        </span>
                       </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
-                    R$ {Number(invoice.net_value).toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center space-x-2">
-                      {getStatusIcon(invoice.payment_status)}
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invoice.payment_status)}`}>
-                        {invoice.payment_status}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    {invoice.document_url ? (
-                      <button
-                        onClick={() => viewDocument(invoice.document_url!)}
-                        className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
-                      >
-                        <Eye className="w-4 h-4" />
-                        <span>Ver</span>
-                      </button>
-                    ) : (
-                      <span className="text-slate-400 text-sm">-</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => handleEdit(invoice)}
-                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => handleDelete(invoice.id)}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {invoice.document_url ? (
+                        <button
+                          onClick={() => viewDocument(invoice.document_url!)}
+                          className="flex items-center space-x-1 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>Ver</span>
+                        </button>
+                      ) : (
+                        <span className="text-slate-400 text-sm">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center space-x-3">
+                        <button
+                          onClick={() => handleEdit(invoice)}
+                          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDelete(invoice.id)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {filteredInvoices.length === 0 && (
                 <tr>
                   <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
@@ -714,211 +853,28 @@ export function ControlePagamentoTab() {
             <h3 className="text-xl font-bold text-slate-800 mb-4">
               {editingInvoice ? 'Editar Nota Fiscal' : 'Nova Nota Fiscal'}
             </h3>
+            
+            {/* Aviso para notas antigas */}
+            {editingInvoice && isPreMigrationInvoice(editingInvoice.created_at) && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-sm text-amber-700">
+                  <strong>Nota fiscal antiga:</strong> Para manter a consistência, recomendamos selecionar uma unidade do banco de dados. 
+                  Se preferir manter o nome original, deixe o campo unidade em branco.
+                </p>
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Unidade {editingInvoice && isPreMigrationInvoice(editingInvoice.created_at) && 
+                      <span className="text-xs text-amber-600 ml-2">(opcional para notas antigas)</span>
+                    }
+                  </label>
                   <select
                     value={formData.unit_id}
-                    onChange={(e) => setFormData({ ...formData, unit_id: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">Selecione uma unidade</option>
-                    {units.map((unit) => (
-                      <option key={unit.id} value={unit.id}>
-                        {unit.name} - {unit.municipality}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">CNPJ/CPF</label>
-                  <input
-                    type="text"
-                    value={formData.cnpj_cpf}
-                    onChange={(e) => setFormData({ ...formData, cnpj_cpf: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
-                  <select
-                    value={formData.estado}
-                    onChange={(e) => setFormData({ ...formData, estado: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="MA">MA</option>
-                    <option value="PA">PA</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Exercício - Mês</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="12"
-                    value={formData.exercise_month}
-                    onChange={(e) => setFormData({ ...formData, exercise_month: parseInt(e.target.value) })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Exercício - Ano</label>
-                  <input
-                    type="number"
-                    min="2000"
-                    value={formData.exercise_year}
-                    onChange={(e) => setFormData({ ...formData, exercise_year: parseInt(e.target.value) })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Documento</label>
-                  <input
-                    type="text"
-                    value={formData.document_type}
-                    onChange={(e) => setFormData({ ...formData, document_type: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Número da NF</label>
-                  <input
-                    type="text"
-                    value={formData.invoice_number}
-                    onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Data de Emissão</label>
-                  <input
-                    type="date"
-                    value={formData.issue_date}
-                    onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Data de Vencimento</label>
-                  <input
-                    type="date"
-                    value={formData.due_date}
-                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Valor Líquido</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.net_value}
-                    onChange={(e) => setFormData({ ...formData, net_value: e.target.value })}
-                    required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Status do Pagamento</label>
-                  <select
-                    value={formData.payment_status}
-                    onChange={(e) => setFormData({ ...formData, payment_status: e.target.value as any })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="EM ABERTO">EM ABERTO</option>
-                    <option value="PAGO">PAGO</option>
-                    <option value="ATRASADO">ATRASADO</option>
-                  </select>
-                </div>
-
-                {formData.payment_status === 'PAGO' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Data do Pagamento</label>
-                      <input
-                        type="date"
-                        value={formData.payment_date}
-                        onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Valor Pago</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.paid_value}
-                        onChange={(e) => setFormData({ ...formData, paid_value: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="pt-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Anexar Documento</label>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                  />
-                  {selectedFile && (
-                    <span className="text-sm text-green-600 flex items-center space-x-1">
-                      <Upload className="w-4 h-4" />
-                      <span>{selectedFile.name}</span>
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 text-xs text-slate-500">Formatos aceitos: Imagens (JPG, PNG) e PDF</p>
-              </div>
-
-              <div className="flex space-x-3 pt-4">
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  {editingInvoice ? 'Atualizar' : 'Adicionar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showReportModal && (
-        <ControlePagamentoReport onClose={() => setShowReportModal(false)} />
-      )}
-    </div>
-  );
-}
+                    onChange={(e) => {
+                      setFormData({ 
+                        ...formData, 
+                        unit
