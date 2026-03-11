@@ -13,7 +13,7 @@ interface Unit {
 interface Invoice {
   id: string;
   item_number: number;
-  unit_id?: string;
+  unit_id?: string | null;
   unit_name: string;
   cnpj_cpf: string;
   exercise_month: number;
@@ -24,14 +24,14 @@ interface Invoice {
   due_date: string;
   net_value: number;
   payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO';
-  payment_date?: string;
-  paid_value?: number;
-  document_url?: string;
-  document_name?: string;
-  document_type_file?: string;
-  estado?: string;
+  payment_date?: string | null;
+  paid_value?: number | null;
+  document_url?: string | null;
+  document_name?: string | null;
+  document_type_file?: string | null;
+  estado?: string | null;
   created_at: string;
-  units?: Unit;
+  units?: Unit | null;
 }
 
 export function ControlePagamentoTab() {
@@ -45,8 +45,7 @@ export function ControlePagamentoTab() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
-  const [isMigrating, setIsMigrating] = useState(false);
-  const [migrationStatus, setMigrationStatus] = useState<string>('');
+  const [loading, setLoading] = useState(true);
   
   // Estados para filtro de período
   const [startDateFilter, setStartDateFilter] = useState<string>('');
@@ -54,13 +53,11 @@ export function ControlePagamentoTab() {
   
   const { user } = useAuth();
 
-  // DATA DE CORTE PARA MIGRAÇÃO (11/03/2026)
-  const MIGRATION_CUTOFF_DATE = '2026-03-11';
-
   // Função utilitária para formatar datas sem problemas de fuso horário
   const formatDate = (dateString: string | undefined | null): string => {
     if (!dateString) return '-';
     
+    // Divide a string YYYY-MM-DD em partes e cria a data no horário local (meio-dia)
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day, 12, 0, 0);
     
@@ -71,15 +68,11 @@ export function ControlePagamentoTab() {
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
     
+    // Mantém a data no formato YYYY-MM-DD sem conversão de fuso
     const [year, month, day] = dateString.split('-').map(Number);
+    // Cria a data no UTC meio-dia para garantir que ao salvar no banco não perca o dia
     const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     return date.toISOString();
-  };
-
-  // Função para verificar se uma nota é anterior à data de corte
-  const isPreMigrationInvoice = (createdAt: string): boolean => {
-    const invoiceDate = new Date(createdAt).toISOString().split('T')[0];
-    return invoiceDate < MIGRATION_CUTOFF_DATE;
   };
 
   const [formData, setFormData] = useState({
@@ -99,169 +92,25 @@ export function ControlePagamentoTab() {
     estado: 'MA',
   });
 
+  // Carrega unidades quando o usuário estiver disponível
   useEffect(() => {
     if (user) {
       loadUnits();
     }
   }, [user]);
 
+  // Carrega invoices quando units estiverem disponíveis
   useEffect(() => {
-    if (units.length > 0 && user) {
+    if (user && units.length >= 0) { // units.length >= 0 para carregar mesmo sem unidades
       loadInvoices();
       updateOverdueInvoices();
-      // Tenta migrar notas antigas após carregar unidades
-      migrateOldInvoices();
     }
-  }, [units, user]);
-
-  // Função para verificar e corrigir RLS policies
-  const checkAndFixRLS = async () => {
-    if (!user) return;
-
-    try {
-      // Tenta fazer uma atualização de teste em uma nota existente
-      const { data: testInvoice } = await supabase
-        .from('invoices')
-        .select('id')
-        .eq('user_id', user.id)
-        .limit(1);
-
-      if (testInvoice && testInvoice.length > 0) {
-        const { error: testUpdate } = await supabase
-          .from('invoices')
-          .update({ updated_at: new Date().toISOString() })
-          .eq('id', testInvoice[0].id)
-          .eq('user_id', user.id);
-
-        if (testUpdate) {
-          console.error('Erro de permissão (RLS):', testUpdate);
-          setMigrationStatus('Erro de permissão. Contacte o administrador.');
-        }
-      }
-    } catch (error) {
-      console.error('Erro ao verificar RLS:', error);
-    }
-  };
-
-  // Função melhorada para migrar notas fiscais antigas
-  const migrateOldInvoices = async () => {
-    if (!user || units.length === 0 || isMigrating) return;
-
-    setIsMigrating(true);
-    setMigrationStatus('Verificando notas fiscais antigas...');
-
-    try {
-      // Primeiro, verifica as permissões
-      await checkAndFixRLS();
-
-      // Busca TODAS as notas do usuário (sem filtro de data primeiro)
-      const { data: allInvoices, error: fetchError } = await supabase
-        .from('invoices')
-        .select('*')
-        .eq('user_id', user.id)
-        .is('deleted_at', null);
-
-      if (fetchError) {
-        console.error('Erro ao buscar notas:', fetchError);
-        setMigrationStatus('Erro ao buscar notas do banco de dados.');
-        return;
-      }
-
-      if (!allInvoices || allInvoices.length === 0) {
-        console.log('Nenhuma nota fiscal encontrada para o usuário.');
-        setMigrationStatus('Nenhuma nota fiscal encontrada.');
-        return;
-      }
-
-      console.log(`Total de notas encontradas: ${allInvoices.length}`);
-
-      // Filtra notas que precisam de migração (sem unit_id ou com unit_id inválido)
-      const invoicesToMigrate = allInvoices.filter(invoice => {
-        // Se não tem unit_id
-        if (!invoice.unit_id) return true;
-        
-        // Se tem unit_id mas a unidade não existe mais
-        if (invoice.unit_id && !units.some(u => u.id === invoice.unit_id)) {
-          return true;
-        }
-        
-        return false;
-      });
-
-      console.log(`Notas que precisam de migração: ${invoicesToMigrate.length}`);
-
-      if (invoicesToMigrate.length === 0) {
-        console.log('Todas as notas já estão migradas.');
-        setMigrationStatus('Todas as notas estão atualizadas.');
-        return;
-      }
-
-      setMigrationStatus(`Migrando ${invoicesToMigrate.length} notas...`);
-
-      let migratedCount = 0;
-      let errorCount = 0;
-
-      // Processa cada nota individualmente
-      for (const invoice of invoicesToMigrate) {
-        // Tenta encontrar a unidade pelo nome (case insensitive)
-        const matchingUnit = units.find(u => 
-          u.name.toLowerCase().trim() === invoice.unit_name?.toLowerCase().trim()
-        );
-
-        if (matchingUnit) {
-          // Atualiza a nota com o unit_id correspondente
-          const { error: updateError } = await supabase
-            .from('invoices')
-            .update({
-              unit_id: matchingUnit.id,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', invoice.id)
-            .eq('user_id', user.id); // Garante que só atualiza notas do usuário
-
-          if (updateError) {
-            console.error(`Erro ao migrar nota ${invoice.id}:`, updateError);
-            errorCount++;
-          } else {
-            console.log(`Nota ${invoice.id} migrada com sucesso para unidade ${matchingUnit.name}`);
-            migratedCount++;
-          }
-        } else {
-          console.warn(`Unidade não encontrada para nota ${invoice.id}: "${invoice.unit_name}"`);
-          errorCount++;
-        }
-      }
-
-      setMigrationStatus(`Migração concluída! ${migratedCount} notas atualizadas, ${errorCount} erros.`);
-
-      // Recarrega as notas após a migração
-      await loadInvoices();
-      
-    } catch (error) {
-      console.error('Erro durante a migração:', error);
-      setMigrationStatus('Erro durante a migração. Verifique o console.');
-    } finally {
-      setIsMigrating(false);
-      
-      // Limpa a mensagem de status após 5 segundos
-      setTimeout(() => {
-        setMigrationStatus('');
-      }, 5000);
-    }
-  };
-
-  // Função para forçar a migração manualmente (pode ser chamada por um botão)
-  const forceMigrate = () => {
-    if (user && units.length > 0) {
-      migrateOldInvoices();
-    } else {
-      alert('Aguarde o carregamento das unidades ou faça login novamente.');
-    }
-  };
+  }, [user, units]);
 
   const updateOverdueInvoices = async () => {
     if (!user) return;
 
+    // Criar data atual no início do dia no horário local
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -274,6 +123,7 @@ export function ControlePagamentoTab() {
 
     if (overdueInvoices) {
       for (const invoice of overdueInvoices) {
+        // Criar data de vencimento usando o mesmo método para evitar problemas de fuso
         const [year, month, day] = invoice.due_date.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day, 0, 0, 0);
 
@@ -284,8 +134,7 @@ export function ControlePagamentoTab() {
           await supabase
             .from('invoices')
             .update({ payment_status: 'ATRASADO' })
-            .eq('id', invoice.id)
-            .eq('user_id', user.id);
+            .eq('id', invoice.id);
         }
       }
       loadInvoices();
@@ -293,12 +142,7 @@ export function ControlePagamentoTab() {
   };
 
   const loadUnits = async () => {
-    if (!user) {
-      console.log('Usuário não logado');
-      return;
-    }
-
-    console.log('Carregando unidades para o usuário:', user.id);
+    if (!user) return;
 
     const { data, error } = await supabase
       .from('units')
@@ -307,20 +151,19 @@ export function ControlePagamentoTab() {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('Erro ao carregar unidades:', error);
+      console.error('Error loading units:', error);
       return;
     }
 
-    console.log('Unidades carregadas:', data?.length || 0);
     setUnits(data || []);
   };
 
   const loadInvoices = async () => {
     if (!user) return;
 
-    console.log('Carregando notas fiscais para o usuário:', user.id);
-
-    // Carrega todas as invoices
+    setLoading(true);
+    
+    // Consulta simplificada - primeiro busca todas as invoices do usuário
     const { data, error } = await supabase
       .from('invoices')
       .select('*')
@@ -329,25 +172,24 @@ export function ControlePagamentoTab() {
       .order('item_number', { ascending: true });
 
     if (error) {
-      console.error('Erro ao carregar notas fiscais:', error);
+      console.error('Error loading invoices:', error);
+      setLoading(false);
       return;
     }
-
-    console.log(`Total de notas carregadas: ${data?.length || 0}`);
 
     // Cria um mapa de unidades para lookup rápido
     const unitsMap = new Map(units.map(unit => [unit.id, unit]));
 
-    // Faz o merge manual dos dados das unidades
-    const invoicesWithUnits = data?.map(invoice => {
-      // Para notas antigas sem unit_id, tenta encontrar pelo nome
+    // Processa cada invoice para adicionar os dados da unidade quando disponível
+    const processedInvoices = (data || []).map(invoice => {
+      // Tenta encontrar a unidade correspondente
       let unitData = null;
       
       if (invoice.unit_id && unitsMap.has(invoice.unit_id)) {
-        // Se tem unit_id válido, usa ele
+        // Se tem unit_id válido, usa a unidade do mapa
         unitData = unitsMap.get(invoice.unit_id);
       } else if (invoice.unit_name) {
-        // Se não tem unit_id mas tem nome, tenta encontrar pelo nome
+        // Se não tem unit_id mas tem nome, tenta encontrar pelo nome (case insensitive)
         unitData = units.find(u => 
           u.name.toLowerCase().trim() === invoice.unit_name.toLowerCase().trim()
         ) || null;
@@ -357,9 +199,10 @@ export function ControlePagamentoTab() {
         ...invoice,
         units: unitData
       };
-    }) || [];
+    });
 
-    setInvoices(invoicesWithUnits);
+    setInvoices(processedInvoices);
+    setLoading(false);
   };
 
   const uploadDocument = async (invoiceId: string): Promise<string | null> => {
@@ -377,7 +220,7 @@ export function ControlePagamentoTab() {
         .upload(filePath, selectedFile, { upsert: true });
 
       if (uploadError) {
-        console.error('Erro ao fazer upload do arquivo:', uploadError);
+        console.error('Error uploading file:', uploadError);
         alert('Erro ao fazer upload do documento');
         return null;
       }
@@ -388,7 +231,7 @@ export function ControlePagamentoTab() {
 
       return urlData.publicUrl;
     } catch (error) {
-      console.error('Erro ao fazer upload do documento:', error);
+      console.error('Error uploading document:', error);
       alert('Erro ao fazer upload do documento');
       return null;
     } finally {
@@ -404,65 +247,50 @@ export function ControlePagamentoTab() {
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
     
-    // Para notas novas ou atualizações, sempre usa o unit_id
+    // Para notas novas ou atualizações, usa o unit_id se disponível
     const unitId = selectedUnit?.id || null;
-    const unitName = selectedUnit ? selectedUnit.name : '';
+    // Se tem unidade selecionada, usa o nome dela; senão, usa o nome digitado (para compatibilidade)
+    const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
 
     const issueDateISO = createISODate(formData.issue_date);
     const dueDateISO = createISODate(formData.due_date);
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
 
-    // Prepara os dados para atualização/inserção
-    const invoiceData = {
-      unit_id: unitId,
-      unit_name: unitName,
-      cnpj_cpf: formData.cnpj_cpf,
-      exercise_month: formData.exercise_month,
-      exercise_year: formData.exercise_year,
-      document_type: formData.document_type,
-      invoice_number: formData.invoice_number,
-      issue_date: issueDateISO,
-      due_date: dueDateISO,
-      net_value: parseFloat(formData.net_value),
-      payment_status: formData.payment_status,
-      payment_date: paymentDateISO,
-      paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
-      estado: formData.estado,
-      updated_at: new Date().toISOString(),
-    };
-
     if (editingInvoice) {
-      // Verifica se é uma nota antiga sendo atualizada
-      if (isPreMigrationInvoice(editingInvoice.created_at)) {
-        console.log('Atualizando nota antiga (pré-migração):', editingInvoice.id);
-        
-        // Para notas antigas, se o unit_id não foi selecionado, mantém o comportamento anterior
-        if (!formData.unit_id && editingInvoice.unit_name) {
-          // Se não selecionou unidade nova, mantém o nome antigo
-          invoiceData.unit_name = editingInvoice.unit_name;
-          invoiceData.unit_id = null;
-        }
-      }
-
       const { error } = await supabase
         .from('invoices')
-        .update(invoiceData)
-        .eq('id', editingInvoice.id)
-        .eq('user_id', user.id); // Garante que só atualiza notas do usuário
+        .update({
+          unit_id: unitId,
+          unit_name: unitName,
+          cnpj_cpf: formData.cnpj_cpf,
+          exercise_month: formData.exercise_month,
+          exercise_year: formData.exercise_year,
+          document_type: formData.document_type,
+          invoice_number: formData.invoice_number,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
+          net_value: parseFloat(formData.net_value),
+          payment_status: formData.payment_status,
+          payment_date: paymentDateISO,
+          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          estado: formData.estado,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', editingInvoice.id);
 
       if (error) {
-        console.error('Erro ao atualizar nota fiscal:', error);
-        alert('Erro ao atualizar nota fiscal: ' + error.message);
+        console.error('Error updating invoice:', error);
+        alert('Erro ao atualizar nota fiscal');
         return;
       }
     } else {
-      // Nova nota fiscal - sempre usa o sistema de unidades
+      // Gera o próximo número de item
       const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
         p_user_id: user.id,
       });
 
       if (rpcError) {
-        console.error('Erro ao gerar número do item:', rpcError);
+        console.error('Error getting next item number:', rpcError);
         alert('Erro ao gerar número do item');
         return;
       }
@@ -471,13 +299,26 @@ export function ControlePagamentoTab() {
         {
           user_id: user.id,
           item_number: itemNumberData || 1,
-          ...invoiceData,
+          unit_id: unitId,
+          unit_name: unitName,
+          cnpj_cpf: formData.cnpj_cpf,
+          exercise_month: formData.exercise_month,
+          exercise_year: formData.exercise_year,
+          document_type: formData.document_type,
+          invoice_number: formData.invoice_number,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
+          net_value: parseFloat(formData.net_value),
+          payment_status: formData.payment_status,
+          payment_date: paymentDateISO,
+          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          estado: formData.estado,
         },
       ]).select();
 
       if (error) {
-        console.error('Erro ao adicionar nota fiscal:', error);
-        alert('Erro ao adicionar nota fiscal: ' + error.message);
+        console.error('Error adding invoice:', error);
+        alert('Erro ao adicionar nota fiscal');
         return;
       }
 
@@ -529,13 +370,9 @@ export function ControlePagamentoTab() {
 
   const handleEdit = (invoice: Invoice) => {
     setEditingInvoice(invoice);
-    
-    // Para notas antigas, se não tiver unit_id mas tiver unit_name, mantém o comportamento
-    const isOldInvoice = isPreMigrationInvoice(invoice.created_at);
-    
     setFormData({
       unit_id: invoice.unit_id || '',
-      unit_name: isOldInvoice && !invoice.unit_id ? invoice.unit_name : '',
+      unit_name: invoice.unit_name || '',
       cnpj_cpf: invoice.cnpj_cpf,
       exercise_month: invoice.exercise_month,
       exercise_year: invoice.exercise_year,
@@ -558,11 +395,10 @@ export function ControlePagamentoTab() {
     const { error } = await supabase
       .from('invoices')
       .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('user_id', user?.id);
+      .eq('id', id);
 
     if (error) {
-      console.error('Erro ao excluir nota fiscal:', error);
+      console.error('Error deleting invoice:', error);
       alert('Erro ao excluir nota fiscal');
       return;
     }
@@ -593,11 +429,10 @@ export function ControlePagamentoTab() {
         payment_date: paymentDateISO,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', invoiceId)
-      .eq('user_id', user?.id);
+      .eq('id', invoiceId);
 
     if (error) {
-      console.error('Erro ao atualizar data de pagamento:', error);
+      console.error('Error updating payment date:', error);
       alert('Erro ao atualizar data de pagamento');
       return;
     }
@@ -646,17 +481,20 @@ export function ControlePagamentoTab() {
     .filter((inv) => inv.payment_status === 'ATRASADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
-  // Função de filtro modificada para incluir período
+  // Função de filtro
   const filteredInvoices = invoices.filter((inv) => {
+    // Filtro por status
     if (statusFilter !== 'all' && inv.payment_status !== statusFilter) {
       return false;
     }
 
+    // Filtro por período (baseado na data de vencimento)
     if (startDateFilter && endDateFilter) {
       const dueDate = new Date(inv.due_date);
       const startDate = new Date(startDateFilter);
       const endDate = new Date(endDateFilter);
       
+      // Ajusta as datas para comparar corretamente
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 59, 999);
       
@@ -666,48 +504,21 @@ export function ControlePagamentoTab() {
     return true;
   });
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 max-w-full">
-      {/* Banner de migração com status */}
-      {(isMigrating || migrationStatus) && (
-        <div className={`border rounded-lg p-4 ${
-          isMigrating ? 'bg-blue-50 border-blue-200' : 
-          migrationStatus.includes('sucesso') ? 'bg-green-50 border-green-200' :
-          migrationStatus.includes('Erro') ? 'bg-red-50 border-red-200' :
-          'bg-yellow-50 border-yellow-200'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              {isMigrating && (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-              )}
-              <p className={
-                isMigrating ? 'text-blue-700' :
-                migrationStatus.includes('sucesso') ? 'text-green-700' :
-                migrationStatus.includes('Erro') ? 'text-red-700' :
-                'text-yellow-700'
-              }>
-                {migrationStatus || (isMigrating ? 'Migrando notas fiscais...' : '')}
-              </p>
-            </div>
-            
-            {/* Botão para forçar migração manual */}
-            {!isMigrating && units.length > 0 && (
-              <button
-                onClick={forceMigrate}
-                className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-              >
-                Forçar Migração
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
           
+          {/* Filtro de Status */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -719,6 +530,7 @@ export function ControlePagamentoTab() {
             <option value="ATRASADO">Atrasado</option>
           </select>
 
+          {/* Filtro de Período */}
           <div className="flex items-center space-x-2">
             <input
               type="date"
@@ -736,6 +548,7 @@ export function ControlePagamentoTab() {
               placeholder="Data final"
             />
             
+            {/* Botão para limpar filtros */}
             {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
               <button
                 onClick={() => {
@@ -769,6 +582,7 @@ export function ControlePagamentoTab() {
         </div>
       </div>
 
+      {/* Indicador de filtros ativos */}
       {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700">
@@ -854,10 +668,10 @@ export function ControlePagamentoTab() {
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">
                       {displayUnitName}
-                      {/* Indicador visual para notas migradas */}
+                      {/* Indicador visual para notas sem unit_id (legado) */}
                       {!invoice.unit_id && invoice.unit_name && (
-                        <span className="ml-2 text-xs text-amber-600" title="Nota fiscal antiga (pré-migração)">
-                          *
+                        <span className="ml-2 text-xs text-amber-600" title="Nota fiscal de versão anterior">
+                          (legado)
                         </span>
                       )}
                     </td>
@@ -971,24 +785,12 @@ export function ControlePagamentoTab() {
             <h3 className="text-xl font-bold text-slate-800 mb-4">
               {editingInvoice ? 'Editar Nota Fiscal' : 'Nova Nota Fiscal'}
             </h3>
-            
-            {/* Aviso para notas antigas */}
-            {editingInvoice && isPreMigrationInvoice(editingInvoice.created_at) && (
-              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <p className="text-sm text-amber-700">
-                  <strong>Nota fiscal antiga:</strong> Para manter a consistência, recomendamos selecionar uma unidade do banco de dados. 
-                  Se preferir manter o nome original, deixe o campo unidade em branco.
-                </p>
-              </div>
-            )}
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Unidade {editingInvoice && isPreMigrationInvoice(editingInvoice.created_at) && 
-                      <span className="text-xs text-amber-600 ml-2">(opcional para notas antigas)</span>
-                    }
+                    Unidade
+                    {!editingInvoice && <span className="text-xs text-slate-500 ml-2">(opcional)</span>}
                   </label>
                   <select
                     value={formData.unit_id}
@@ -997,18 +799,34 @@ export function ControlePagamentoTab() {
                       setFormData({ 
                         ...formData, 
                         unit_id: e.target.value,
-                        unit_name: selectedUnit ? selectedUnit.name : ''
+                        // Se selecionou uma unidade, usa o nome dela
+                        unit_name: selectedUnit ? selectedUnit.name : formData.unit_name
                       });
                     }}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="">Selecione uma unidade</option>
+                    <option value="">Selecione uma unidade (opcional)</option>
                     {units.map((unit) => (
                       <option key={unit.id} value={unit.id}>
                         {unit.name} - {unit.municipality}
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* Campo de nome da unidade manual (para compatibilidade) */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Nome da Unidade (manual)
+                    <span className="text-xs text-slate-500 ml-2">use apenas se não selecionar acima</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.unit_name}
+                    onChange={(e) => setFormData({ ...formData, unit_name: e.target.value })}
+                    placeholder="Digite o nome da unidade"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
                 </div>
 
                 <div>
