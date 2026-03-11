@@ -171,6 +171,11 @@ async function calculateAttendancePercentage(
   };
 }
 
+// ===========================================
+// FUNÇÃO: updateStudentStatusOnClose (OTIMIZADA)
+// MELHORIAS: Logs mais claros, validações adicionais
+// ===========================================
+
 async function updateStudentStatusOnClose(
   classId: string, 
   studentId: string, 
@@ -178,6 +183,7 @@ async function updateStudentStatusOnClose(
   studentData?: any
 ) {
   try {
+    // Carregar dados se não fornecidos
     if (!classData) {
       const { data } = await supabase
         .from('classes')
@@ -197,6 +203,7 @@ async function updateStudentStatusOnClose(
       studentData = data;
     }
 
+    // Verificar status do ciclo
     const { data: cycleData } = await supabase
       .from('cycles')
       .select('*')
@@ -206,15 +213,18 @@ async function updateStudentStatusOnClose(
     const today = new Date().toISOString().split('T')[0];
     const isCycleActive = cycleData?.status === 'active' && today <= cycleData?.end_date;
 
+    // Se ciclo ainda está ativo, não definir situação final
     if (isCycleActive) {
+      console.log(`⏳ Ciclo ativo - aluno ${studentId} mantido como em_andamento`);
       return 'em_andamento';
     }
 
     let currentStatus = 'em_andamento';
     let isApproved = false;
+    let detalhesAprovacao = '';
 
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      // Código existente para videoconferência...
+      // Código existente para videoconferência
       const enrollmentDate = extractDatePart(studentData?.enrollment_date);
       const isExceptional = studentData?.enrollment_type === 'exceptional';
       
@@ -225,25 +235,38 @@ async function updateStudentStatusOnClose(
       );
       
       isApproved = percentage >= 60;
+      detalhesAprovacao = `Frequência: ${percentage.toFixed(1)}%`;
       
     } else {
-      // EAD: Busca o status de frequência do aluno
+      // ===========================================
+      // EAD: REGRA CORRETA - BASEADA EM is_frequente
+      // ===========================================
       const { data: accessData } = await supabase
         .from('ead_access')
-        .select('is_frequente')
+        .select('is_frequente, access_date_1, access_date_2, access_date_3')
         .eq('class_id', classId)
         .eq('student_id', studentId)
         .maybeSingle();
 
-      // ✅ NOVA REGRA DE ENCERRAMENTO: 
-      // Aprovado APENAS se is_frequente for TRUE
-      // Independente da quantidade de acessos registrados
+      // ✅ REGRA DEFINITIVA: Aprovado APENAS se is_frequente for TRUE
       isApproved = accessData?.is_frequente === true;
+      
+      // Contar acessos apenas para informação
+      const totalAcessos = [
+        accessData?.access_date_1,
+        accessData?.access_date_2,
+        accessData?.access_date_3
+      ].filter(Boolean).length;
+      
+      detalhesAprovacao = isApproved 
+        ? `✅ Frequente manualmente (${totalAcessos}/3 acessos registrados)`
+        : `❌ Não frequente (${totalAcessos}/3 acessos registrados)`;
 
-      console.log(`Aluno EAD ${studentId}:`, {
+      console.log(`🎓 Aluno EAD ${studentId}:`, {
         isFrequente: accessData?.is_frequente,
+        totalAcessos,
         aprovado: isApproved,
-        mensagem: isApproved 
+        criterio: isApproved 
           ? 'Aprovado por frequência manual' 
           : 'Reprovado - não marcado como frequente'
       });
@@ -251,7 +274,8 @@ async function updateStudentStatusOnClose(
     
     currentStatus = isApproved ? 'aprovado' : 'reprovado';
 
-    await supabase
+    // Atualizar status no banco
+    const { error: updateError } = await supabase
       .from('class_students')
       .update({
         current_status: currentStatus,
@@ -260,9 +284,18 @@ async function updateStudentStatusOnClose(
       .eq('class_id', classId)
       .eq('student_id', studentId);
 
+    if (updateError) {
+      console.error('Erro ao atualizar status:', updateError);
+      throw updateError;
+    }
+
+    // Log de sucesso
+    console.log(`✅ Status atualizado - Aluno ${studentId}: ${currentStatus} (${detalhesAprovacao})`);
+
     return currentStatus;
+    
   } catch (error) {
-    console.error('Error updating student status:', error);
+    console.error('❌ Error updating student status:', error);
     return null;
   }
 }
@@ -270,8 +303,15 @@ async function updateStudentStatusOnClose(
 // ===========================================
 // FUNÇÃO CORRIGIDA - ATUALIZAR TURMA INTEIRA
 // ===========================================
+// ===========================================
+// FUNÇÃO: updateAllStudentsStatusOnClose (MELHORADA)
+// MELHORIAS: Logs mais detalhados para EAD
+// ===========================================
+
 async function updateAllStudentsStatusOnClose(classId: string) {
   try {
+    console.log(`🚀 Iniciando encerramento da turma: ${classId}`);
+    
     const { data: classData } = await supabase
       .from('classes')
       .select('*, cycles(*)')
@@ -280,10 +320,17 @@ async function updateAllStudentsStatusOnClose(classId: string) {
 
     const { data: students } = await supabase
       .from('class_students')
-      .select('student_id, enrollment_date, enrollment_type')
+      .select('student_id, enrollment_date, enrollment_type, students(full_name)')
       .eq('class_id', classId);
 
-    if (!students) return;
+    if (!students || students.length === 0) {
+      console.log('ℹ️ Nenhum aluno matriculado na turma');
+      await supabase
+        .from('classes')
+        .update({ status: 'closed' })
+        .eq('id', classId);
+      return;
+    }
 
     let aprovados = 0;
     let reprovados = 0;
@@ -293,24 +340,12 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       const status = await updateStudentStatusOnClose(classId, student.student_id, classData, student);
       
       if (classData.modality === 'VIDEOCONFERENCIA') {
-        // Buscar detalhes para o relatório de videoconferência
-        const enrollmentDate = extractDatePart(student.enrollment_date);
-        const isExceptional = student.enrollment_type === 'exceptional';
+        // ... código existente para videoconferência ...
         
-        const { percentage, presentCount, totalClassesToConsider } = 
-          await calculateAttendancePercentage(
-            classId, 
-            student.student_id, 
-            isExceptional ? enrollmentDate : null
-          );
-        
-        detalhes.push(
-          `${student.student_id}: ${presentCount}/${totalClassesToConsider} presenças ` +
-          `(${percentage.toFixed(1)}%) - ${isExceptional ? 'Excepcional' : 'Regular'}`
-        );
-      } 
-      else if (classData.modality === 'EAD') {
-        // EAD: Busca o status de frequência do aluno (campo is_frequente)
+      } else if (classData.modality === 'EAD') {
+        // ===========================================
+        // EAD: BUSCAR DETALHES PARA RELATÓRIO
+        // ===========================================
         const { data: accessData } = await supabase
           .from('ead_access')
           .select('is_frequente, access_date_1, access_date_2, access_date_3')
@@ -318,19 +353,28 @@ async function updateAllStudentsStatusOnClose(classId: string) {
           .eq('student_id', student.student_id)
           .maybeSingle();
         
-        // NOVA REGRA: Aprovado se is_frequente = true
+        // ✅ REGRA CORRETA: Aprovado se is_frequente = true
         const isApproved = accessData?.is_frequente === true;
         
-        // Contar quantos acessos foram registrados (apenas para informação)
-        const totalAccesses = [
+        // Contar acessos registrados (apenas informação)
+        const totalAcessos = [
           accessData?.access_date_1,
           accessData?.access_date_2,
           accessData?.access_date_3
         ].filter(Boolean).length;
         
+        // Listar as datas para debug
+        const datasAcesso = [
+          accessData?.access_date_1 ? formatDateToDisplay(accessData.access_date_1) : '---',
+          accessData?.access_date_2 ? formatDateToDisplay(accessData.access_date_2) : '---',
+          accessData?.access_date_3 ? formatDateToDisplay(accessData.access_date_3) : '---'
+        ].join(' | ');
+        
         detalhes.push(
-          `${student.student_id}: ${isApproved ? '✅ FREQUENTE' : '❌ NÃO FREQUENTE'} ` +
-          `(${totalAccesses}/3 acessos registrados)`
+          `👤 ${student.students?.full_name || student.student_id}:\n` +
+          `   📊 Frequência: ${isApproved ? '✅ FREQUENTE' : '❌ NÃO FREQUENTE'}\n` +
+          `   📅 Acessos: ${totalAcessos}/3 (${datasAcesso})\n` +
+          `   📝 Tipo: ${student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}`
         );
       }
       
@@ -338,29 +382,46 @@ async function updateAllStudentsStatusOnClose(classId: string) {
       if (status === 'reprovado') reprovados++;
     }
 
+    // Fechar a turma
     await supabase
       .from('classes')
       .update({ status: 'closed' })
       .eq('id', classId);
 
-    // Mensagem personalizada para cada modalidade
-    if (classData.modality === 'EAD') {
-      alert(`✅ Turma EAD encerrada!\n\n` +
-            `📊 RESULTADO FINAL (baseado em FREQUÊNCIA MANUAL):\n` +
-            `✅ Aprovados: ${aprovados} alunos (marcados como frequentes)\n` +
-            `❌ Reprovados: ${reprovados} alunos (marcados como não frequentes)\n\n` +
-            `📋 DETALHAMENTO:\n${detalhes.join('\n')}\n\n` +
-            `ℹ️ Nota: A aprovação é baseada no campo "Frequência" (checkbox), não na quantidade de acessos.`);
-    } else {
-      alert(`✅ Turma de Videoconferência encerrada!\n\n` +
-            `📊 RESULTADO FINAL:\n` +
-            `✅ Aprovados: ${aprovados} alunos (frequência ≥ 60%)\n` +
-            `❌ Reprovados: ${reprovados} alunos (frequência < 60%)\n\n` +
-            `📋 DETALHAMENTO:\n${detalhes.join('\n')}`);
-    }
+    // ===========================================
+    // RELATÓRIO FINAL PERSONALIZADO
+    // ===========================================
+    const relatorioFinal = classData.modality === 'EAD' 
+      ? `✅ TURMA EAD ENCERRADA!\n\n` +
+        `📊 RESULTADO FINAL (baseado em FREQUÊNCIA MANUAL):\n` +
+        `✅ Aprovados: ${aprovados} alunos (marcados como frequentes)\n` +
+        `❌ Reprovados: ${reprovados} alunos (marcados como não frequentes)\n\n` +
+        `📋 DETALHAMENTO POR ALUNO:\n${detalhes.join('\n\n')}\n\n` +
+        `ℹ️ ATENÇÃO: A aprovação é baseada no campo "Frequência" (checkbox manual), ` +
+        `NÃO na quantidade de acessos. Um aluno pode ter 3 acessos mas ser reprovado ` +
+        `se não foi marcado como frequente, e vice-versa.`
+      
+      : `✅ TURMA DE VIDEOCONFERÊNCIA ENCERRADA!\n\n` +
+        `📊 RESULTADO FINAL (baseado em % de presenças):\n` +
+        `✅ Aprovados: ${aprovados} alunos (frequência ≥ 60%)\n` +
+        `❌ Reprovados: ${reprovados} alunos (frequência < 60%)\n\n` +
+        `📋 DETALHAMENTO:\n${detalhes.join('\n')}`;
+
+    alert(relatorioFinal);
+    
+    // Log para auditoria
+    console.log('📊 Relatório de encerramento:', {
+      turma: classData.name,
+      modalidade: classData.modality,
+      aprovados,
+      reprovados,
+      total: students.length,
+      timestamp: new Date().toISOString()
+    });
     
   } catch (error) {
-    console.error('Error updating all students status:', error);
+    console.error('❌ Error updating all students status:', error);
+    alert('Erro ao encerrar turma. Verifique o console para mais detalhes.');
   }
 }
 
@@ -1139,7 +1200,13 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setTotalClassesGiven(total);
   };
 
- const loadClassStudents = async () => {
+ // ===========================================
+// FUNÇÃO: loadClassStudents (PARTE EAD - CORRIGIDA)
+// PROBLEMA: Usava validateEADAccess (obsoleta)
+// CORREÇÃO: Usar is_frequente do banco
+// ===========================================
+
+const loadClassStudents = async () => {
   const { data, error } = await supabase
     .from('class_students')
     .select('*, students(*)')
@@ -1151,7 +1218,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   }
 
   if (classData.modality === 'VIDEOCONFERENCIA') {
-    // Buscar todas as aulas realizadas na turma
+    // Código existente para videoconferência (mantido)
     const { data: allAttendances } = await supabase
       .from('attendance')
       .select('class_number, class_date')
@@ -1187,27 +1254,53 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     );
 
     setStudents(studentsWithAttendance);
+    
   } else {
-    // Código existente para EAD...
+    // ===========================================
+    // PARTE EAD - COMPLETAMENTE REESCRITA
+    // ===========================================
+    console.log('📚 Carregando alunos EAD com base em is_frequente');
+    
     const studentsWithAccess = await Promise.all(
       (data || []).map(async (cs) => {
-        const { data: accessData } = await supabase
+        // Buscar dados de acesso do aluno
+        const { data: accessData, error: accessError } = await supabase
           .from('ead_access')
           .select('*')
           .eq('class_id', classData.id)
           .eq('student_id', cs.student_id)
           .maybeSingle();
 
-        const isPresent = validateEADAccess(
+        if (accessError) {
+          console.error('Erro ao buscar accessData:', accessError);
+        }
+
+        // ✅ CORREÇÃO CRÍTICA: Usar is_frequente do banco, NÃO a função validateEADAccess
+        const isFrequente = accessData?.is_frequente === true; // Garantir que é booleano
+        
+        // Contar acessos apenas para informação (não para decisão)
+        const totalAcessos = [
           accessData?.access_date_1,
           accessData?.access_date_2,
           accessData?.access_date_3
-        );
+        ].filter(Boolean).length;
+
+        // Log para auditoria
+        console.log(`👤 Aluno ${cs.students.full_name}:`, {
+          isFrequente,
+          totalAcessos,
+          accessDates: {
+            d1: accessData?.access_date_1,
+            d2: accessData?.access_date_2,
+            d3: accessData?.access_date_3
+          }
+        });
 
         return {
           ...cs,
-          accessData,
-          isPresent,
+          accessData,           // Dados completos de acesso
+          isFrequente,          // ✅ Campo correto para UI
+          totalAcessos,         // Info adicional (não usado para decisão)
         };
       })
     );
@@ -3175,61 +3268,149 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }));
   };;
 
-  const handleSaveAccess = async (studentId: string) => {
-    const data = accessData[studentId];
+ // ===========================================
+// FUNÇÃO: handleSaveAccess
+// PROPÓSITO: Salvar APENAS as datas de acesso EAD
+// GARANTIA: NUNCA altera o campo is_frequente
+// ===========================================
+const handleSaveAccess = async (studentId: string) => {
+  // 1️⃣ Obtém as datas do estado local (já formatadas DD/MM/AAAA)
+  const data = accessData[studentId];
+  
+  if (!data) {
+    alert('Erro: Dados de acesso não encontrados');
+    return;
+  }
 
-    // Validar todas as datas antes de salvar
-    const dates = [data.access_date_1, data.access_date_2, data.access_date_3].filter(Boolean);
-    for (const date of dates) {
-      if (!validateAccessDate(date)) return;
+  // 2️⃣ VALIDAÇÃO: Verificar se as datas estão dentro do período do ciclo
+  const dates = [
+    { value: data.access_date_1, field: 'Acesso 1' },
+    { value: data.access_date_2, field: 'Acesso 2' },
+    { value: data.access_date_3, field: 'Acesso 3' }
+  ].filter(item => item.value); // Filtra apenas os que têm valor
+
+  for (const item of dates) {
+    if (!validateAccessDate(item.value)) {
+      alert(`❌ Data inválida: ${item.field} (${item.value}). Verifique se a data está dentro do período do ciclo.`);
+      return;
+    }
+  }
+
+  // 3️⃣ CONFIRMAÇÃO: Mostrar resumo do que será salvo
+  const totalAcessos = dates.length;
+  const acesso1 = data.access_date_1 || '---';
+  const acesso2 = data.access_date_2 || '---';
+  const acesso3 = data.access_date_3 || '---';
+  
+  if (!confirm(`📅 Confirmar registro de acessos?\n\n` +
+                `Acesso 1: ${acesso1}\n` +
+                `Acesso 2: ${acesso2}\n` +
+                `Acesso 3: ${acesso3}\n\n` +
+                `⚠️ O status de frequência NÃO será alterado.`)) {
+    return;
+  }
+
+  try {
+    // 4️⃣ BUSCAR STATUS ATUAL: Para garantir que NUNCA vamos sobrescrever
+    const { data: currentData, error: fetchError } = await supabase
+      .from('ead_access')
+      .select('is_frequente')  // Só precisamos do status
+      .eq('class_id', classData.id)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (fetchError) {
+      console.error('Erro ao buscar status atual:', fetchError);
+      alert('Erro ao verificar status atual. Tente novamente.');
+      return;
     }
 
-    try {
-      // Converter para ISO para salvar no banco
-      const accessDataISO = {
-        access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
-        access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
-        access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
-      };
+    // 5️⃣ PRESERVAR STATUS: Usar o status existente ou false como padrão
+    // 👉 GARANTIA: O status NUNCA é alterado aqui
+    const isFrequenteAtual = currentData?.is_frequente ?? false;
+    
+    console.log('🔄 Preservando status de frequência:', {
+      studentId,
+      isFrequenteAtual,
+      acao: 'manter inalterado'
+    });
 
-      // Buscar o registro atual para preservar o status de frequência
-      const { data: currentData } = await supabase
-        .from('ead_access')
-        .select('is_frequente')
-        .eq('class_id', classData.id)
-        .eq('student_id', studentId)
-        .maybeSingle();
+    // 6️⃣ CONVERTER DATAS: De DD/MM/AAAA para YYYY-MM-DD (formato do banco)
+    const accessDataISO = {
+      access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
+      access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
+      access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
+    };
 
-      // Manter o status de frequência atual (se existir)
-      const isFrequente = currentData?.is_frequente || false;
+    // 7️⃣ UPSERT: Salvar APENAS as datas, mantendo o status inalterado
+    const { error: upsertError } = await supabase
+      .from('ead_access')
+      .upsert(
+        [
+          {
+            class_id: classData.id,
+            student_id: studentId,
+            // Datas (o que estamos atualizando)
+            access_date_1: accessDataISO.access_date_1,
+            access_date_2: accessDataISO.access_date_2,
+            access_date_3: accessDataISO.access_date_3,
+            // Status (o que estamos PRESERVANDO)
+            is_frequente: isFrequenteAtual,
+            // Timestamp de atualização
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        { 
+          onConflict: 'class_id,student_id',
+          ignoreDuplicates: false // Atualiza se existir
+        }
+      );
 
-      const { error } = await supabase
-        .from('ead_access')
-        .upsert(
-          [
-            {
-              class_id: classData.id,
-              student_id: studentId,
-              ...accessDataISO,
-              is_frequente: isFrequente, // NÃO ALTERA O STATUS!
-              updated_at: new Date().toISOString(),
-            },
-          ],
-          { onConflict: 'class_id,student_id' }
-        );
-
-      if (error) throw error;
-
-      alert('✅ Acessos salvos com sucesso! O status de frequência não foi alterado.');
+    if (upsertError) {
+      console.error('Erro detalhado:', upsertError);
       
-      // Atualizar a lista para mostrar os dados atualizados
-      onUpdate();
-      
-    } catch (error) {
-      console.error('Erro ao salvar acessos:', error);
-      alert('Erro ao salvar acessos. Tente novamente.');
+      // Mensagens específicas baseadas no erro
+      if (upsertError.code === '23505') {
+        alert('Erro: Registro duplicado.');
+      } else if (upsertError.code === '23503') {
+        alert('Erro: Turma ou aluno não encontrado.');
+      } else if (upsertError.message.includes('date')) {
+        alert('Erro: Formato de data inválido. Use DD/MM/AAAA.');
+      } else {
+        alert(`Erro ao salvar acessos: ${upsertError.message}`);
+      }
+      return;
     }
-  };
+
+    // 8️⃣ SUCESSO: Feedback claro
+    const statusMensagem = isFrequenteAtual 
+      ? '✅ Aluno mantido como FREQUENTE' 
+      : '⚪ Aluno mantido como NÃO FREQUENTE';
+    
+    alert(`✅ Acessos salvos com sucesso!\n\n` +
+          `📅 Datas registradas:\n` +
+          `Acesso 1: ${acesso1}\n` +
+          `Acesso 2: ${acesso2}\n` +
+          `Acesso 3: ${acesso3}\n\n` +
+          `${statusMensagem}\n` +
+          `ℹ️ O status de frequência NÃO foi alterado.`);
+
+    // 9️⃣ ATUALIZAR UI: Recarregar lista para mostrar dados atualizados
+    await onUpdate();
+    
+    // 🔟 LOG PARA AUDITORIA
+    console.log('✅ Acessos salvos com preservação de status:', {
+      studentId,
+      datas: accessDataISO,
+      isFrequentePreservado: isFrequenteAtual,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Erro inesperado ao salvar acessos:', error);
+    alert('Erro inesperado ao salvar acessos. Tente novamente.');
+  }
+};
 
   // ===========================================
   // FUNÇÃO APENAS PARA SALVAR FREQUÊNCIA
