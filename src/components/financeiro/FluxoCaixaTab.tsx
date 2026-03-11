@@ -17,6 +17,8 @@ interface Transaction {
   fornecedor?: string;
   com_nota?: boolean;
   so_recibo?: boolean;
+  idhs?: boolean;
+  geral?: boolean;
 }
 
 interface FixedExpense {
@@ -75,6 +77,8 @@ export function FluxoCaixaTab() {
     fornecedor: '',
     com_nota: false,
     so_recibo: false,
+    idhs: false,
+    geral: false,
   });
 
   const [fixedExpenseForm, setFixedExpenseForm] = useState({
@@ -151,44 +155,43 @@ export function FluxoCaixaTab() {
   };
 
   const loadTransactions = async () => {
-  if (!user) return;
+    if (!user) return;
 
-  console.log('📅 Filter month:', filterMonth);
-  
-  // Extrair ano e mês
-  const [year, month] = filterMonth.split('-').map(Number);
-  
-  // Formatar mês com 2 dígitos
-  const monthPadded = month.toString().padStart(2, '0');
-  
-  // Primeiro dia do mês
-  const startDate = `${year}-${monthPadded}-01`;
-  
-  // Último dia do mês (criando data e extraindo o último dia)
-  const lastDay = new Date(year, month, 0).getDate(); // month aqui é 1-based? Vamos testar
-  const lastDayCorrected = new Date(year, month, 0).getDate(); // Isso retorna o último dia
-  
-  const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
-  
-  console.log('📅 Start date:', startDate);
-  console.log('📅 End date:', endDate);
+    console.log('📅 Filter month:', filterMonth);
+    
+    // Extrair ano e mês
+    const [year, month] = filterMonth.split('-').map(Number);
+    
+    // Formatar mês com 2 dígitos
+    const monthPadded = month.toString().padStart(2, '0');
+    
+    // Primeiro dia do mês
+    const startDate = `${year}-${monthPadded}-01`;
+    
+    // Último dia do mês
+    const lastDayCorrected = new Date(year, month, 0).getDate();
+    
+    const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
+    
+    console.log('📅 Start date:', startDate);
+    console.log('📅 End date:', endDate);
 
-  const { data, error } = await supabase
-    .from('cash_flow_transactions')
-    .select('*')
-    .eq('user_id', user.id)
-    .gte('transaction_date', startDate)
-    .lte('transaction_date', endDate)
-    .order('transaction_date', { ascending: false });
+    const { data, error } = await supabase
+      .from('cash_flow_transactions')
+      .select('*')
+      .eq('user_id', user.id)
+      .gte('transaction_date', startDate)
+      .lte('transaction_date', endDate)
+      .order('transaction_date', { ascending: false });
 
-  if (error) {
-    console.error('Error loading transactions:', error);
-    return;
-  }
+    if (error) {
+      console.error('Error loading transactions:', error);
+      return;
+    }
 
-  console.log('✅ Transações carregadas:', data);
-  setTransactions(data || []);
-};
+    console.log('✅ Transações carregadas:', data);
+    setTransactions(data || []);
+  };
 
   const loadFixedExpenses = async () => {
     if (!user) return;
@@ -226,6 +229,8 @@ export function FluxoCaixaTab() {
           fornecedor: formData.type === 'expense' ? formData.fornecedor || null : null,
           com_nota: formData.type === 'expense' ? formData.com_nota : false,
           so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
+          idhs: formData.type === 'expense' ? formData.idhs : false,
+          geral: formData.type === 'expense' ? formData.geral : false,
         })
         .eq('id', editingTransaction.id);
 
@@ -249,6 +254,8 @@ export function FluxoCaixaTab() {
           fornecedor: formData.type === 'expense' ? formData.fornecedor || null : null,
           com_nota: formData.type === 'expense' ? formData.com_nota : false,
           so_recibo: formData.type === 'expense' ? formData.so_recibo : false,
+          idhs: formData.type === 'expense' ? formData.idhs : false,
+          geral: formData.type === 'expense' ? formData.geral : false,
         },
       ]);
 
@@ -278,6 +285,8 @@ export function FluxoCaixaTab() {
       fornecedor: '',
       com_nota: false,
       so_recibo: false,
+      idhs: false,
+      geral: false,
     });
   };
 
@@ -295,6 +304,8 @@ export function FluxoCaixaTab() {
       fornecedor: transaction.fornecedor || '',
       com_nota: transaction.com_nota || false,
       so_recibo: transaction.so_recibo || false,
+      idhs: transaction.idhs || false,
+      geral: transaction.geral || false,
     });
     setShowAddModal(true);
   };
@@ -907,30 +918,61 @@ export function FluxoCaixaTab() {
                     </div>
                   )}
 
-                  <div className="col-span-2 space-y-3">
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id="com_nota"
-                        checked={formData.com_nota}
-                        onChange={(e) => setFormData({ ...formData, com_nota: e.target.checked, so_recibo: e.target.checked ? false : formData.so_recibo })}
-                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                      />
-                      <label htmlFor="com_nota" className="ml-2 text-sm font-medium text-slate-700">
-                        Com nota fiscal
-                      </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Primeira coluna - Checkboxes existentes */}
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="com_nota"
+                          checked={formData.com_nota}
+                          onChange={(e) => setFormData({ ...formData, com_nota: e.target.checked, so_recibo: e.target.checked ? false : formData.so_recibo })}
+                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="com_nota" className="ml-2 text-sm font-medium text-slate-700">
+                          Com nota fiscal
+                        </label>
+                      </div>
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="so_recibo"
+                          checked={formData.so_recibo}
+                          onChange={(e) => setFormData({ ...formData, so_recibo: e.target.checked, com_nota: e.target.checked ? false : formData.com_nota })}
+                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="so_recibo" className="ml-2 text-sm font-medium text-slate-700">
+                          Só recibo
+                        </label>
+                      </div>
                     </div>
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id="so_recibo"
-                        checked={formData.so_recibo}
-                        onChange={(e) => setFormData({ ...formData, so_recibo: e.target.checked, com_nota: e.target.checked ? false : formData.com_nota })}
-                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                      />
-                      <label htmlFor="so_recibo" className="ml-2 text-sm font-medium text-slate-700">
-                        Só recibo
-                      </label>
+
+                    {/* Segunda coluna - Novos checkboxes IDHS e Geral */}
+                    <div className="space-y-3">
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="idhs"
+                          checked={formData.idhs}
+                          onChange={(e) => setFormData({ ...formData, idhs: e.target.checked })}
+                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="idhs" className="ml-2 text-sm font-medium text-slate-700">
+                          IDHS
+                        </label>
+                      </div>
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="geral"
+                          checked={formData.geral}
+                          onChange={(e) => setFormData({ ...formData, geral: e.target.checked })}
+                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="geral" className="ml-2 text-sm font-medium text-slate-700">
+                          Geral
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </>
