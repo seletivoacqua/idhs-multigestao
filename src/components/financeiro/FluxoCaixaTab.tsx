@@ -706,83 +706,107 @@ export function FluxoCaixaTab() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <div className="max-h-96 overflow-y-auto">
-          <table className="w-full">
-            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Tipo</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Descrição</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Fornecedor</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Método</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {paginatedTransactions.map((transaction) => (
-                <tr key={transaction.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
-                    {formatDate(transaction.transaction_date)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        transaction.type === 'income'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-red-100 text-red-700'
-                      }`}
-                    >
-                      {transaction.type === 'income' ? 'Receita' : 'Despesa'}
+     {/* Seção da tabela - localizar esta parte no código */}
+<div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <div className="max-h-96 overflow-y-auto">
+    <table className="w-full">
+      <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
+        <tr>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Tipo</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Descrição</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Fornecedor</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Método</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Origem</th> {/* Nova coluna */}
+          <th className="px-6 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
+          <th className="px-6 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-200">
+        {paginatedTransactions.map((transaction) => (
+          <tr key={transaction.id} className="hover:bg-slate-50">
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
+              {formatDate(transaction.transaction_date)}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap">
+              <span
+                className={`px-2 py-1 rounded-full text-xs font-medium ${
+                  transaction.type === 'income'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-red-100 text-red-700'
+                }`}
+              >
+                {transaction.type === 'income' ? 'Receita' : 'Despesa'}
+              </span>
+            </td>
+            <td className="px-6 py-4 text-sm text-slate-700">{transaction.description}</td>
+            <td className="px-6 py-4 text-sm text-slate-700">
+              {transaction.fornecedor || '-'}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700 capitalize">
+              {transaction.method}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
+              {transaction.category ? transaction.category.replace('_', ' ') : '-'}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
+              {/* Nova célula para mostrar a origem */}
+              {transaction.type === 'expense' ? (
+                <div className="flex items-center space-x-1">
+                  {transaction.idhs && (
+                    <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                      IDHS
                     </span>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-700">{transaction.description}</td>
-                  <td className="px-6 py-4 text-sm text-slate-700">
-                    {transaction.fornecedor || '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700 capitalize">
-                    {transaction.method}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
-                    {transaction.category ? transaction.category.replace('_', ' ') : '-'}
-                  </td>
-                  <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                    transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {formatCurrency(Number(transaction.amount))}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-3">
-                      <button
-                        onClick={() => handleEditTransaction(transaction)}
-                        className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                      >
-                        Editar
-                      </button>
-                      <button
-                        onClick={() => handleDeleteTransaction(transaction.id)}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-6 py-8 text-center text-slate-500">
-                    Nenhuma transação encontrada para este período
-                  </td>
-                </tr>
+                  )}
+                  {transaction.geral && (
+                    <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                      Geral
+                    </span>
+                  )}
+                  {!transaction.idhs && !transaction.geral && (
+                    <span className="text-slate-400 text-xs">-</span>
+                  )}
+                </div>
+              ) : (
+                <span className="text-slate-400 text-xs">-</span>
               )}
-            </tbody>
-          </table>
-        </div>
-        {renderPagination()}
-      </div>
+            </td>
+            <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
+              transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+            }`}>
+              {formatCurrency(Number(transaction.amount))}
+            </td>
+            <td className="px-6 py-4 whitespace-nowrap">
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => handleEditTransaction(transaction)}
+                  className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                >
+                  Editar
+                </button>
+                <button
+                  onClick={() => handleDeleteTransaction(transaction.id)}
+                  className="text-red-600 hover:text-red-800"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+        {filteredTransactions.length === 0 && (
+          <tr>
+            <td colSpan={9} className="px-6 py-8 text-center text-slate-500"> {/* Ajustado colSpan de 8 para 9 */}
+              Nenhuma transação encontrada para este período
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+  {renderPagination()}
+</div>
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
