@@ -154,44 +154,52 @@ export function FluxoCaixaTab() {
     alert('Saldo inicial salvo com sucesso!');
   };
 
-  const loadTransactions = async () => {
-    if (!user) return;
+ const loadTransactions = async () => {
+  if (!user) return;
 
-    console.log('📅 Filter month:', filterMonth);
-    
-    // Extrair ano e mês
-    const [year, month] = filterMonth.split('-').map(Number);
-    
-    // Formatar mês com 2 dígitos
-    const monthPadded = month.toString().padStart(2, '0');
-    
-    // Primeiro dia do mês
-    const startDate = `${year}-${monthPadded}-01`;
-    
-    // Último dia do mês
-    const lastDayCorrected = new Date(year, month, 0).getDate();
-    
-    const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
-    
-    console.log('📅 Start date:', startDate);
-    console.log('📅 End date:', endDate);
+  console.log('📅 Filter month:', filterMonth);
+  
+  // Extrair ano e mês
+  const [year, month] = filterMonth.split('-').map(Number);
+  
+  // Formatar mês com 2 dígitos
+  const monthPadded = month.toString().padStart(2, '0');
+  
+  // Primeiro dia do mês
+  const startDate = `${year}-${monthPadded}-01`;
+  
+  // Último dia do mês
+  const lastDayCorrected = new Date(year, month, 0).getDate();
+  
+  const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
+  
+  console.log('📅 Start date:', startDate);
+  console.log('📅 End date:', endDate);
 
-    const { data, error } = await supabase
-      .from('cash_flow_transactions')
-      .select('*')
-      .eq('user_id', user.id)
-      .gte('transaction_date', startDate)
-      .lte('transaction_date', endDate)
-      .order('transaction_date', { ascending: false });
+  const { data, error } = await supabase
+    .from('cash_flow_transactions')
+    .select('*')
+    .eq('user_id', user.id)
+    .gte('transaction_date', startDate)
+    .lte('transaction_date', endDate)
+    .order('transaction_date', { ascending: false });
 
-    if (error) {
-      console.error('Error loading transactions:', error);
-      return;
-    }
+  if (error) {
+    console.error('Error loading transactions:', error);
+    return;
+  }
 
-    console.log('✅ Transações carregadas:', data);
-    setTransactions(data || []);
-  };
+  console.log('✅ Transações carregadas:', data);
+  
+  // Tratar os dados para garantir que idhs e geral sejam booleanos
+  const processedData = data?.map(transaction => ({
+    ...transaction,
+    idhs: transaction.idhs === true,  // Converte para boolean true apenas se for explicitamente true
+    geral: transaction.geral === true  // Converte para boolean true apenas se for explicitamente true
+  })) || [];
+  
+  setTransactions(processedData);
+};
 
   const loadFixedExpenses = async () => {
     if (!user) return;
@@ -752,26 +760,27 @@ export function FluxoCaixaTab() {
             </td>
             <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
               {/* Nova célula para mostrar a origem */}
-              {transaction.type === 'expense' ? (
-                <div className="flex items-center space-x-1">
-                  {transaction.idhs && (
-                    <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-                      IDHS
-                    </span>
-                  )}
-                  {transaction.geral && (
-                    <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                      Geral
-                    </span>
-                  )}
-                  {!transaction.idhs && !transaction.geral && (
-                    <span className="text-slate-400 text-xs">-</span>
-                  )}
-                </div>
-              ) : (
-                <span className="text-slate-400 text-xs">-</span>
-              )}
-            </td>
+             <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">
+  {transaction.type === 'expense' ? (
+    <div className="flex items-center space-x-1">
+      {transaction.idhs === true && (  {/* Mudança: verificação explícita */}
+        <span className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+          IDHS
+        </span>
+      )}
+      {transaction.geral === true && (  {/* Mudança: verificação explícita */}
+        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+          Geral
+        </span>
+      )}
+      {transaction.idhs !== true && transaction.geral !== true && (  {/* Mudança: verificação explícita */}
+        <span className="text-slate-400 text-xs">-</span>
+      )}
+    </div>
+  ) : (
+    <span className="text-slate-400 text-xs">-</span>
+  )}
+</td>
             <td className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
               transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
             }`}>
