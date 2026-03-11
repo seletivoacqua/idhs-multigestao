@@ -64,6 +64,15 @@ export function ControlePagamentoTab() {
     return date.toLocaleDateString('pt-BR');
   };
 
+  // Função para formatar valores como moeda brasileira (R$)
+  const formatCurrency = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return '-';
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(value);
+  };
+
   // Função para criar data no formato ISO sem perder o dia por causa do fuso
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
@@ -610,7 +619,7 @@ export function ControlePagamentoTab() {
             <CheckCircle className="w-8 h-8 text-green-600" />
             <div>
               <p className="text-sm text-green-600 font-medium">Total Pago</p>
-              <p className="text-xl font-bold text-green-700">R$ {totalPago.toFixed(2)}</p>
+              <p className="text-xl font-bold text-green-700">{formatCurrency(totalPago)}</p>
             </div>
           </div>
         </div>
@@ -620,7 +629,7 @@ export function ControlePagamentoTab() {
             <Clock className="w-8 h-8 text-yellow-600" />
             <div>
               <p className="text-sm text-yellow-600 font-medium">Em Aberto</p>
-              <p className="text-xl font-bold text-yellow-700">R$ {totalEmAberto.toFixed(2)}</p>
+              <p className="text-xl font-bold text-yellow-700">{formatCurrency(totalEmAberto)}</p>
             </div>
           </div>
         </div>
@@ -630,7 +639,7 @@ export function ControlePagamentoTab() {
             <AlertCircle className="w-8 h-8 text-red-600" />
             <div>
               <p className="text-sm text-red-600 font-medium">Atrasado</p>
-              <p className="text-xl font-bold text-red-700">R$ {totalAtrasado.toFixed(2)}</p>
+              <p className="text-xl font-bold text-red-700">{formatCurrency(totalAtrasado)}</p>
             </div>
           </div>
         </div>
@@ -650,7 +659,8 @@ export function ControlePagamentoTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Emissão</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Vencimento</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data Pgto</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor NF</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor Pago</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Documento</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
@@ -725,13 +735,23 @@ export function ControlePagamentoTab() {
                       )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
-                      R$ {Number(invoice.net_value).toFixed(2)}
+                      {formatCurrency(invoice.net_value)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
+                      {invoice.payment_status === 'PAGO' ? (
+                        <span className="text-green-600">
+                          {formatCurrency(invoice.paid_value)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center space-x-2">
                         {getStatusIcon(invoice.payment_status)}
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invoice.payment_status)}`}>
-                          {invoice.payment_status}
+                          {invoice.payment_status === 'PAGO' ? 'Pago' : 
+                           invoice.payment_status === 'EM ABERTO' ? 'Em Aberto' : 'Atrasado'}
                         </span>
                       </div>
                     </td>
@@ -769,7 +789,7 @@ export function ControlePagamentoTab() {
               })}
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={14} className="px-4 py-8 text-center text-slate-500">
                     Nenhuma nota fiscal encontrada
                   </td>
                 </tr>
