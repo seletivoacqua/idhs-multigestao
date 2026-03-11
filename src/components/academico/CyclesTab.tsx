@@ -3169,55 +3169,45 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 }
 
 // ===========================================
-// COMPONENTE - EADAccessManagement (CHECKBOX INDIVIDUAL DE FREQUÊNCIA)
+// COMPONENTE: EADAccessManagement
+// PROPÓSITO: Gerenciar acessos EAD com separação total entre:
+//            - Datas de acesso (botão AZUL)
+//            - Status de frequência (botão VERDE)
+// VERSÃO: Corrigida - Usa is_frequente do banco
 // ===========================================
+
 function EADAccessManagement({ classData, students, onUpdate }: any) {
+  // Estados para controle dos dados
   const [accessData, setAccessData] = useState<Record<string, any>>({});
+  const [frequenciaStatus, setFrequenciaStatus] = useState<Record<string, boolean>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [cycleStatus, setCycleStatus] = useState<string>('');
-  const [frequenciaStatus, setFrequenciaStatus] = useState<Record<string, boolean>>({});
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
 
+  // ===========================================
+  // EFFECT: Carregar dados do ciclo
+  // ===========================================
   useEffect(() => {
     loadCycleDates();
   }, [classData.cycle_id]);
 
-  useEffect(() => {
-   useEffect(() => {
-  const initialAccess: Record<string, any> = {};
-  const initialFrequencia: Record<string, boolean> = {};
-  
-  students.forEach((student: any) => {
-    // ✅ Dados de acesso - OK
-    initialFrequencia[student.student_id] = student.isFrequente === true; // Garantir booleano
-    
-    // Log para debug
-    console.log(`🎯 Inicializando aluno ${student.students?.full_name}:`, {
-      accessDates: initialAccess[student.student_id],
-      isFrequente: student.isFrequente,
-      checkbox: student.isFrequente === true
-    });
-  });
-  
-  setAccessData(initialAccess);
-  setFrequenciaStatus(initialFrequencia);
-  
-  // Log resumo
-  console.log('📊 Estado inicializado:', {
-    totalAlunos: students.length,
-    frequencias: initialFrequencia
-  });
-  
-}, [students]); // Dependência: students
-
+  // ===========================================
+  // FUNÇÃO: Carregar datas do ciclo
+  // ===========================================
   const loadCycleDates = async () => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('cycles')
         .select('start_date, end_date, status')
         .eq('id', classData.cycle_id)
         .single();
+
+      if (error) {
+        console.error('Erro ao carregar ciclo:', error);
+        return;
+      }
 
       if (data) {
         setCycleStartDate(data.start_date);
@@ -3225,197 +3215,173 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         setCycleStatus(data.status);
       }
     } catch (error) {
-      console.error('Erro ao carregar datas do ciclo:', error);
+      console.error('Erro inesperado ao carregar ciclo:', error);
     }
   };
 
-  const today = new Date().toISOString().split('T')[0];
-  const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+  // ===========================================
+  // EFFECT: Inicializar estados quando students mudar
+  // CORREÇÃO CRÍTICA: Usar isFrequente em vez de isPresent
+  // ===========================================
+  useEffect(() => {
+    if (!students || students.length === 0) {
+      setAccessData({});
+      setFrequenciaStatus({});
+      return;
+    }
 
-  const validateAccessDate = (date: string): boolean => {
+    const initialAccess: Record<string, any> = {};
+    const initialFrequencia: Record<string, boolean> = {};
+    
+    students.forEach((student: any) => {
+      // Inicializar datas de acesso
+      initialAccess[student.student_id] = {
+        access_date_1: student.accessData?.access_date_1 
+          ? formatDateForInput(student.accessData.access_date_1) 
+          : '',
+        access_date_2: student.accessData?.access_date_2 
+          ? formatDateForInput(student.accessData.access_date_2) 
+          : '',
+        access_date_3: student.accessData?.access_date_3 
+          ? formatDateForInput(student.accessData.access_date_3) 
+          : '',
+      };
+      
+      // ✅ CORREÇÃO: Usar isFrequente do banco
+      initialFrequencia[student.student_id] = student.isFrequente === true;
+    });
+    
+    setAccessData(initialAccess);
+    setFrequenciaStatus(initialFrequencia);
+    
+  }, [students]);
+
+  // ===========================================
+  // FUNÇÃO: Validar data de acesso
+  // ===========================================
+  const validateAccessDate = (date: string, fieldName: string): boolean => {
     if (!date) return true;
     
     if (!isValidDate(date)) {
-      alert(`Data de acesso inválida: ${date}. Use o formato DD/MM/AAAA`);
+      alert(`❌ Data inválida em ${fieldName}: ${date}. Use o formato DD/MM/AAAA`);
       return false;
     }
     
     const dateISO = parseDateInput(date);
+    const today = new Date().toISOString().split('T')[0];
     
     if (cycleStartDate && dateISO < cycleStartDate) {
-      alert(`Data de acesso não pode ser anterior ao início do ciclo (${formatDateForInput(cycleStartDate)})`);
+      alert(`❌ ${fieldName} não pode ser anterior a ${formatDateForInput(cycleStartDate)}`);
       return false;
     }
 
     if (cycleEndDate && dateISO > cycleEndDate) {
-      alert(`Data de acesso não pode ser posterior ao fim do ciclo (${formatDateForInput(cycleEndDate)})`);
+      alert(`❌ ${fieldName} não pode ser posterior a ${formatDateForInput(cycleEndDate)}`);
+      return false;
+    }
+
+    if (dateISO > today) {
+      alert(`❌ ${fieldName} não pode ser uma data futura`);
       return false;
     }
 
     return true;
   };
 
-  // Função para alternar o status de frequência manual
+  // ===========================================
+  // FUNÇÃO: Alternar checkbox de frequência
+  // ===========================================
   const toggleFrequencia = (studentId: string) => {
     setFrequenciaStatus(prev => ({
       ...prev,
       [studentId]: !prev[studentId]
     }));
-  };;
+  };
 
- // ===========================================
-// FUNÇÃO: handleSaveAccess
-// PROPÓSITO: Salvar APENAS as datas de acesso EAD
-// GARANTIA: NUNCA altera o campo is_frequente
-// ===========================================
-const handleSaveAccess = async (studentId: string) => {
-  // 1️⃣ Obtém as datas do estado local (já formatadas DD/MM/AAAA)
-  const data = accessData[studentId];
-  
-  if (!data) {
-    alert('Erro: Dados de acesso não encontrados');
-    return;
-  }
-
-  // 2️⃣ VALIDAÇÃO: Verificar se as datas estão dentro do período do ciclo
-  const dates = [
-    { value: data.access_date_1, field: 'Acesso 1' },
-    { value: data.access_date_2, field: 'Acesso 2' },
-    { value: data.access_date_3, field: 'Acesso 3' }
-  ].filter(item => item.value); // Filtra apenas os que têm valor
-
-  for (const item of dates) {
-    if (!validateAccessDate(item.value)) {
-      alert(`❌ Data inválida: ${item.field} (${item.value}). Verifique se a data está dentro do período do ciclo.`);
-      return;
-    }
-  }
-
-  // 3️⃣ CONFIRMAÇÃO: Mostrar resumo do que será salvo
-  const totalAcessos = dates.length;
-  const acesso1 = data.access_date_1 || '---';
-  const acesso2 = data.access_date_2 || '---';
-  const acesso3 = data.access_date_3 || '---';
-  
-  if (!confirm(`📅 Confirmar registro de acessos?\n\n` +
-                `Acesso 1: ${acesso1}\n` +
-                `Acesso 2: ${acesso2}\n` +
-                `Acesso 3: ${acesso3}\n\n` +
-                `⚠️ O status de frequência NÃO será alterado.`)) {
-    return;
-  }
-
-  try {
-    // 4️⃣ BUSCAR STATUS ATUAL: Para garantir que NUNCA vamos sobrescrever
-    const { data: currentData, error: fetchError } = await supabase
-      .from('ead_access')
-      .select('is_frequente')  // Só precisamos do status
-      .eq('class_id', classData.id)
-      .eq('student_id', studentId)
-      .maybeSingle();
-
-    if (fetchError) {
-      console.error('Erro ao buscar status atual:', fetchError);
-      alert('Erro ao verificar status atual. Tente novamente.');
-      return;
-    }
-
-    // 5️⃣ PRESERVAR STATUS: Usar o status existente ou false como padrão
-    // 👉 GARANTIA: O status NUNCA é alterado aqui
-    const isFrequenteAtual = currentData?.is_frequente ?? false;
+  // ===========================================
+  // FUNÇÃO: Salvar APENAS acessos (NUNCA altera frequência)
+  // ===========================================
+  const handleSaveAccess = async (studentId: string) => {
+    setLoading(prev => ({ ...prev, [studentId]: true }));
     
-    console.log('🔄 Preservando status de frequência:', {
-      studentId,
-      isFrequenteAtual,
-      acao: 'manter inalterado'
-    });
+    try {
+      const data = accessData[studentId];
+      
+      if (!data) {
+        throw new Error('Dados de acesso não encontrados');
+      }
 
-    // 6️⃣ CONVERTER DATAS: De DD/MM/AAAA para YYYY-MM-DD (formato do banco)
-    const accessDataISO = {
-      access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
-      access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
-      access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
-    };
+      // Validar datas
+      const datesToValidate = [
+        { value: data.access_date_1, field: 'Acesso 1' },
+        { value: data.access_date_2, field: 'Acesso 2' },
+        { value: data.access_date_3, field: 'Acesso 3' }
+      ].filter(item => item.value);
 
-    // 7️⃣ UPSERT: Salvar APENAS as datas, mantendo o status inalterado
-    const { error: upsertError } = await supabase
-      .from('ead_access')
-      .upsert(
-        [
+      for (const item of datesToValidate) {
+        if (!validateAccessDate(item.value, item.field)) {
+          setLoading(prev => ({ ...prev, [studentId]: false }));
+          return;
+        }
+      }
+
+      // Buscar status atual para PRESERVAR
+      const { data: currentData } = await supabase
+        .from('ead_access')
+        .select('is_frequente')
+        .eq('class_id', classData.id)
+        .eq('student_id', studentId)
+        .maybeSingle();
+
+      // ✅ GARANTIA: Preservar o status atual
+      const isFrequenteAtual = currentData?.is_frequente ?? false;
+
+      // Converter datas para ISO
+      const accessDataISO = {
+        access_date_1: data.access_date_1 ? parseDateInput(data.access_date_1) : null,
+        access_date_2: data.access_date_2 ? parseDateInput(data.access_date_2) : null,
+        access_date_3: data.access_date_3 ? parseDateInput(data.access_date_3) : null,
+      };
+
+      // Salvar no banco
+      const { error } = await supabase
+        .from('ead_access')
+        .upsert(
           {
             class_id: classData.id,
             student_id: studentId,
-            // Datas (o que estamos atualizando)
             access_date_1: accessDataISO.access_date_1,
             access_date_2: accessDataISO.access_date_2,
             access_date_3: accessDataISO.access_date_3,
-            // Status (o que estamos PRESERVANDO)
             is_frequente: isFrequenteAtual,
-            // Timestamp de atualização
             updated_at: new Date().toISOString(),
           },
-        ],
-        { 
-          onConflict: 'class_id,student_id',
-          ignoreDuplicates: false // Atualiza se existir
-        }
-      );
+          { onConflict: 'class_id,student_id' }
+        );
 
-    if (upsertError) {
-      console.error('Erro detalhado:', upsertError);
-      
-      // Mensagens específicas baseadas no erro
-      if (upsertError.code === '23505') {
-        alert('Erro: Registro duplicado.');
-      } else if (upsertError.code === '23503') {
-        alert('Erro: Turma ou aluno não encontrado.');
-      } else if (upsertError.message.includes('date')) {
-        alert('Erro: Formato de data inválido. Use DD/MM/AAAA.');
-      } else {
-        alert(`Erro ao salvar acessos: ${upsertError.message}`);
-      }
-      return;
+      if (error) throw error;
+
+      alert('✅ Acessos salvos! O status de frequência não foi alterado.');
+      await onUpdate();
+
+    } catch (error: any) {
+      console.error('❌ Erro ao salvar acessos:', error);
+      alert(`Erro: ${error.message}`);
+    } finally {
+      setLoading(prev => ({ ...prev, [studentId]: false }));
     }
-
-    // 8️⃣ SUCESSO: Feedback claro
-    const statusMensagem = isFrequenteAtual 
-      ? '✅ Aluno mantido como FREQUENTE' 
-      : '⚪ Aluno mantido como NÃO FREQUENTE';
-    
-    alert(`✅ Acessos salvos com sucesso!\n\n` +
-          `📅 Datas registradas:\n` +
-          `Acesso 1: ${acesso1}\n` +
-          `Acesso 2: ${acesso2}\n` +
-          `Acesso 3: ${acesso3}\n\n` +
-          `${statusMensagem}\n` +
-          `ℹ️ O status de frequência NÃO foi alterado.`);
-
-    // 9️⃣ ATUALIZAR UI: Recarregar lista para mostrar dados atualizados
-    await onUpdate();
-    
-    // 🔟 LOG PARA AUDITORIA
-    console.log('✅ Acessos salvos com preservação de status:', {
-      studentId,
-      datas: accessDataISO,
-      isFrequentePreservado: isFrequenteAtual,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('❌ Erro inesperado ao salvar acessos:', error);
-    alert('Erro inesperado ao salvar acessos. Tente novamente.');
-  }
-};
+  };
 
   // ===========================================
-  // FUNÇÃO APENAS PARA SALVAR FREQUÊNCIA
-  // DEFINE SE O ALUNO É FREQUENTE OU NÃO
+  // FUNÇÃO: Salvar APENAS frequência (NUNCA altera acessos)
   // ===========================================
   const handleSaveFrequencia = async (studentId: string) => {
-    const isFrequente = frequenciaStatus[studentId];
+    setLoading(prev => ({ ...prev, [studentId]: true }));
     
     try {
-      // Buscar os acessos atuais para não perdê-los
+      const isFrequente = frequenciaStatus[studentId];
+
+      // Buscar acessos atuais para PRESERVAR
       const { data: currentAccess } = await supabase
         .from('ead_access')
         .select('access_date_1, access_date_2, access_date_3')
@@ -3423,44 +3389,63 @@ const handleSaveAccess = async (studentId: string) => {
         .eq('student_id', studentId)
         .maybeSingle();
 
-      // Preparar os dados mantendo os acessos existentes
+      // ✅ GARANTIA: Preservar as datas existentes
       const accessDataISO = {
         access_date_1: currentAccess?.access_date_1 || null,
         access_date_2: currentAccess?.access_date_2 || null,
         access_date_3: currentAccess?.access_date_3 || null,
       };
 
+      // Salvar no banco
       const { error } = await supabase
         .from('ead_access')
         .upsert(
-          [
-            {
-              class_id: classData.id,
-              student_id: studentId,
-              ...accessDataISO, // MANTÉM OS ACESSOS EXISTENTES
-              is_frequente: isFrequente, // ALTERA APENAS O STATUS!
-              updated_at: new Date().toISOString(),
-            },
-          ],
+          {
+            class_id: classData.id,
+            student_id: studentId,
+            access_date_1: accessDataISO.access_date_1,
+            access_date_2: accessDataISO.access_date_2,
+            access_date_3: accessDataISO.access_date_3,
+            is_frequente: isFrequente,
+            updated_at: new Date().toISOString(),
+          },
           { onConflict: 'class_id,student_id' }
         );
 
       if (error) throw error;
 
-      alert(isFrequente 
-        ? '✅ Aluno marcado como FREQUENTE! (Status atualizado)' 
-        : '✅ Aluno marcado como NÃO FREQUENTE! (Status atualizado)'
-      );
-      
-      // Atualizar a lista para mostrar o novo status
-      onUpdate();
-      
-    } catch (error) {
-      console.error('Erro ao salvar frequência:', error);
-      alert('Erro ao salvar frequência. Tente novamente.');
+      alert(isFrequente ? '✅ Aluno marcado como FREQUENTE!' : '✅ Aluno marcado como NÃO FREQUENTE!');
+      await onUpdate();
+
+    } catch (error: any) {
+      console.error('❌ Erro ao salvar frequência:', error);
+      alert(`Erro: ${error.message}`);
+    } finally {
+      setLoading(prev => ({ ...prev, [studentId]: false }));
     }
   };
 
+  // ===========================================
+  // FUNÇÃO: Formatar data enquanto digita
+  // ===========================================
+  const handleDateChange = (studentId: string, field: string, value: string) => {
+    const formatted = formatDateInput(value);
+    setAccessData({
+      ...accessData,
+      [studentId]: {
+        ...accessData[studentId],
+        [field]: formatted,
+      },
+    });
+  };
+
+  // ===========================================
+  // RENDERIZAÇÃO
+  // ===========================================
+  
+  const today = new Date().toISOString().split('T')[0];
+  const isCycleActive = cycleStatus === 'active' && today <= cycleEndDate;
+  
   const filteredStudents = students.filter((student: any) => {
     if (!studentSearchTerm) return true;
     const search = studentSearchTerm.toLowerCase();
@@ -3469,174 +3454,143 @@ const handleSaveAccess = async (studentId: string) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center mb-4">
-        <h4 className="text-lg font-semibold text-slate-800">Controle de Acessos EAD</h4>
+      {/* Header com informações do ciclo */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex justify-between items-center">
+          <div>
+            <h4 className="font-semibold text-blue-800">Controle de Acessos EAD</h4>
+            <p className="text-sm text-blue-600 mt-1">
+              Período: {formatDateToDisplay(cycleStartDate)} até {formatDateToDisplay(cycleEndDate)}
+            </p>
+          </div>
+          <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+            isCycleActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+          }`}>
+            {isCycleActive ? 'Ciclo Ativo' : 'Ciclo Encerrado'}
+          </span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      {/* Legenda das funções */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h5 className="font-semibold text-blue-800 mb-2 flex items-center">
-            <span className="w-2 h-2 bg-blue-600 rounded-full mr-2"></span>
-            FUNÇÃO: Salvar Acessos
+          <h5 className="font-semibold text-blue-800 mb-2">
+            🔵 Salvar Acessos
           </h5>
           <p className="text-sm text-blue-700">
-            <strong>📅 Apenas registra as datas de acesso</strong>
+            Registra apenas as datas de acesso. Não altera o status de frequência.
           </p>
-          <ul className="list-disc list-inside text-sm text-blue-700 mt-2 space-y-1">
-            <li>Não altera o status de frequência do aluno</li>
-            <li>Pode preencher 1, 2 ou 3 acessos</li>
-            <li>Útil para registrar quando o aluno acessou</li>
-          </ul>
         </div>
-
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <h5 className="font-semibold text-green-800 mb-2 flex items-center">
-            <span className="w-2 h-2 bg-green-600 rounded-full mr-2"></span>
-            FUNÇÃO: Salvar Frequência
+          <h5 className="font-semibold text-green-800 mb-2">
+            ✅ Salvar Frequência
           </h5>
           <p className="text-sm text-green-700">
-            <strong>✅ Define se o aluno é frequente ou não</strong>
+            Define se o aluno é frequente. Não altera as datas de acesso.
           </p>
-          <ul className="list-disc list-inside text-sm text-green-700 mt-2 space-y-1">
-            <li>Não altera as datas de acesso registradas</li>
-            <li>Checkbox marcado = Aluno frequente</li>
-            <li>Checkbox desmarcado = Aluno não frequente</li>
-          </ul>
         </div>
       </div>
 
-      <div className="mb-4">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar aluno por nome..."
-            value={studentSearchTerm}
-            onChange={(e) => setStudentSearchTerm(e.target.value)}
-            className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
-          />
-        </div>
+      {/* Barra de busca */}
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+        <input
+          type="text"
+          placeholder="Buscar aluno por nome..."
+          value={studentSearchTerm}
+          onChange={(e) => setStudentSearchTerm(e.target.value)}
+          className="w-full pl-12 pr-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+        />
       </div>
 
+      {/* Tabela de alunos */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">
         <div className="max-h-[500px] overflow-y-auto">
-          <table className="w-full min-w-full">
+          <table className="w-full">
             <thead className="bg-slate-50 sticky top-0">
               <tr>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Aluno
-                </th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Acesso 1
-                </th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Acesso 2
-                </th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Acesso 3
-                </th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Frequência
-                </th>
-                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700 uppercase tracking-wider">
-                  Ações
-                </th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Aluno</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Acesso 1</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Acesso 2</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Acesso 3</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Frequência</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-slate-700">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filteredStudents.map((student: any) => {
                 const isFrequente = frequenciaStatus[student.student_id] || false;
+                const isLoading = loading[student.student_id] || false;
 
                 return (
                   <tr key={student.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 text-sm text-slate-800">
-                      <div className="font-medium">{student.students?.full_name || 'Nome não disponível'}</div>
+                    {/* Nome do aluno */}
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-slate-800">
+                        {student.students?.full_name}
+                      </div>
                       {student.enrollment_date && (
                         <div className="text-xs text-slate-500 mt-1">
-                          Matrícula: {forceDateToDisplay(student.enrollment_date)}
+                          Mat: {forceDateToDisplay(student.enrollment_date)}
                         </div>
                       )}
-                      {/* Indicador visual do status atual */}
-                      <div className={`text-xs mt-1 font-medium ${isFrequente ? 'text-green-600' : 'text-slate-400'}`}>
-                        Status atual: {isFrequente ? '✅ Frequente' : '⚪ Não frequente'}
-                      </div>
                     </td>
                     
+                    {/* Campos de acesso */}
                     {[1, 2, 3].map((num) => (
                       <td key={num} className="px-6 py-4">
                         <input
                           type="text"
                           value={accessData[student.student_id]?.[`access_date_${num}`] || ''}
-                          onChange={(e) => {
-                            const formatted = formatDateInput(e.target.value);
-                            setAccessData({
-                              ...accessData,
-                              [student.student_id]: {
-                                ...accessData[student.student_id],
-                                [`access_date_${num}`]: formatted,
-                              },
-                            });
-                          }}
-                          onBlur={(e) => {
-                            if (e.target.value && !isValidDate(e.target.value)) {
-                              alert(`Data inválida: ${e.target.value}. Use o formato DD/MM/AAAA`);
-                            }
-                          }}
+                          onChange={(e) => handleDateChange(student.student_id, `access_date_${num}`, e.target.value)}
                           placeholder="DD/MM/AAAA"
                           maxLength={10}
-                          disabled={!isCycleActive}
-                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm ${
-                            !isCycleActive ? 'bg-slate-100 cursor-not-allowed' : ''
-                          }`}
+                          disabled={!isCycleActive || isLoading}
+                          className="w-24 px-2 py-1 border rounded text-sm"
                         />
                       </td>
                     ))}
                     
+                    {/* Checkbox de frequência */}
                     <td className="px-6 py-4">
-                      <div className="flex items-center space-x-3">
-                        <label className="flex items-center space-x-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={isFrequente}
-                            onChange={() => toggleFrequencia(student.student_id)}
-                            disabled={!isCycleActive}
-                            className="w-5 h-5 text-green-600 rounded focus:ring-green-500"
-                          />
-                          <span className={`text-sm font-medium ${isFrequente ? 'text-green-700' : 'text-slate-600'}`}>
-                            {isFrequente ? 'Frequente' : 'Não frequente'}
-                          </span>
-                        </label>
-                      </div>
+                      <label className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={isFrequente}
+                          onChange={() => toggleFrequencia(student.student_id)}
+                          disabled={!isCycleActive || isLoading}
+                          className="w-4 h-4 text-green-600 rounded"
+                        />
+                        <span className="text-sm">
+                          {isFrequente ? 'Frequente' : 'Não frequente'}
+                        </span>
+                      </label>
                     </td>
                     
+                    {/* Botões de ação */}
                     <td className="px-6 py-4">
                       <div className="flex flex-col space-y-2">
-                        {/* Botão AZUL - Apenas salva acessos */}
                         <button
                           onClick={() => handleSaveAccess(student.student_id)}
-                          disabled={!isCycleActive}
-                          className={`px-3 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
-                            isCycleActive 
-                              ? 'bg-blue-600 hover:bg-blue-700' 
+                          disabled={!isCycleActive || isLoading}
+                          className={`px-3 py-1 text-white rounded text-sm ${
+                            isCycleActive && !isLoading
+                              ? 'bg-blue-600 hover:bg-blue-700'
                               : 'bg-slate-400 cursor-not-allowed'
                           }`}
-                          title="Salva apenas as datas de acesso, não altera o status de frequência"
                         >
-                          📅 Salvar Acessos
+                          {isLoading ? '...' : 'Salvar Acessos'}
                         </button>
-                        
-                        {/* Botão VERDE - Apenas salva frequência */}
                         <button
                           onClick={() => handleSaveFrequencia(student.student_id)}
-                          disabled={!isCycleActive}
-                          className={`px-3 py-2 text-white rounded-lg transition-colors text-sm whitespace-nowrap ${
-                            isCycleActive 
-                              ? 'bg-green-600 hover:bg-green-700' 
+                          disabled={!isCycleActive || isLoading}
+                          className={`px-3 py-1 text-white rounded text-sm ${
+                            isCycleActive && !isLoading
+                              ? 'bg-green-600 hover:bg-green-700'
                               : 'bg-slate-400 cursor-not-allowed'
                           }`}
-                          title="Salva apenas o status de frequência, não altera as datas de acesso"
                         >
-                          ✅ Salvar Frequência
+                          {isLoading ? '...' : 'Salvar Frequência'}
                         </button>
                       </div>
                     </td>
@@ -3644,13 +3598,10 @@ const handleSaveAccess = async (studentId: string) => {
                 );
               })}
               
-              {students.length === 0 && (
+              {filteredStudents.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
-                    <div className="flex flex-col items-center">
-                      <User className="w-12 h-12 text-slate-300 mb-3" />
-                      <p className="text-lg">Nenhum aluno matriculado</p>
-                    </div>
+                    Nenhum aluno encontrado
                   </td>
                 </tr>
               )}
@@ -3658,6 +3609,18 @@ const handleSaveAccess = async (studentId: string) => {
           </table>
         </div>
       </div>
+
+      {/* Rodapé com resumo */}
+      {filteredStudents.length > 0 && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+          <div className="flex justify-between text-sm">
+            <span>Total: {filteredStudents.length}</span>
+            <span>Frequentes: {Object.values(frequenciaStatus).filter(Boolean).length}</span>
+            <span>Não frequentes: {Object.values(frequenciaStatus).filter(v => !v).length}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
