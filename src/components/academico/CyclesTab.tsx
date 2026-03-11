@@ -1261,49 +1261,43 @@ const loadClassStudents = async () => {
     // ===========================================
     console.log('📚 Carregando alunos EAD com base em is_frequente');
     
-    const studentsWithAccess = await Promise.all(
-      (data || []).map(async (cs) => {
-        // Buscar dados de acesso do aluno
-        const { data: accessData, error: accessError } = await supabase
-          .from('ead_access')
-          .select('*')
-          .eq('class_id', classData.id)
-          .eq('student_id', cs.student_id)
-          .maybeSingle();
+   const studentsWithAccess = await Promise.all(
+  (data || []).map(async (cs) => {
+    const { data: accessData } = await supabase
+      .from('ead_access')
+      .select('*')
+      .eq('class_id', classData.id)
+      .eq('student_id', cs.student_id)
+      .maybeSingle();
 
-        if (accessError) {
-          console.error('Erro ao buscar accessData:', accessError);
-        }
+    // ✅ GARANTIR QUE É BOOLEANO
+    const isFrequente = accessData?.is_frequente === true;
+    
+    // Contar acessos apenas para informação
+    const totalAcessos = [
+      accessData?.access_date_1,
+      accessData?.access_date_2,
+      accessData?.access_date_3
+    ].filter(Boolean).length;
 
-        // ✅ CORREÇÃO CRÍTICA: Usar is_frequente do banco, NÃO a função validateEADAccess
-        const isFrequente = accessData?.is_frequente === true; // Garantir que é booleano
-        
-        // Contar acessos apenas para informação (não para decisão)
-        const totalAcessos = [
-          accessData?.access_date_1,
-          accessData?.access_date_2,
-          accessData?.access_date_3
-        ].filter(Boolean).length;
+    console.log(`📚 Carregando aluno ${cs.students.full_name}:`, {
+      isFrequente,
+      totalAcessos,
+      accessDates: {
+        d1: accessData?.access_date_1,
+        d2: accessData?.access_date_2,
+        d3: accessData?.access_date_3
+      }
+    });
 
-        // Log para auditoria
-        console.log(`👤 Aluno ${cs.students.full_name}:`, {
-          isFrequente,
-          totalAcessos,
-          accessDates: {
-            d1: accessData?.access_date_1,
-            d2: accessData?.access_date_2,
-            d3: accessData?.access_date_3
-          }
-        });
-
-        return {
-          ...cs,
-          accessData,           // Dados completos de acesso
-          isFrequente,          // ✅ Campo correto para UI
-          totalAcessos,         // Info adicional (não usado para decisão)
-        };
-      })
-    );
+    return {
+      ...cs,
+      accessData,
+      isFrequente,        // ✅ Campo correto para a UI
+      totalAcessos,       // Info adicional
+    };
+  })
+);
 
     setStudents(studentsWithAccess);
   }
@@ -3190,31 +3184,32 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   }, [classData.cycle_id]);
 
   useEffect(() => {
-    const initialAccess: Record<string, any> = {};
-    const initialFrequencia: Record<string, boolean> = {};
+   useEffect(() => {
+  const initialAccess: Record<string, any> = {};
+  const initialFrequencia: Record<string, boolean> = {};
+  
+  students.forEach((student: any) => {
+    // ✅ Dados de acesso - OK
+    initialFrequencia[student.student_id] = student.isFrequente === true; // Garantir booleano
     
-    students.forEach((student: any) => {
-      // Dados de acesso - apenas as datas, sem influenciar status
-      initialAccess[student.student_id] = {
-        access_date_1: student.accessData?.access_date_1 
-          ? formatDateForInput(student.accessData.access_date_1) 
-          : '',
-        access_date_2: student.accessData?.access_date_2 
-          ? formatDateForInput(student.accessData.access_date_2) 
-          : '',
-        access_date_3: student.accessData?.access_date_3 
-          ? formatDateForInput(student.accessData.access_date_3) 
-          : '',
-      };
-      
-      // Status de frequência baseado APENAS no que foi salvo anteriormente
-      // Usamos o campo isPresent que já vem do banco via student.isPresent
-      initialFrequencia[student.student_id] = student.isPresent || false;
+    // Log para debug
+    console.log(`🎯 Inicializando aluno ${student.students?.full_name}:`, {
+      accessDates: initialAccess[student.student_id],
+      isFrequente: student.isFrequente,
+      checkbox: student.isFrequente === true
     });
-    
-    setAccessData(initialAccess);
-    setFrequenciaStatus(initialFrequencia);
-  }, [students]);
+  });
+  
+  setAccessData(initialAccess);
+  setFrequenciaStatus(initialFrequencia);
+  
+  // Log resumo
+  console.log('📊 Estado inicializado:', {
+    totalAlunos: students.length,
+    frequencias: initialFrequencia
+  });
+  
+}, [students]); // Dependência: students
 
   const loadCycleDates = async () => {
     try {
