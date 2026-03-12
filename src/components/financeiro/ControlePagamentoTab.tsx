@@ -427,6 +427,7 @@ export function ControlePagamentoTab() {
  // No ControlePagamentoTab.tsx, ajustar a função handleSavePaymentDate:
 
 // No ControlePagamentoTab.tsx - handleSavePaymentDate
+// No ControlePagamentoTab.tsx
 const handleSavePaymentDate = async (invoiceId: string) => {
   if (!tempPaymentDate) {
     alert('Por favor, selecione uma data de pagamento');
@@ -437,18 +438,36 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     const invoice = invoices.find(i => i.id === invoiceId);
     if (!invoice) return;
 
-    // 🔥 VERIFICAÇÃO CRÍTICA
-    console.log('User object completo:', user);
-    console.log('User ID:', user?.id);
-    console.log('Tipo do user.id:', typeof user?.id);
+    const paymentDateISO = createISODate(tempPaymentDate);
+    const paymentDateOnly = paymentDateISO.split('T')[0];
+
+    // 🔥 VERIFICAÇÃO 1: Usuário autenticado
+    const { data: { user: supabaseUser }, error: userError } = await supabase.auth.getUser();
     
-    if (!user?.id) {
-      alert('Erro: ID do usuário não encontrado');
+    console.log('🔍 VERIFICAÇÃO DE AUTENTICAÇÃO:');
+    console.log('AuthContext user:', user);
+    console.log('Supabase direct user:', supabaseUser);
+    
+    if (userError || !supabaseUser) {
+      alert('Erro de autenticação. Faça login novamente.');
       return;
     }
 
-    const paymentDateISO = createISODate(tempPaymentDate);
-    const paymentDateOnly = paymentDateISO.split('T')[0];
+    const userId = supabaseUser.id;
+
+    // 🔥 VERIFICAÇÃO 2: Usuário na tabela financeiro
+    const { data: financeiroUser, error: financeiroError } = await supabase
+      .from('users_financeiro')
+      .select('id')
+      .eq('id', userId)
+      .single();
+
+    console.log('Usuário na tabela financeiro:', financeiroUser);
+
+    if (financeiroError || !financeiroUser) {
+      alert('Usuário não tem permissão no módulo financeiro');
+      return;
+    }
 
     // 1️⃣ ATUALIZAR INVOICE
     const { error: invoiceError } = await supabase
@@ -461,11 +480,14 @@ const handleSavePaymentDate = async (invoiceId: string) => {
       })
       .eq('id', invoiceId);
 
-    if (invoiceError) throw invoiceError;
+    if (invoiceError) {
+      console.error('Erro ao atualizar invoice:', invoiceError);
+      throw invoiceError;
+    }
 
-    // 2️⃣ CRIAR TRANSAÇÃO - COM O ID CORRETO
+    // 2️⃣ CRIAR TRANSAÇÃO - COM VERIFICAÇÃO
     const transactionData = {
-      user_id: user.id,  // 🔥 Usando o ID do AuthContext
+      user_id: userId,
       type: 'income',
       amount: invoice.net_value,
       method: 'transferencia',
@@ -473,6 +495,7 @@ const handleSavePaymentDate = async (invoiceId: string) => {
       transaction_date: paymentDateOnly,
       fonte_pagadora: invoice.unit_name,
       com_nota: true,
+      // Campos opcionais com valores padrão
       category: null,
       fornecedor: null,
       idhs: false,
@@ -481,23 +504,34 @@ const handleSavePaymentDate = async (invoiceId: string) => {
       so_recibo: false
     };
 
-    console.log('Tentando inserir transação:', transactionData);
+    console.log('📦 Dados da transação a ser inserida:', transactionData);
 
-    const { data, error: transError } = await supabase
+    const { data: newTransaction, error: transError } = await supabase
       .from('cash_flow_transactions')
       .insert([transactionData])
       .select();
 
     if (transError) {
-      console.error('Erro detalhado do Supabase:', transError);
-      console.error('Código do erro:', transError.code);
+      console.error('❌ ERRO DETALHADO DO SUPABASE:');
+      console.error('Código:', transError.code);
       console.error('Mensagem:', transError.message);
       console.error('Detalhes:', transError.details);
+      console.error('Hint:', transError.hint);
+      
+      // Mensagem amigável para o usuário
+      if (transError.code === '42501') {
+        alert('Erro de permissão. Contate o administrador.');
+      } else if (transError.code === '23503') {
+        alert('Erro de referência. Usuário não encontrado.');
+      } else {
+        alert(`Erro ao criar transação: ${transError.message}`);
+      }
       throw transError;
     }
 
-    console.log('Transação criada com sucesso:', data);
+    console.log('✅ Transação criada com sucesso:', newTransaction);
 
+    // 3️⃣ RECARREGAR DADOS
     setEditingPaymentDate(null);
     setTempPaymentDate('');
     await loadInvoices();
@@ -505,8 +539,8 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     alert('Pagamento registrado com sucesso!');
     
   } catch (error) {
-    console.error('Erro completo:', error);
-    alert('Erro ao registrar pagamento: ' + (error.message || 'Erro desconhecido'));
+    console.error('❌ ERRO GERAL:', error);
+    alert('Erro ao registrar pagamento. Verifique o console.');
   }
 };
   
