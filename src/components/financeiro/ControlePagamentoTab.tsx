@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, CreditCard as Edit } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -23,7 +23,7 @@ interface Invoice {
   issue_date: string;
   due_date: string;
   net_value: number;
-  payment_status: 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO' ;
+  payment_status: 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO';
   payment_date?: string | null;
   paid_value?: number | null;
   data_prevista?: string | null;
@@ -32,11 +32,13 @@ interface Invoice {
   document_type_file?: string | null;
   estado?: string | null;
   created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
   units?: Unit | null;
 }
 
 interface ControlePagamentoTabProps {
-  onInvoicePaid?: () => void;
+  onInvoicePaid?: (timestamp?: number) => void;
 }
 
 export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProps) {
@@ -51,6 +53,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [syncingInvoices, setSyncingInvoices] = useState(false);
 
   // Estados para filtro de período
   const [startDateFilter, setStartDateFilter] = useState<string>('');
@@ -62,12 +65,11 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
-
   // Função utilitária para formatar datas sem problemas de fuso horário
   const formatDate = (dateString: string | undefined | null): string => {
     if (!dateString) return '-';
     
-    const [year, month, day] = dateString.split('-').map(Number);
+    const [year, month, day] = dateString.split('T')[0].split('-').map(Number);
     const date = new Date(year, month - 1, day, 12, 0, 0);
     
     return date.toLocaleDateString('pt-BR');
@@ -85,126 +87,146 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   // Função para criar data no formato ISO sem perder o dia por causa do fuso
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
-
     const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    const date = new Date(year, month - 1, day, 12, 0, 0);
     return date.toISOString();
   };
 
- const createCashFlowTransaction = async (
-  invoiceId: string,
-  invoiceNumber: string,
-  unitName: string,
-  amount: number,
-  paymentDate: string
-): Promise<boolean> => {
-  if (!user) return false;
+  // Função melhorada para criar/atualizar transação no fluxo de caixa
+  const createCashFlowTransaction = async (
+    invoiceId: string,
+    invoiceNumber: string,
+    unitName: string,
+    amount: number,
+    paymentDate: string
+  ): Promise<boolean> => {
+    if (!user) return false;
 
-  try {
-    // CORREÇÃO: paymentDate já vem no formato correto de handleSubmit
-    // Não precisa fazer split, apenas garantir que é uma string de data válida
-    const transactionDate = paymentDate.split('T')[0]; // Pega apenas YYYY-MM-DD
+    try {
+      // Garantir formato YYYY-MM-DD
+      const transactionDate = paymentDate.split('T')[0];
 
-    // Buscar transação existente com mais detalhes
-    const { data: existing, error: checkError } = await supabase
-      .from('cash_flow_transactions')
-      .select('id, amount')
-      .eq('invoice_id', invoiceId)
-      .maybeSingle();
+      // Verificar se já existe transação com este invoice_id
+      const { data: existing, error: checkError } = await supabase
+        .from('cash_flow_transactions')
+        .select('id, amount, transaction_date')
+        .eq('invoice_id', invoiceId)
+        .maybeSingle();
 
-    if (checkError) {
-      console.error('Erro ao verificar transação existente:', checkError);
-      return false;
-    }
+      if (checkError) {
+        console.error('Erro ao verificar transação existente:', checkError);
+        return false;
+      }
 
-    // Se existir, comparar valores e atualizar se necessário
-    if (existing) {
-      // Se o valor for diferente, atualizar
-      if (Math.abs(existing.amount - amount) > 0.01) {
-        const { error: updateError } = await supabase
+      // Se existir, atualizar
+      if (existing) {
+        // Verificar se precisa atualizar (valor diferente ou data diferente)
+        if (Math.abs(existing.amount - amount) > 0.01 || existing.transaction_date !== transactionDate) {
+          const { error: updateError } = await supabase
+            .from('cash_flow_transactions')
+            .update({
+              amount: amount,
+              transaction_date: transactionDate,
+              description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+              fonte_pagadora: unitName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existing.id);
+
+          if (updateError) {
+            console.error('Erro ao atualizar transação:', updateError);
+            return false;
+          }
+
+          console.log(`Transação ${existing.id} atualizada: valor ${existing.amount} -> ${amount}`);
+        }
+      } else {
+        // Criar nova transação
+        const transactionData = {
+          user_id: user.id,
+          type: 'income',
+          amount: amount,
+          method: 'transferencia',
+          description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+          transaction_date: transactionDate,
+          fonte_pagadora: unitName,
+          com_nota: true,
+          invoice_id: invoiceId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error: insertError } = await supabase
           .from('cash_flow_transactions')
-          .update({
-            amount: amount,
-            transaction_date: transactionDate,
-            description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-            fonte_pagadora: unitName,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', existing.id);
+          .insert([transactionData]);
 
-        if (updateError) {
-          console.error('Erro ao atualizar transação:', updateError);
+        if (insertError) {
+          console.error('Erro ao criar transação:', insertError);
           return false;
         }
-        
-        console.log(`Transação ${existing.id} atualizada: valor alterado de ${existing.amount} para ${amount}`);
-      }
-    } else {
-      // Criar nova transação
-      const transactionData = {
-        user_id: user.id,
-        type: 'income',
-        amount: amount,
-        method: 'transferencia',
-        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-        transaction_date: transactionDate,
-        fonte_pagadora: unitName,
-        com_nota: true,
-        invoice_id: invoiceId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
 
-      const { error: insertError } = await supabase
-        .from('cash_flow_transactions')
-        .insert([transactionData]);
-
-      if (insertError) {
-        console.error('Erro ao criar transação:', insertError);
-        return false;
-      }
-      
-      console.log(`Transação criada para NF ${invoiceNumber} no valor ${amount}`);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('Erro ao criar/atualizar transação no fluxo de caixa:', error);
-    return false;
-  }
-};
-
-      const transactionData = {
-        user_id: user.id,
-        type: 'income' as const,
-        amount: amount,
-        method: 'transferencia' as const,
-        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-        transaction_date: paymentDateOnly,
-        fonte_pagadora: unitName,
-        com_nota: true,
-        invoice_id: invoiceId,
-        category: null,
-        fornecedor: null,
-        idhs: false,
-        geral: false,
-        subcategoria: null,
-        so_recibo: false,
-      };
-
-      const { error: insertError } = await supabase
-        .from('cash_flow_transactions')
-        .insert([transactionData]);
-
-      if (insertError) {
-        console.error('Erro ao criar transação:', insertError);
-        return false;
+        console.log(`Transação criada para NF ${invoiceNumber} no valor ${amount}`);
       }
 
       return true;
     } catch (error) {
-      console.error('Erro ao criar transação no fluxo de caixa:', error);
+      console.error('Erro ao criar/atualizar transação no fluxo de caixa:', error);
       return false;
+    }
+  };
+
+  // Função para sincronizar todas as notas pagas com o fluxo de caixa
+  const syncPaidInvoicesWithCashFlow = async () => {
+    if (!user) return;
+    
+    setSyncingInvoices(true);
+    
+    try {
+      const { data: paidInvoices, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('payment_status', 'PAGO')
+        .is('deleted_at', null);
+
+      if (error) {
+        console.error('Erro ao buscar notas pagas:', error);
+        alert('Erro ao buscar notas pagas para sincronização');
+        return;
+      }
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const invoice of paidInvoices) {
+        if (!invoice.payment_date) continue;
+        
+        const amountToUse = invoice.paid_value || invoice.net_value;
+        const success = await createCashFlowTransaction(
+          invoice.id,
+          invoice.invoice_number,
+          invoice.unit_name,
+          amountToUse,
+          invoice.payment_date
+        );
+
+        if (success) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      }
+
+      alert(`Sincronização concluída! ${successCount} notas sincronizadas com sucesso. ${errorCount} falhas.`);
+      
+      if (onInvoicePaid) {
+        onInvoicePaid(Date.now());
+      }
+    } catch (error) {
+      console.error('Erro durante sincronização:', error);
+      alert('Erro durante sincronização');
+    } finally {
+      setSyncingInvoices(false);
     }
   };
 
@@ -237,7 +259,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     if (user && units.length > 0) {
       loadInvoices();
     }
-  }, [units]);
+  }, [units, user]);
 
   const updateOverdueInvoices = async () => {
     if (!user) return;
@@ -254,7 +276,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     if (overdueInvoices) {
       for (const invoice of overdueInvoices) {
-        const [year, month, day] = invoice.due_date.split('-').map(Number);
+        const [year, month, day] = invoice.due_date.split('T')[0].split('-').map(Number);
         const dueDate = new Date(year, month - 1, day, 0, 0, 0);
 
         const oneDayAfterDue = new Date(dueDate);
@@ -368,6 +390,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     let invoiceId = editingInvoice?.id;
     let shouldUpdateCashFlow = false;
+    let cashFlowAmount: number | null = null;
+    let cashFlowDate: string | null = null;
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
 
@@ -379,15 +403,24 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
     const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
+    // Determinar valor a ser usado no fluxo de caixa
+    if (formData.payment_status === 'PAGO') {
+      cashFlowAmount = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
+      cashFlowDate = paymentDateISO;
+    }
+
     if (editingInvoice) {
       const previousStatus = editingInvoice.payment_status;
       const newStatus = formData.payment_status;
       const previousPaidValue = editingInvoice.paid_value;
       const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
 
-      if (previousStatus !== 'PAGO' && newStatus === 'PAGO') {
-        shouldUpdateCashFlow = true;
-      } else if (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) {
+      // Verificar se precisa atualizar o fluxo de caixa
+      if (
+        (previousStatus !== 'PAGO' && newStatus === 'PAGO') || // Mudou para PAGO
+        (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) || // Valor pago mudou
+        (newStatus === 'PAGO' && editingInvoice.payment_date !== paymentDateISO) // Data de pagamento mudou
+      ) {
         shouldUpdateCashFlow = true;
       }
 
@@ -480,24 +513,25 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       }
     }
 
-    if (shouldUpdateCashFlow && paymentDateISO && invoiceId) {
-      const amountToUse = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
-
+    if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
       const success = await createCashFlowTransaction(
         invoiceId,
         formData.invoice_number,
         unitName,
-        amountToUse,
-        paymentDateISO
+        cashFlowAmount,
+        cashFlowDate
       );
 
       if (success && onInvoicePaid) {
-        onInvoicePaid();
+        // Aguardar um pouco para garantir que o banco foi atualizado
+        setTimeout(() => {
+          onInvoicePaid(Date.now());
+        }, 100);
       }
     }
 
     resetForm();
-    loadInvoices();
+    await loadInvoices();
   };
 
   const resetForm = () => {
@@ -559,7 +593,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       return;
     }
 
-    loadInvoices();
+    await loadInvoices();
   };
 
   const viewDocument = (documentUrl: string) => {
@@ -571,73 +605,72 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
   };
 
- const handleSavePaymentDate = async (invoiceId: string) => {
-  if (!tempPaymentDate) {
-    alert('Por favor, selecione uma data de pagamento');
-    return;
-  }
-
-  try {
-    const invoice = invoices.find(i => i.id === invoiceId);
-
-    if (!invoice) {
-      alert('Nota fiscal não encontrada');
+  const handleSavePaymentDate = async (invoiceId: string) => {
+    if (!tempPaymentDate) {
+      alert('Por favor, selecione uma data de pagamento');
       return;
     }
 
-    const paymentDateISO = createISODate(tempPaymentDate);
-    const paymentDateOnly = paymentDateISO.split('T')[0];
-    
-    // CORREÇÃO: Usar o paid_value existente ou net_value
-    // Mas se já existe paid_value, manter ele
-    const amountToUse = invoice.paid_value !== null && invoice.paid_value !== undefined 
-      ? invoice.paid_value 
-      : invoice.net_value;
+    try {
+      const invoice = invoices.find(i => i.id === invoiceId);
 
-    // Primeiro atualizar a invoice
-    const { error: invoiceError } = await supabase
-      .from('invoices')
-      .update({
-        payment_status: 'PAGO',
-        payment_date: paymentDateOnly,
-        paid_value: amountToUse,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invoiceId);
-
-    if (invoiceError) {
-      console.error('Erro ao atualizar invoice:', invoiceError);
-      alert('Erro ao atualizar nota fiscal');
-      return;
-    }
-
-    // Depois criar/atualizar no fluxo de caixa
-    const success = await createCashFlowTransaction(
-      invoiceId,
-      invoice.invoice_number,
-      invoice.unit_name,
-      amountToUse,
-      paymentDateOnly
-    );
-
-    if (success) {
-      setEditingPaymentDate(null);
-      setTempPaymentDate('');
-      await loadInvoices();
-      
-      if (onInvoicePaid) {
-        onInvoicePaid();
+      if (!invoice) {
+        alert('Nota fiscal não encontrada');
+        return;
       }
+
+      const paymentDateISO = createISODate(tempPaymentDate);
+      const paymentDateOnly = paymentDateISO.split('T')[0];
       
-      alert('Pagamento registrado com sucesso!');
-    } else {
-      alert('Nota atualizada, mas houve erro ao registrar no fluxo de caixa');
+      // Usar o paid_value existente se houver, senão usar net_value
+      const amountToUse = invoice.paid_value !== null && invoice.paid_value !== undefined 
+        ? invoice.paid_value 
+        : invoice.net_value;
+
+      // Primeiro atualizar a invoice
+      const { error: invoiceError } = await supabase
+        .from('invoices')
+        .update({
+          payment_status: 'PAGO',
+          payment_date: paymentDateOnly,
+          paid_value: amountToUse,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoiceId);
+
+      if (invoiceError) {
+        console.error('Erro ao atualizar invoice:', invoiceError);
+        alert('Erro ao atualizar nota fiscal');
+        return;
+      }
+
+      // Depois criar/atualizar no fluxo de caixa
+      const success = await createCashFlowTransaction(
+        invoiceId,
+        invoice.invoice_number,
+        invoice.unit_name,
+        amountToUse,
+        paymentDateOnly
+      );
+
+      if (success) {
+        setEditingPaymentDate(null);
+        setTempPaymentDate('');
+        await loadInvoices();
+        
+        if (onInvoicePaid) {
+          onInvoicePaid(Date.now());
+        }
+        
+        alert('Pagamento registrado com sucesso!');
+      } else {
+        alert('Nota atualizada, mas houve erro ao registrar no fluxo de caixa');
+      }
+    } catch (error: any) {
+      console.error('Erro ao salvar data de pagamento:', error);
+      alert(`Erro: ${error?.message || 'Erro desconhecido'}. Verifique o console.`);
     }
-  } catch (error: any) {
-    console.error('Erro ao salvar data de pagamento:', error);
-    alert(`Erro: ${error?.message || 'Erro desconhecido'}. Verifique o console.`);
-  }
-};
+  };
 
   const handleCancelEditPaymentDate = () => {
     setEditingPaymentDate(null);
@@ -649,9 +682,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       case 'PAGO':
         return <CheckCircle className="w-5 h-5 text-green-600" />;
       case 'AGENDADO':
-        return <AlertCircle className="w-5 h-5 text-red-600" />;
+        return <AlertCircle className="w-5 h-5 text-blue-600" />;
       case 'ATRASADO':
-        return <Clock className="w-5 h-5 text-blue-600" />;
+        return <Clock className="w-5 h-5 text-red-600" />;
       default:
         return <Clock className="w-5 h-5 text-yellow-600" />;
     }
@@ -662,9 +695,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       case 'PAGO':
         return 'bg-green-100 text-green-700';
       case 'AGENDADO':
-        return 'bg-red-100 text-red-700';
-      case 'ATRASADO':
         return 'bg-blue-100 text-blue-700';
+      case 'ATRASADO':
+        return 'bg-red-100 text-red-700';
       default:
         return 'bg-yellow-100 text-yellow-700';
     }
@@ -699,21 +732,27 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return true;
   });
 
-  const totalPago = filteredInvoices
+  // Calcular totais baseado em TODAS as invoices, não apenas nas filtradas
+  const totalPagoGeral = invoices
     .filter((inv) => inv.payment_status === 'PAGO')
     .reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
 
-  const totalEmAberto = filteredInvoices
+  const totalEmAbertoGeral = invoices
     .filter((inv) => inv.payment_status === 'EM ABERTO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
-  const totalAgendado = filteredInvoices
+  const totalAgendadoGeral = invoices
     .filter((inv) => inv.payment_status === 'AGENDADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
-  const totalAtrasado = filteredInvoices
+  const totalAtrasadoGeral = invoices
     .filter((inv) => inv.payment_status === 'ATRASADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+
+  // Totais filtrados para exibição na tabela
+  const totalPagoFiltrado = filteredInvoices
+    .filter((inv) => inv.payment_status === 'PAGO')
+    .reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
 
   if (loading) {
     return (
@@ -747,18 +786,11 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value={0}>Todos os Meses</option>
-            <option value={1}>Janeiro</option>
-            <option value={2}>Fevereiro</option>
-            <option value={3}>Março</option>
-            <option value={4}>Abril</option>
-            <option value={5}>Maio</option>
-            <option value={6}>Junho</option>
-            <option value={7}>Julho</option>
-            <option value={8}>Agosto</option>
-            <option value={9}>Setembro</option>
-            <option value={10}>Outubro</option>
-            <option value={11}>Novembro</option>
-            <option value={12}>Dezembro</option>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(month => (
+              <option key={month} value={month}>
+                {new Date(2000, month - 1, 1).toLocaleString('pt-BR', { month: 'long' })}
+              </option>
+            ))}
           </select>
 
           <select
@@ -810,6 +842,14 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
         <div className="flex items-center space-x-3">
           <button
+            onClick={syncPaidInvoicesWithCashFlow}
+            disabled={syncingInvoices}
+            className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-5 h-5 ${syncingInvoices ? 'animate-spin' : ''}`} />
+            <span>{syncingInvoices ? 'Sincronizando...' : 'Sincronizar Pagos'}</span>
+          </button>
+          <button
             onClick={() => setShowReportModal(true)}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
@@ -839,7 +879,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             )}
             {monthFilter !== 0 && (
               <span className="bg-blue-100 px-2 py-1 rounded">
-                Mês: {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'][monthFilter - 1]}
+                Mês: {new Date(2000, monthFilter - 1, 1).toLocaleString('pt-BR', { month: 'long' })}
               </span>
             )}
             {yearFilter !== 0 && (
@@ -859,13 +899,17 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         </div>
       )}
 
+      {/* Cards de totais - mostrando valores GERAIS, não filtrados */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-8 h-8 text-green-600" />
             <div>
-              <p className="text-sm text-green-600 font-medium">Total Pago</p>
-              <p className="text-xl font-bold text-green-700">{formatCurrency(totalPago)}</p>
+              <p className="text-sm text-green-600 font-medium">Total Pago (Geral)</p>
+              <p className="text-xl font-bold text-green-700">{formatCurrency(totalPagoGeral)}</p>
+              {statusFilter !== 'all' && (
+                <p className="text-xs text-green-500">Filtrado: {formatCurrency(totalPagoFiltrado)}</p>
+              )}
             </div>
           </div>
         </div>
@@ -874,8 +918,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           <div className="flex items-center space-x-3">
             <Clock className="w-8 h-8 text-yellow-600" />
             <div>
-              <p className="text-sm text-yellow-600 font-medium">Em Aberto</p>
-              <p className="text-xl font-bold text-yellow-700">{formatCurrency(totalEmAberto)}</p>
+              <p className="text-sm text-yellow-600 font-medium">Em Aberto (Geral)</p>
+              <p className="text-xl font-bold text-yellow-700">{formatCurrency(totalEmAbertoGeral)}</p>
             </div>
           </div>
         </div>
@@ -884,8 +928,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           <div className="flex items-center space-x-3">
             <Clock className="w-8 h-8 text-blue-600" />
             <div>
-              <p className="text-sm text-blue-600 font-medium">Agendado</p>
-              <p className="text-xl font-bold text-blue-700">{formatCurrency(totalAgendado)}</p>
+              <p className="text-sm text-blue-600 font-medium">Agendado (Geral)</p>
+              <p className="text-xl font-bold text-blue-700">{formatCurrency(totalAgendadoGeral)}</p>
             </div>
           </div>
         </div>
@@ -894,8 +938,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           <div className="flex items-center space-x-3">
             <AlertCircle className="w-8 h-8 text-red-600" />
             <div>
-              <p className="text-sm text-red-600 font-medium">Atrasado</p>
-              <p className="text-xl font-bold text-red-700">{formatCurrency(totalAtrasado)}</p>
+              <p className="text-sm text-red-600 font-medium">Atrasado (Geral)</p>
+              <p className="text-xl font-bold text-red-700">{formatCurrency(totalAtrasadoGeral)}</p>
             </div>
           </div>
         </div>
@@ -1244,6 +1288,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                         type="date"
                         value={formData.payment_date}
                         onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
+                        required
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>
@@ -1255,8 +1300,12 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                         step="0.01"
                         value={formData.paid_value}
                         onChange={(e) => setFormData({ ...formData, paid_value: e.target.value })}
+                        placeholder="Deixe em branco para usar o valor da NF"
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Se não informado, será usado o valor líquido da NF
+                      </p>
                     </div>
                   </>
                 )}
@@ -1294,9 +1343,10 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 <button
                   type="submit"
                   form="invoice-form"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  disabled={uploadingFile}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {editingInvoice ? 'Atualizar' : 'Adicionar'}
+                  {uploadingFile ? 'Enviando...' : (editingInvoice ? 'Atualizar' : 'Adicionar')}
                 </button>
               </div>
             </div>
