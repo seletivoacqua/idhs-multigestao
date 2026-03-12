@@ -271,9 +271,11 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     if (!user) return;
 
     let invoiceId = editingInvoice?.id;
+    let isNewInvoice = !editingInvoice;
+    let wasMarkedAsPaid = false;
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
-    
+
     const unitId = selectedUnit?.id || null;
     const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
 
@@ -282,6 +284,13 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
 
     if (editingInvoice) {
+      const previousStatus = editingInvoice.payment_status;
+      const newStatus = formData.payment_status;
+
+      if (previousStatus !== 'PAGO' && newStatus === 'PAGO') {
+        wasMarkedAsPaid = true;
+      }
+
       const { error } = await supabase
         .from('invoices')
         .update({
@@ -348,6 +357,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
       if (newInvoice && newInvoice.length > 0) {
         invoiceId = newInvoice[0].id;
+        if (formData.payment_status === 'PAGO') {
+          wasMarkedAsPaid = true;
+        }
       }
     }
 
@@ -363,6 +375,41 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             document_type: selectedFile.type,
           })
           .eq('id', invoiceId);
+      }
+    }
+
+    if (wasMarkedAsPaid && paymentDateISO) {
+      const paymentDateOnly = paymentDateISO.split('T')[0];
+      const amountToUse = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
+
+      const transactionData = {
+        user_id: user.id,
+        type: 'income' as const,
+        amount: amountToUse,
+        method: 'transferencia' as const,
+        description: `Pagamento da NF ${formData.invoice_number} - ${unitName}`,
+        transaction_date: paymentDateOnly,
+        fonte_pagadora: unitName,
+        com_nota: true,
+        category: null,
+        fornecedor: null,
+        idhs: false,
+        geral: false,
+        subcategoria: null,
+        so_recibo: false,
+      };
+
+      const { error: transactionError } = await supabase
+        .from('cash_flow_transactions')
+        .insert([transactionData]);
+
+      if (transactionError) {
+        console.error('Erro ao criar transação no fluxo de caixa:', transactionError);
+      } else {
+        console.log('✅ Transação criada no fluxo de caixa com sucesso!');
+        if (onInvoicePaid) {
+          onInvoicePaid();
+        }
       }
     }
 
