@@ -6,7 +6,7 @@ import { FinancialProvider, useFinancial } from '../../contexts/FinancialContext
 import { FluxoCaixaTab } from './FluxoCaixaTab';
 import { ControlePagamentoTab } from './ControlePagamentoTab';
 import { ControleInstitucionalTab } from './ControleInstitucionalTab';
-import { FinancialSummary } from './components/FinancialSummary';
+import { FinancialSummary } from './FinancialSummary';
 import logoImg from '../../assets/image.png';
 
 type Tab = 'fluxo' | 'pagamento' | 'institucional';
