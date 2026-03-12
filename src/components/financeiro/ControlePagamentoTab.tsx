@@ -437,27 +437,45 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     if (!invoice) return;
 
     const paymentDateISO = createISODate(tempPaymentDate);
-    
-    // Usar a função do contexto que já cria a transação
-    await updateInvoiceStatus(
-      invoiceId, 
-      'PAGO', 
-      paymentDateISO, 
-      invoice.net_value // Usar o valor líquido como valor pago
-    );
-    
+
+    // 1. Primeiro, atualiza a nota fiscal para PAGA
+    const { error: invoiceError } = await supabase
+      .from('invoices')
+      .update({
+        payment_status: 'PAGO',
+        payment_date: paymentDateISO,
+        paid_value: invoice.net_value, // Usa o valor da nota
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', invoiceId);
+
+    if (invoiceError) throw invoiceError;
+
+    // 2. DEPOIS, CRIA A RECEITA no fluxo de caixa
+    const { error: transactionError } = await supabase
+      .from('cash_flow_transactions')
+      .insert([{
+        user_id: user?.id,
+        type: 'income',
+        amount: invoice.net_value,
+        method: 'transferencia',
+        description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
+        transaction_date: paymentDateISO.split('T')[0],
+        fonte_pagadora: invoice.unit_name,
+        com_nota: true,
+      }]);
+
+    if (transactionError) throw transactionError;
+
+    // 3. Atualiza a interface
     setEditingPaymentDate(null);
     setTempPaymentDate('');
-    
-    // Recarregar a lista
-    await loadInvoices();
-    
-    // Notificar o dashboard
-    onInvoicePaid?.();
+    await loadInvoices(); // Recarrega a lista de notas
     
     alert('Pagamento registrado com sucesso!');
+    
   } catch (error) {
-    console.error('Error updating payment:', error);
+    console.error('Error:', error);
     alert('Erro ao registrar pagamento');
   }
 };
