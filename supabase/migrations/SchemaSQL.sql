@@ -9,9 +9,54 @@ CREATE TABLE public.attendance (
   class_date date NOT NULL,
   present boolean NOT NULL DEFAULT false,
   created_at timestamp with time zone DEFAULT now(),
+  content_date date,
   CONSTRAINT attendance_pkey PRIMARY KEY (id),
   CONSTRAINT attendance_class_id_fkey FOREIGN KEY (class_id) REFERENCES public.classes(id),
   CONSTRAINT attendance_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
+);
+CREATE TABLE public.backup_attendance_20260301 (
+  id uuid,
+  class_id uuid,
+  student_id uuid,
+  class_number integer,
+  class_date date,
+  present boolean,
+  created_at timestamp with time zone
+);
+CREATE TABLE public.backup_attendance_videoconferencia_20260301 (
+  id uuid,
+  class_id uuid,
+  student_id uuid,
+  class_number integer,
+  class_date date,
+  present boolean,
+  created_at timestamp with time zone
+);
+CREATE TABLE public.backup_certificates_20260301 (
+  id uuid,
+  class_id uuid,
+  student_id uuid,
+  issue_date date,
+  attendance_percentage numeric,
+  created_at timestamp with time zone
+);
+CREATE TABLE public.backup_class_students_20260301 (
+  id uuid,
+  class_id uuid,
+  student_id uuid,
+  enrollment_date timestamp with time zone,
+  enrollment_type text,
+  current_status text,
+  status_updated_at timestamp with time zone
+);
+CREATE TABLE public.backup_videoconferencia_attendance (
+  id uuid,
+  class_id uuid,
+  student_id uuid,
+  class_number integer,
+  class_date date,
+  present boolean,
+  created_at timestamp with time zone
 );
 CREATE TABLE public.cash_flow_transactions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -28,6 +73,8 @@ CREATE TABLE public.cash_flow_transactions (
   so_recibo boolean DEFAULT false,
   subcategoria text,
   fornecedor text,
+  idhs boolean DEFAULT false,
+  geral boolean DEFAULT false,
   CONSTRAINT cash_flow_transactions_pkey PRIMARY KEY (id),
   CONSTRAINT cash_flow_transactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users_financeiro(id)
 );
@@ -124,6 +171,7 @@ CREATE TABLE public.ead_access (
   access_date_3 date,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
+  is_frequente boolean DEFAULT false,
   CONSTRAINT ead_access_pkey PRIMARY KEY (id),
   CONSTRAINT ead_access_class_id_fkey FOREIGN KEY (class_id) REFERENCES public.classes(id),
   CONSTRAINT ead_access_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id)
@@ -175,8 +223,10 @@ CREATE TABLE public.invoices (
   document_url text,
   document_name text,
   estado text,
+  unit_id uuid,
   CONSTRAINT invoices_pkey PRIMARY KEY (id),
-  CONSTRAINT invoices_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users_financeiro(id)
+  CONSTRAINT invoices_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users_financeiro(id),
+  CONSTRAINT invoices_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id)
 );
 CREATE TABLE public.meeting_minutes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
