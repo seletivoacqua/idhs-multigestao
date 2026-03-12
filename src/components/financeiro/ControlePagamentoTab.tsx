@@ -225,7 +225,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const { data, error } = await supabase
       .from('units')
       .select('*')
-      .eq('user_id', user.id)
       .order('name', { ascending: true });
 
     if (error) {
