@@ -91,42 +91,88 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return date.toISOString();
   };
 
-  const createCashFlowTransaction = async (
-    invoiceId: string,
-    invoiceNumber: string,
-    unitName: string,
-    amount: number,
-    paymentDate: string
-  ): Promise<boolean> => {
-    if (!user) return false;
+ const createCashFlowTransaction = async (
+  invoiceId: string,
+  invoiceNumber: string,
+  unitName: string,
+  amount: number,
+  paymentDate: string
+): Promise<boolean> => {
+  if (!user) return false;
 
-    try {
-      const paymentDateOnly = paymentDate.includes('T') ? paymentDate.split('T')[0] : paymentDate;
+  try {
+    // CORREÇÃO: paymentDate já vem no formato correto de handleSubmit
+    // Não precisa fazer split, apenas garantir que é uma string de data válida
+    const transactionDate = paymentDate.split('T')[0]; // Pega apenas YYYY-MM-DD
 
-      const existingCheck = await supabase
-        .from('cash_flow_transactions')
-        .select('id')
-        .eq('invoice_id', invoiceId)
-        .maybeSingle();
+    // Buscar transação existente com mais detalhes
+    const { data: existing, error: checkError } = await supabase
+      .from('cash_flow_transactions')
+      .select('id, amount')
+      .eq('invoice_id', invoiceId)
+      .maybeSingle();
 
-      if (existingCheck.data) {
+    if (checkError) {
+      console.error('Erro ao verificar transação existente:', checkError);
+      return false;
+    }
+
+    // Se existir, comparar valores e atualizar se necessário
+    if (existing) {
+      // Se o valor for diferente, atualizar
+      if (Math.abs(existing.amount - amount) > 0.01) {
         const { error: updateError } = await supabase
           .from('cash_flow_transactions')
           .update({
             amount: amount,
-            transaction_date: paymentDateOnly,
+            transaction_date: transactionDate,
             description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
             fonte_pagadora: unitName,
+            updated_at: new Date().toISOString(),
           })
-          .eq('id', existingCheck.data.id);
+          .eq('id', existing.id);
 
         if (updateError) {
           console.error('Erro ao atualizar transação:', updateError);
           return false;
         }
-
-        return true;
+        
+        console.log(`Transação ${existing.id} atualizada: valor alterado de ${existing.amount} para ${amount}`);
       }
+    } else {
+      // Criar nova transação
+      const transactionData = {
+        user_id: user.id,
+        type: 'income',
+        amount: amount,
+        method: 'transferencia',
+        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+        transaction_date: transactionDate,
+        fonte_pagadora: unitName,
+        com_nota: true,
+        invoice_id: invoiceId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: insertError } = await supabase
+        .from('cash_flow_transactions')
+        .insert([transactionData]);
+
+      if (insertError) {
+        console.error('Erro ao criar transação:', insertError);
+        return false;
+      }
+      
+      console.log(`Transação criada para NF ${invoiceNumber} no valor ${amount}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Erro ao criar/atualizar transação no fluxo de caixa:', error);
+    return false;
+  }
+};
 
       const transactionData = {
         user_id: user.id,
@@ -525,60 +571,70 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
   };
 
-  const handleSavePaymentDate = async (invoiceId: string) => {
-    if (!tempPaymentDate) {
-      alert('Por favor, selecione uma data de pagamento');
+ const handleSavePaymentDate = async (invoiceId: string) => {
+  if (!tempPaymentDate) {
+    alert('Por favor, selecione uma data de pagamento');
+    return;
+  }
+
+  try {
+    const invoice = invoices.find(i => i.id === invoiceId);
+
+    if (!invoice) {
+      alert('Nota fiscal não encontrada');
       return;
     }
 
-    try {
-      const invoice = invoices.find(i => i.id === invoiceId);
+    const paymentDateISO = createISODate(tempPaymentDate);
+    const paymentDateOnly = paymentDateISO.split('T')[0];
+    
+    // CORREÇÃO: Usar o paid_value existente ou net_value
+    // Mas se já existe paid_value, manter ele
+    const amountToUse = invoice.paid_value !== null && invoice.paid_value !== undefined 
+      ? invoice.paid_value 
+      : invoice.net_value;
 
-      if (!invoice) {
-        alert('Nota fiscal não encontrada');
-        return;
-      }
+    // Primeiro atualizar a invoice
+    const { error: invoiceError } = await supabase
+      .from('invoices')
+      .update({
+        payment_status: 'PAGO',
+        payment_date: paymentDateOnly,
+        paid_value: amountToUse,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', invoiceId);
 
-      const paymentDateISO = createISODate(tempPaymentDate);
-      const paymentDateOnly = paymentDateISO.split('T')[0];
-      const amountToUse = invoice.paid_value || invoice.net_value;
+    if (invoiceError) {
+      console.error('Erro ao atualizar invoice:', invoiceError);
+      alert('Erro ao atualizar nota fiscal');
+      return;
+    }
 
-      const { error: invoiceError } = await supabase
-        .from('invoices')
-        .update({
-          payment_status: 'PAGO',
-          payment_date: paymentDateOnly,
-          paid_value: amountToUse,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', invoiceId);
+    // Depois criar/atualizar no fluxo de caixa
+    const success = await createCashFlowTransaction(
+      invoiceId,
+      invoice.invoice_number,
+      invoice.unit_name,
+      amountToUse,
+      paymentDateOnly
+    );
 
-      if (invoiceError) {
-        console.error('Erro ao atualizar invoice:', invoiceError);
-        alert('Erro ao atualizar nota fiscal');
-        return;
-      }
-
-      const success = await createCashFlowTransaction(
-        invoiceId,
-        invoice.invoice_number,
-        invoice.unit_name,
-        amountToUse,
-        paymentDateOnly
-      );
-
-      if (success && onInvoicePaid) {
-        onInvoicePaid();
-      }
-
+    if (success) {
       setEditingPaymentDate(null);
       setTempPaymentDate('');
       await loadInvoices();
-
+      
+      if (onInvoicePaid) {
+        onInvoicePaid();
+      }
+      
       alert('Pagamento registrado com sucesso!');
-    } catch (error: any) {
-      console.error('Erro ao salvar data de pagamento:', error);
-    
+    } else {
+      alert('Nota atualizada, mas houve erro ao registrar no fluxo de caixa');
+    }
+  } catch (error: any) {
+    console.error('Erro ao salvar data de pagamento:', error);
     alert(`Erro: ${error?.message || 'Erro desconhecido'}. Verifique o console.`);
   }
 };
