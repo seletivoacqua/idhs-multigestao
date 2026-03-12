@@ -514,46 +514,42 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     }
 
     // ===== PASSO 2: CRIAR TRANSAÇÃO NO FLUXO DE CAIXA =====
-    console.log('8. Preparando criação de transação...');
+   // ===== PASSO 2: CRIAR TRANSAÇÃO NO FLUXO DE CAIXA (EXATAMENTE COMO O SCRIPT) =====
+console.log('8. Preparando criação de transação...');
 
-    const amountToUse = invoice.paid_value || invoice.net_value;
-    console.log('8.1 Valor a ser usado:', amountToUse);
+// Usa paid_value se existir, senão net_value (igual ao script)
+const amountToUse = invoice.paid_value || invoice.net_value;
 
-    const transactionData = {
-      user_id: supabaseUser.id,
-      type: 'income',
-      amount: amountToUse,
-      method: 'transferencia',
-      description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
-      transaction_date: paymentDateOnly,
-      fonte_pagadora: invoice.unit_name,
-      com_nota: true,
-      category: null,
-      fornecedor: null,
-      idhs: false,
-      geral: false,
-      subcategoria: null,
-      so_recibo: false,
-      created_at: new Date().toISOString()
-    };
+const transactionData = {
+  user_id: supabaseUser.id,
+  type: 'income',
+  amount: amountToUse,
+  method: 'transferencia', // método padrão (igual ao script)
+  description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
+  transaction_date: paymentDateOnly, // YYYY-MM-DD (igual ao script)
+  fonte_pagadora: invoice.unit_name,
+  com_nota: true, // true = veio de nota fiscal (igual ao script)
+  category: null, // (igual ao script)
+  fornecedor: null, // (igual ao script)
+  idhs: false, // (igual ao script)
+  geral: false, // (igual ao script)
+  subcategoria: null, // (igual ao script)
+  so_recibo: false, // (igual ao script)
+  created_at: new Date().toISOString() // 🔥 IMPORTANTE: igual ao script que usa COALESCE(v_invoice.created_at, NOW())
+};
 
-    console.log('9. Dados da transação (JSON):', JSON.stringify(transactionData, null, 2));
-    console.log('9.1 Tipos dos dados:');
-    console.log('   - user_id:', typeof transactionData.user_id);
-    console.log('   - amount:', typeof transactionData.amount);
-    console.log('   - transaction_date:', typeof transactionData.transaction_date);
-    console.log('   - com_nota:', typeof transactionData.com_nota);
+console.log('9. Dados da transação:', JSON.stringify(transactionData, null, 2));
 
-    const { data: insertData, error: insertError } = await supabase
-      .from('cash_flow_transactions')
-      .insert([transactionData])
-      .select();
+const { data: insertData, error: insertError } = await supabase
+  .from('cash_flow_transactions')
+  .insert([transactionData])
+  .select();
 
-    console.log('10. Resultado INSERT:', { 
-      success: !insertError, 
-      data: insertData, 
-      error: insertError 
-    });
+console.log('10. Resultado INSERT:', { 
+  success: !insertError, 
+  data: insertData, 
+  error: insertError 
+});
 
     if (insertError) {
       console.error('❌ ERRO DETALHADO:');
