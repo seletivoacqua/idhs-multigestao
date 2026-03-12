@@ -426,9 +426,10 @@ export function ControlePagamentoTab() {
 
  // No ControlePagamentoTab.tsx, ajustar a função handleSavePaymentDate:
 
+// No ControlePagamentoTab.tsx - handleSavePaymentDate
 const handleSavePaymentDate = async (invoiceId: string) => {
-  if (!tempPaymentDate) {
-    alert('Por favor, selecione uma data de pagamento');
+  if (!tempPaymentDate || !user) {
+    alert('Selecione uma data');
     return;
   }
 
@@ -437,48 +438,57 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     if (!invoice) return;
 
     const paymentDateISO = createISODate(tempPaymentDate);
+    const paymentDateOnly = paymentDateISO.split('T')[0]; // YYYY-MM-DD
 
-    // 1. Primeiro, atualiza a nota fiscal para PAGA
+    // 1️⃣ ATUALIZAR A INVOICE
     const { error: invoiceError } = await supabase
       .from('invoices')
       .update({
         payment_status: 'PAGO',
-        payment_date: paymentDateISO,
-        paid_value: invoice.net_value, // Usa o valor da nota
+        payment_date: paymentDateOnly,
+        paid_value: invoice.net_value,
         updated_at: new Date().toISOString(),
       })
       .eq('id', invoiceId);
 
     if (invoiceError) throw invoiceError;
 
-    // 2. DEPOIS, CRIA A RECEITA no fluxo de caixa
+    // 2️⃣ CRIAR TRANSAÇÃO NO FLUXO DE CAIXA
     const { error: transactionError } = await supabase
       .from('cash_flow_transactions')
       .insert([{
-        user_id: user?.id,
-        type: 'income',
+        user_id: user.id,
+        type: 'income', // ⚡ RECEITA
         amount: invoice.net_value,
-        method: 'transferencia',
+        method: 'transferencia', // método padrão
         description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
-        transaction_date: paymentDateISO.split('T')[0],
+        transaction_date: paymentDateOnly,
         fonte_pagadora: invoice.unit_name,
-        com_nota: true,
+        com_nota: true, // veio de uma nota fiscal
+        // campos opcionais
+        category: null,
+        fornecedor: null,
+        idhs: false,
+        geral: false,
+        subcategoria: null,
+        so_recibo: false
       }]);
 
     if (transactionError) throw transactionError;
 
-    // 3. Atualiza a interface
+    // 3️⃣ RECARREGAR DADOS
     setEditingPaymentDate(null);
     setTempPaymentDate('');
-    await loadInvoices(); // Recarrega a lista de notas
+    await loadInvoices();
     
-    alert('Pagamento registrado com sucesso!');
+    alert('Pagamento registrado e receita adicionada ao fluxo de caixa!');
     
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Erro ao processar pagamento:', error);
     alert('Erro ao registrar pagamento');
   }
 };
+  
   const handleCancelEditPaymentDate = () => {
     setEditingPaymentDate(null);
     setTempPaymentDate('');
