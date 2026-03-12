@@ -1,28 +1,17 @@
-// FinanceiroDashboard.tsx
-import { useState, useEffect } from 'react';
+// FinanceiroDashboard.tsx - VERSÃO SIMPLES (igual à original)
+import { useState } from 'react';
 import { LogOut, TrendingUp, FileText, Building, User } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { FinancialProvider, useFinancial } from '../../contexts/FinancialContext';
 import { FluxoCaixaTab } from './FluxoCaixaTab';
 import { ControlePagamentoTab } from './ControlePagamentoTab';
 import { ControleInstitucionalTab } from './ControleInstitucionalTab';
-import { FinancialSummary } from './FinancialSummary';
 import logoImg from '../../assets/image.png';
 
 type Tab = 'fluxo' | 'pagamento' | 'institucional';
 
-function DashboardContent() {
+export function FinanceiroDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('fluxo');
-  const [selectedMonth, setSelectedMonth] = useState(
-    new Date().toISOString().substring(0, 7)
-  );
   const { signOut, userName } = useAuth();
-  const { refreshData, loading } = useFinancial();
-
-  // Atualizar dados quando o mês mudar
-  useEffect(() => {
-    refreshData(selectedMonth);
-  }, [selectedMonth, refreshData]);
 
   const handleSignOut = async () => {
     try {
@@ -31,19 +20,6 @@ function DashboardContent() {
       console.error('Error signing out:', error);
     }
   };
-
-  const handleInvoicePaid = async () => {
-    // Recarregar dados após pagamento
-    await refreshData(selectedMonth);
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -75,15 +51,7 @@ function DashboardContent() {
 
       <div className="w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="bg-white rounded-lg shadow-sm border border-slate-200">
-          {/* Seletor de Mês e Resumo Financeiro */}
-          <div className="p-4 border-b border-slate-200 bg-slate-50">
-            <FinancialSummary 
-              selectedMonth={selectedMonth}
-              onMonthChange={setSelectedMonth}
-            />
-          </div>
-
-          {/* Navegação por Abas */}
+          {/* NAVEGAÇÃO POR ABAS */}
           <div className="border-b border-slate-200">
             <nav className="flex space-x-1 p-2">
               <button
@@ -122,27 +90,14 @@ function DashboardContent() {
             </nav>
           </div>
 
-          {/* Conteúdo das Abas */}
+          {/* CONTEÚDO DAS ABAS */}
           <div className="p-6">
-            {activeTab === 'fluxo' && <FluxoCaixaTab selectedMonth={selectedMonth} />}
-            {activeTab === 'pagamento' && (
-              <ControlePagamentoTab 
-                selectedMonth={selectedMonth}
-                onInvoicePaid={handleInvoicePaid}
-              />
-            )}
+            {activeTab === 'fluxo' && <FluxoCaixaTab />}
+            {activeTab === 'pagamento' && <ControlePagamentoTab />}
             {activeTab === 'institucional' && <ControleInstitucionalTab />}
           </div>
         </div>
       </div>
     </div>
-  );
-}
-
-export function FinanceiroDashboard() {
-  return (
-    <FinancialProvider>
-      <DashboardContent />
-    </FinancialProvider>
   );
 }
