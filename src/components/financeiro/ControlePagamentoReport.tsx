@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
 import logoImg from '../../assets/image.png';
+import { formatCurrencyBR } from '../../utils/currencyUtils';
 
 interface Invoice {
   id: string;
@@ -131,7 +132,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       doc.text(invoice.unit_name.substring(0, 20), 30, yPos);
       doc.text(invoice.invoice_number, 70, yPos);
       doc.text(new Date(invoice.due_date).toLocaleDateString('pt-BR'), 90, yPos);
-      doc.text(Number(invoice.net_value).toFixed(2), 130, yPos);
+      doc.text(formatCurrencyBR(invoice.net_value), 130, yPos);
       doc.text(invoice.payment_status, 160, yPos);
 
       yPos += 7;
@@ -142,11 +143,11 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
     yPos += 7;
 
     doc.setFontSize(12);
-    doc.text(`Total Pago: R$ ${totalPago.toFixed(2)}`, 14, yPos);
+    doc.text(`Total Pago: ${formatCurrencyBR(totalPago)}`, 14, yPos);
     yPos += 7;
-    doc.text(`Total Em Aberto: R$ ${totalEmAberto.toFixed(2)}`, 14, yPos);
+    doc.text(`Total Em Aberto: ${formatCurrencyBR(totalEmAberto)}`, 14, yPos);
     yPos += 7;
-    doc.text(`Total Atrasado: R$ ${totalAtrasado.toFixed(2)}`, 14, yPos);
+    doc.text(`Total Atrasado: ${formatCurrencyBR(totalAtrasado)}`, 14, yPos);
 
     doc.save('relatorio-controle-pagamento.pdf');
   };
@@ -161,10 +162,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       'Número NF': invoice.invoice_number,
       'Data Emissão': new Date(invoice.issue_date).toLocaleDateString('pt-BR'),
       'Data Vencimento': new Date(invoice.due_date).toLocaleDateString('pt-BR'),
-      'Valor Líquido (R$)': Number(invoice.net_value).toFixed(2),
+      'Valor Líquido': formatCurrencyBR(invoice.net_value),
       Status: invoice.payment_status,
       'Data Pagamento': invoice.payment_date ? new Date(invoice.payment_date).toLocaleDateString('pt-BR') : '-',
-      'Valor Pago (R$)': invoice.paid_value ? Number(invoice.paid_value).toFixed(2) : '-',
+      'Valor Pago': invoice.paid_value ? formatCurrencyBR(invoice.paid_value) : '-',
     }));
 
     const totalPago = invoices.filter(inv => inv.payment_status === 'PAGO').reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
@@ -180,10 +181,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       'Número NF': '',
       'Data Emissão': '',
       'Data Vencimento': '',
-      'Valor Líquido (R$)': '',
+      'Valor Líquido': '',
       Status: '',
       'Data Pagamento': 'Total Pago:',
-      'Valor Pago (R$)': totalPago.toFixed(2),
+      'Valor Pago': formatCurrencyBR(totalPago),
     });
 
     data.push({
@@ -195,10 +196,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       'Número NF': '',
       'Data Emissão': '',
       'Data Vencimento': '',
-      'Valor Líquido (R$)': '',
+      'Valor Líquido': '',
       Status: '',
       'Data Pagamento': 'Total Em Aberto:',
-      'Valor Pago (R$)': totalEmAberto.toFixed(2),
+      'Valor Pago': formatCurrencyBR(totalEmAberto),
     });
 
     data.push({
@@ -210,10 +211,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       'Número NF': '',
       'Data Emissão': '',
       'Data Vencimento': '',
-      'Valor Líquido (R$)': '',
+      'Valor Líquido': '',
       Status: '',
       'Data Pagamento': 'Total Atrasado:',
-      'Valor Pago (R$)': totalAtrasado.toFixed(2),
+      'Valor Pago': formatCurrencyBR(totalAtrasado),
     });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -342,15 +343,15 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-sm text-green-600 font-medium">Total Pago</p>
-                <p className="text-2xl font-bold text-green-700">R$ {totalPago.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totalPago)}</p>
               </div>
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <p className="text-sm text-yellow-600 font-medium">Total Em Aberto</p>
-                <p className="text-2xl font-bold text-yellow-700">R$ {totalEmAberto.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-yellow-700">{formatCurrencyBR(totalEmAberto)}</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-sm text-red-600 font-medium">Total Atrasado</p>
-                <p className="text-2xl font-bold text-red-700">R$ {totalAtrasado.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-red-700">{formatCurrencyBR(totalAtrasado)}</p>
               </div>
             </div>
 
@@ -387,7 +388,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
                           {new Date(invoice.due_date).toLocaleDateString('pt-BR')}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
-                          R$ {Number(invoice.net_value).toFixed(2)}
+                          {formatCurrencyBR(invoice.net_value)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           <span className={`px-2 py-1 rounded-full text-xs font-medium ${

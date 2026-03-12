@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
 import logoImg from '../../assets/image.png';
+import { formatCurrencyBR } from '../../utils/currencyUtils';
 
 interface Transaction {
   id: string;
@@ -114,7 +115,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   }, [user]);
 
   const exportToPDF = () => {
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: 'landscape' });
 
     const pageWidth = doc.internal.pageSize.getWidth();
     const logoWidth = 30;
@@ -134,39 +135,41 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     doc.text('Data', 14, yPos);
     doc.text('Tipo', 45, yPos);
     doc.text('Descrição', 70, yPos);
-    doc.text('Valor (R$)', 160, yPos);
+    doc.text('Categoria', 140, yPos);
+    doc.text('Valor', 240, yPos);
 
     yPos += 5;
-    doc.line(14, yPos, 200, yPos);
+    doc.line(14, yPos, 280, yPos);
     yPos += 5;
 
     const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
     const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
 
     transactions.forEach((transaction) => {
-      if (yPos > 270) {
-        doc.addPage();
+      if (yPos > 190) {
+        doc.addPage('landscape');
         yPos = 20;
       }
 
       doc.text(new Date(transaction.transaction_date).toLocaleDateString('pt-BR'), 14, yPos);
       doc.text(transaction.type === 'income' ? 'Entrada' : 'Saída', 45, yPos);
-      doc.text(transaction.description.substring(0, 40), 70, yPos);
-      doc.text(Number(transaction.amount).toFixed(2), 160, yPos);
+      doc.text(transaction.description.substring(0, 50), 70, yPos);
+      doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', 140, yPos);
+      doc.text(formatCurrencyBR(transaction.amount), 240, yPos);
 
       yPos += 7;
     });
 
     yPos += 5;
-    doc.line(14, yPos, 200, yPos);
+    doc.line(14, yPos, 280, yPos);
     yPos += 7;
 
     doc.setFontSize(12);
-    doc.text(`Total Entradas: R$ ${totalIncome.toFixed(2)}`, 14, yPos);
+    doc.text(`Total Entradas: ${formatCurrencyBR(totalIncome)}`, 14, yPos);
     yPos += 7;
-    doc.text(`Total Saídas: R$ ${totalExpense.toFixed(2)}`, 14, yPos);
+    doc.text(`Total Saídas: ${formatCurrencyBR(totalExpense)}`, 14, yPos);
     yPos += 7;
-    doc.text(`Saldo: R$ ${(totalIncome - totalExpense).toFixed(2)}`, 14, yPos);
+    doc.text(`Saldo: ${formatCurrencyBR(totalIncome - totalExpense)}`, 14, yPos);
 
     doc.save('relatorio-fluxo-caixa.pdf');
   };
@@ -182,7 +185,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       Subcategoria: transaction.subcategoria || '-',
       'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
       'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
-      'Valor (R$)': Number(transaction.amount).toFixed(2),
+      Valor: formatCurrencyBR(transaction.amount),
     }));
 
     const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
@@ -198,7 +201,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       Subcategoria: '',
       'Com Nota': '',
       'Só Recibo': 'Total Entradas:',
-      'Valor (R$)': totalIncome.toFixed(2),
+      Valor: formatCurrencyBR(totalIncome),
     });
 
     data.push({
@@ -211,7 +214,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       Subcategoria: '',
       'Com Nota': '',
       'Só Recibo': 'Total Saídas:',
-      'Valor (R$)': totalExpense.toFixed(2),
+      Valor: formatCurrencyBR(totalExpense),
     });
 
     data.push({
@@ -224,7 +227,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       Subcategoria: '',
       'Com Nota': '',
       'Só Recibo': 'Saldo:',
-      'Valor (R$)': (totalIncome - totalExpense).toFixed(2),
+      Valor: formatCurrencyBR(totalIncome - totalExpense),
     });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -356,16 +359,16 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-sm text-green-600 font-medium">Total Entradas</p>
-                <p className="text-2xl font-bold text-green-700">R$ {totalIncome.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totalIncome)}</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-sm text-red-600 font-medium">Total Saídas</p>
-                <p className="text-2xl font-bold text-red-700">R$ {totalExpense.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-red-700">{formatCurrencyBR(totalExpense)}</p>
               </div>
               <div className={`${totalIncome - totalExpense >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'} border rounded-lg p-4`}>
                 <p className={`text-sm ${totalIncome - totalExpense >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo</p>
                 <p className={`text-2xl font-bold ${totalIncome - totalExpense >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
-                  R$ {(totalIncome - totalExpense).toFixed(2)}
+                  {formatCurrencyBR(totalIncome - totalExpense)}
                 </p>
               </div>
             </div>
@@ -414,7 +417,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                         <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
                           transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          R$ {Number(transaction.amount).toFixed(2)}
+                          {formatCurrencyBR(transaction.amount)}
                         </td>
                       </tr>
                     ))}
