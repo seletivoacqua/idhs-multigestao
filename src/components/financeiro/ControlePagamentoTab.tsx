@@ -428,8 +428,8 @@ export function ControlePagamentoTab() {
 
 // No ControlePagamentoTab.tsx - handleSavePaymentDate
 const handleSavePaymentDate = async (invoiceId: string) => {
-  if (!tempPaymentDate || !user) {
-    alert('Selecione uma data');
+  if (!tempPaymentDate) {
+    alert('Por favor, selecione uma data de pagamento');
     return;
   }
 
@@ -437,10 +437,20 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     const invoice = invoices.find(i => i.id === invoiceId);
     if (!invoice) return;
 
-    const paymentDateISO = createISODate(tempPaymentDate);
-    const paymentDateOnly = paymentDateISO.split('T')[0]; // YYYY-MM-DD
+    // 🔥 VERIFICAÇÃO CRÍTICA
+    console.log('User object completo:', user);
+    console.log('User ID:', user?.id);
+    console.log('Tipo do user.id:', typeof user?.id);
+    
+    if (!user?.id) {
+      alert('Erro: ID do usuário não encontrado');
+      return;
+    }
 
-    // 1️⃣ ATUALIZAR A INVOICE
+    const paymentDateISO = createISODate(tempPaymentDate);
+    const paymentDateOnly = paymentDateISO.split('T')[0];
+
+    // 1️⃣ ATUALIZAR INVOICE
     const { error: invoiceError } = await supabase
       .from('invoices')
       .update({
@@ -453,39 +463,50 @@ const handleSavePaymentDate = async (invoiceId: string) => {
 
     if (invoiceError) throw invoiceError;
 
-    // 2️⃣ CRIAR TRANSAÇÃO NO FLUXO DE CAIXA
-    const { error: transactionError } = await supabase
+    // 2️⃣ CRIAR TRANSAÇÃO - COM O ID CORRETO
+    const transactionData = {
+      user_id: user.id,  // 🔥 Usando o ID do AuthContext
+      type: 'income',
+      amount: invoice.net_value,
+      method: 'transferencia',
+      description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
+      transaction_date: paymentDateOnly,
+      fonte_pagadora: invoice.unit_name,
+      com_nota: true,
+      category: null,
+      fornecedor: null,
+      idhs: false,
+      geral: false,
+      subcategoria: null,
+      so_recibo: false
+    };
+
+    console.log('Tentando inserir transação:', transactionData);
+
+    const { data, error: transError } = await supabase
       .from('cash_flow_transactions')
-      .insert([{
-        user_id: user.id,
-        type: 'income', // ⚡ RECEITA
-        amount: invoice.net_value,
-        method: 'transferencia', // método padrão
-        description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
-        transaction_date: paymentDateOnly,
-        fonte_pagadora: invoice.unit_name,
-        com_nota: true, // veio de uma nota fiscal
-        // campos opcionais
-        category: null,
-        fornecedor: null,
-        idhs: false,
-        geral: false,
-        subcategoria: null,
-        so_recibo: false
-      }]);
+      .insert([transactionData])
+      .select();
 
-    if (transactionError) throw transactionError;
+    if (transError) {
+      console.error('Erro detalhado do Supabase:', transError);
+      console.error('Código do erro:', transError.code);
+      console.error('Mensagem:', transError.message);
+      console.error('Detalhes:', transError.details);
+      throw transError;
+    }
 
-    // 3️⃣ RECARREGAR DADOS
+    console.log('Transação criada com sucesso:', data);
+
     setEditingPaymentDate(null);
     setTempPaymentDate('');
     await loadInvoices();
     
-    alert('Pagamento registrado e receita adicionada ao fluxo de caixa!');
+    alert('Pagamento registrado com sucesso!');
     
   } catch (error) {
-    console.error('Erro ao processar pagamento:', error);
-    alert('Erro ao registrar pagamento');
+    console.error('Erro completo:', error);
+    alert('Erro ao registrar pagamento: ' + (error.message || 'Erro desconhecido'));
   }
 };
   
