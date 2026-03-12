@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, CreditCard as Edit } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
