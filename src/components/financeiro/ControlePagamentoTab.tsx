@@ -34,7 +34,11 @@ interface Invoice {
   units?: Unit | null;
 }
 
-export function ControlePagamentoTab() {
+interface ControlePagamentoTabProps {
+  onInvoicePaid?: () => void;
+}
+
+export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProps) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -53,11 +57,35 @@ export function ControlePagamentoTab() {
   
   const { user } = useAuth();
 
+  // Efeito para diagnosticar autenticação
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+      console.log('🔍 Diagnóstico de Autenticação:');
+      console.log('1. user do AuthContext:', user);
+      console.log('2. user.id do AuthContext:', user?.id);
+      console.log('3. user do Supabase direto:', supabaseUser);
+      console.log('4. supabaseUser.id:', supabaseUser?.id);
+      
+      if (supabaseUser?.id) {
+        const { data: financeiro } = await supabase
+          .from('users_financeiro')
+          .select('*')
+          .eq('id', supabaseUser.id);
+        
+        console.log('5. Existe na users_financeiro?', financeiro);
+      }
+    };
+    
+    if (user) {
+      checkAuth();
+    }
+  }, [user]);
+
   // Função utilitária para formatar datas sem problemas de fuso horário
   const formatDate = (dateString: string | undefined | null): string => {
     if (!dateString) return '-';
     
-    // Divide a string YYYY-MM-DD em partes e cria a data no horário local (meio-dia)
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(year, month - 1, day, 12, 0, 0);
     
@@ -77,9 +105,7 @@ export function ControlePagamentoTab() {
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
     
-    // Mantém a data no formato YYYY-MM-DD sem conversão de fuso
     const [year, month, day] = dateString.split('-').map(Number);
-    // Cria a data no UTC meio-dia para garantir que ao salvar no banco não perca o dia
     const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     return date.toISOString();
   };
@@ -110,7 +136,7 @@ export function ControlePagamentoTab() {
 
   // Carrega invoices quando units estiverem disponíveis
   useEffect(() => {
-    if (user && units.length >= 0) { // units.length >= 0 para carregar mesmo sem unidades
+    if (user && units.length >= 0) {
       loadInvoices();
       updateOverdueInvoices();
     }
@@ -119,7 +145,6 @@ export function ControlePagamentoTab() {
   const updateOverdueInvoices = async () => {
     if (!user) return;
 
-    // Criar data atual no início do dia no horário local
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -132,7 +157,6 @@ export function ControlePagamentoTab() {
 
     if (overdueInvoices) {
       for (const invoice of overdueInvoices) {
-        // Criar data de vencimento usando o mesmo método para evitar problemas de fuso
         const [year, month, day] = invoice.due_date.split('-').map(Number);
         const dueDate = new Date(year, month - 1, day, 0, 0, 0);
 
@@ -172,7 +196,6 @@ export function ControlePagamentoTab() {
 
     setLoading(true);
     
-    // Consulta simplificada - primeiro busca todas as invoices do usuário
     const { data, error } = await supabase
       .from('invoices')
       .select('*')
@@ -186,19 +209,14 @@ export function ControlePagamentoTab() {
       return;
     }
 
-    // Cria um mapa de unidades para lookup rápido
     const unitsMap = new Map(units.map(unit => [unit.id, unit]));
 
-    // Processa cada invoice para adicionar os dados da unidade quando disponível
     const processedInvoices = (data || []).map(invoice => {
-      // Tenta encontrar a unidade correspondente
       let unitData = null;
       
       if (invoice.unit_id && unitsMap.has(invoice.unit_id)) {
-        // Se tem unit_id válido, usa a unidade do mapa
         unitData = unitsMap.get(invoice.unit_id);
       } else if (invoice.unit_name) {
-        // Se não tem unit_id mas tem nome, tenta encontrar pelo nome (case insensitive)
         unitData = units.find(u => 
           u.name.toLowerCase().trim() === invoice.unit_name.toLowerCase().trim()
         ) || null;
@@ -256,9 +274,7 @@ export function ControlePagamentoTab() {
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
     
-    // Para notas novas ou atualizações, usa o unit_id se disponível
     const unitId = selectedUnit?.id || null;
-    // Se tem unidade selecionada, usa o nome dela; senão, usa o nome digitado (para compatibilidade)
     const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
 
     const issueDateISO = createISODate(formData.issue_date);
@@ -293,7 +309,6 @@ export function ControlePagamentoTab() {
         return;
       }
     } else {
-      // Gera o próximo número de item
       const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
         p_user_id: user.id,
       });
@@ -424,126 +439,117 @@ export function ControlePagamentoTab() {
     setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
   };
 
- // No ControlePagamentoTab.tsx, ajustar a função handleSavePaymentDate:
-
-// No ControlePagamentoTab.tsx - handleSavePaymentDate
-// No ControlePagamentoTab.tsx
-const handleSavePaymentDate = async (invoiceId: string) => {
-  if (!tempPaymentDate) {
-    alert('Por favor, selecione uma data de pagamento');
-    return;
-  }
-
-  try {
-    const invoice = invoices.find(i => i.id === invoiceId);
-    if (!invoice) return;
-
-    const paymentDateISO = createISODate(tempPaymentDate);
-    const paymentDateOnly = paymentDateISO.split('T')[0];
-
-    // 🔥 VERIFICAÇÃO 1: Usuário autenticado
-    const { data: { user: supabaseUser }, error: userError } = await supabase.auth.getUser();
-    
-    console.log('🔍 VERIFICAÇÃO DE AUTENTICAÇÃO:');
-    console.log('AuthContext user:', user);
-    console.log('Supabase direct user:', supabaseUser);
-    
-    if (userError || !supabaseUser) {
-      alert('Erro de autenticação. Faça login novamente.');
+  // 🔥 FUNÇÃO CORRIGIDA - handleSavePaymentDate
+  const handleSavePaymentDate = async (invoiceId: string) => {
+    if (!tempPaymentDate) {
+      alert('Por favor, selecione uma data de pagamento');
       return;
     }
 
-    const userId = supabaseUser.id;
+    try {
+      const invoice = invoices.find(i => i.id === invoiceId);
+      if (!invoice) return;
 
-    // 🔥 VERIFICAÇÃO 2: Usuário na tabela financeiro
-    const { data: financeiroUser, error: financeiroError } = await supabase
-      .from('users_financeiro')
-      .select('id')
-      .eq('id', userId)
-      .single();
-
-    console.log('Usuário na tabela financeiro:', financeiroUser);
-
-    if (financeiroError || !financeiroUser) {
-      alert('Usuário não tem permissão no módulo financeiro');
-      return;
-    }
-
-    // 1️⃣ ATUALIZAR INVOICE
-    const { error: invoiceError } = await supabase
-      .from('invoices')
-      .update({
-        payment_status: 'PAGO',
-        payment_date: paymentDateOnly,
-        paid_value: invoice.net_value,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invoiceId);
-
-    if (invoiceError) {
-      console.error('Erro ao atualizar invoice:', invoiceError);
-      throw invoiceError;
-    }
-
-    // 2️⃣ CRIAR TRANSAÇÃO - COM VERIFICAÇÃO
-    const transactionData = {
-      user_id: userId,
-      type: 'income',
-      amount: invoice.net_value,
-      method: 'transferencia',
-      description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
-      transaction_date: paymentDateOnly,
-      fonte_pagadora: invoice.unit_name,
-      com_nota: true,
-      // Campos opcionais com valores padrão
-      category: null,
-      fornecedor: null,
-      idhs: false,
-      geral: false,
-      subcategoria: null,
-      so_recibo: false
-    };
-
-    console.log('📦 Dados da transação a ser inserida:', transactionData);
-
-    const { data: newTransaction, error: transError } = await supabase
-      .from('cash_flow_transactions')
-      .insert([transactionData])
-      .select();
-
-    if (transError) {
-      console.error('❌ ERRO DETALHADO DO SUPABASE:');
-      console.error('Código:', transError.code);
-      console.error('Mensagem:', transError.message);
-      console.error('Detalhes:', transError.details);
-      console.error('Hint:', transError.hint);
+      // 🔥 PEGA O USUÁRIO DIRETO DO SUPABASE
+      const { data: { user: supabaseUser }, error: userError } = await supabase.auth.getUser();
       
-      // Mensagem amigável para o usuário
-      if (transError.code === '42501') {
-        alert('Erro de permissão. Contate o administrador.');
-      } else if (transError.code === '23503') {
-        alert('Erro de referência. Usuário não encontrado.');
-      } else {
-        alert(`Erro ao criar transação: ${transError.message}`);
+      if (userError || !supabaseUser) {
+        alert('Erro de autenticação. Faça login novamente.');
+        return;
       }
-      throw transError;
+
+      console.log('✅ Usuário autenticado:', supabaseUser.id);
+
+      const paymentDateISO = createISODate(tempPaymentDate);
+      const paymentDateOnly = paymentDateISO.split('T')[0];
+
+      // 1️⃣ ATUALIZAR INVOICE
+      const { error: invoiceError } = await supabase
+        .from('invoices')
+        .update({
+          payment_status: 'PAGO',
+          payment_date: paymentDateOnly,
+          paid_value: invoice.net_value,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoiceId);
+
+      if (invoiceError) {
+        console.error('Erro ao atualizar invoice:', invoiceError);
+        throw invoiceError;
+      }
+
+      console.log('✅ Invoice atualizada com sucesso');
+
+      // 2️⃣ CRIAR TRANSAÇÃO NO FLUXO DE CAIXA
+      const transactionData = {
+        user_id: supabaseUser.id,
+        type: 'income',
+        amount: invoice.net_value,
+        method: 'transferencia',
+        description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
+        transaction_date: paymentDateOnly,
+        fonte_pagadora: invoice.unit_name,
+        com_nota: true,
+        category: null,
+        fornecedor: null,
+        idhs: false,
+        geral: false,
+        subcategoria: null,
+        so_recibo: false
+      };
+
+      console.log('📦 Inserindo transação:', transactionData);
+
+      const { error: transError } = await supabase
+        .from('cash_flow_transactions')
+        .insert([transactionData]);
+
+      if (transError) {
+        console.error('❌ Erro no INSERT da transação:', transError);
+        
+        // Se for erro de permissão, tenta via RPC
+        if (transError.code === '42501') {
+          console.log('Tentando via RPC...');
+          
+          const { error: rpcError } = await supabase
+            .rpc('inserir_transacao_income', {
+              p_user_id: supabaseUser.id,
+              p_amount: invoice.net_value,
+              p_description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
+              p_transaction_date: paymentDateOnly,
+              p_fonte_pagadora: invoice.unit_name
+            });
+            
+          if (rpcError) {
+            console.error('Erro no RPC:', rpcError);
+            throw rpcError;
+          }
+        } else {
+          throw transError;
+        }
+      }
+
+      console.log('✅ Transação criada com sucesso');
+
+      // 3️⃣ FINALIZAR
+      setEditingPaymentDate(null);
+      setTempPaymentDate('');
+      await loadInvoices();
+      
+      // Notificar o dashboard se necessário
+      if (onInvoicePaid) {
+        onInvoicePaid();
+      }
+      
+      alert('Pagamento registrado com sucesso!');
+      
+    } catch (error: any) {
+      console.error('❌ ERRO GERAL:', error);
+      alert(`Erro ao registrar pagamento: ${error?.message || 'Erro desconhecido'}`);
     }
+  };
 
-    console.log('✅ Transação criada com sucesso:', newTransaction);
-
-    // 3️⃣ RECARREGAR DADOS
-    setEditingPaymentDate(null);
-    setTempPaymentDate('');
-    await loadInvoices();
-    
-    alert('Pagamento registrado com sucesso!');
-    
-  } catch (error) {
-    console.error('❌ ERRO GERAL:', error);
-    alert('Erro ao registrar pagamento. Verifique o console.');
-  }
-};
-  
   const handleCancelEditPaymentDate = () => {
     setEditingPaymentDate(null);
     setTempPaymentDate('');
@@ -583,20 +589,16 @@ const handleSavePaymentDate = async (invoiceId: string) => {
     .filter((inv) => inv.payment_status === 'ATRASADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
-  // Função de filtro
   const filteredInvoices = invoices.filter((inv) => {
-    // Filtro por status
     if (statusFilter !== 'all' && inv.payment_status !== statusFilter) {
       return false;
     }
 
-    // Filtro por período (baseado na data de vencimento)
     if (startDateFilter && endDateFilter) {
       const dueDate = new Date(inv.due_date);
       const startDate = new Date(startDateFilter);
       const endDate = new Date(endDateFilter);
       
-      // Ajusta as datas para comparar corretamente
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 59, 999);
       
@@ -620,7 +622,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
           
-          {/* Filtro de Status */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -632,7 +633,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
             <option value="ATRASADO">Atrasado</option>
           </select>
 
-          {/* Filtro de Período */}
           <div className="flex items-center space-x-2">
             <input
               type="date"
@@ -650,7 +650,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
               placeholder="Data final"
             />
             
-            {/* Botão para limpar filtros */}
             {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
               <button
                 onClick={() => {
@@ -684,7 +683,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
         </div>
       </div>
 
-      {/* Indicador de filtros ativos */}
       {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700">
@@ -761,7 +759,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {filteredInvoices.map((invoice) => {
-                // Determina o nome da unidade a ser exibido
                 const displayUnitName = invoice.units?.name || invoice.unit_name || '-';
                 
                 return (
@@ -771,7 +768,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">
                       {displayUnitName}
-                      {/* Indicador visual para notas sem unit_id (legado) */}
                       {!invoice.unit_id && invoice.unit_name && (
                         <span className="ml-2 text-xs text-amber-600" title="Nota fiscal de versão anterior">
                           (legado)
@@ -912,7 +908,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
                       setFormData({ 
                         ...formData, 
                         unit_id: e.target.value,
-                        // Se selecionou uma unidade, usa o nome dela
                         unit_name: selectedUnit ? selectedUnit.name : formData.unit_name
                       });
                     }}
@@ -927,7 +922,6 @@ const handleSavePaymentDate = async (invoiceId: string) => {
                   </select>
                 </div>
 
-                {/* Campo de nome da unidade manual (para compatibilidade) */}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">
                     Nome da Unidade (manual)
