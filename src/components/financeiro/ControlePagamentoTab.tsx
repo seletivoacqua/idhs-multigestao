@@ -23,7 +23,7 @@ interface Invoice {
   issue_date: string;
   due_date: string;
   net_value: number;
-  payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
+  payment_status: 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO' ;
   payment_date?: string | null;
   paid_value?: number | null;
   data_prevista?: string | null;
@@ -173,7 +173,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     issue_date: new Date().toISOString().split('T')[0],
     due_date: new Date().toISOString().split('T')[0],
     net_value: '',
-    payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO',
+    payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO',
     payment_date: '',
     paid_value: '',
     data_prevista: '',
@@ -592,9 +592,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     switch (status) {
       case 'PAGO':
         return <CheckCircle className="w-5 h-5 text-green-600" />;
-      case 'ATRASADO':
-        return <AlertCircle className="w-5 h-5 text-red-600" />;
       case 'AGENDADO':
+        return <AlertCircle className="w-5 h-5 text-red-600" />;
+      case 'ATRASADO':
         return <Clock className="w-5 h-5 text-blue-600" />;
       default:
         return <Clock className="w-5 h-5 text-yellow-600" />;
@@ -605,9 +605,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     switch (status) {
       case 'PAGO':
         return 'bg-green-100 text-green-700';
-      case 'ATRASADO':
-        return 'bg-red-100 text-red-700';
       case 'AGENDADO':
+        return 'bg-red-100 text-red-700';
+      case 'ATRASADO':
         return 'bg-blue-100 text-blue-700';
       default:
         return 'bg-yellow-100 text-yellow-700';
