@@ -614,37 +614,23 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   };
 
-  const totalPago = invoices
-    .filter((inv) => inv.payment_status === 'PAGO')
-    .reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
-
-  const totalEmAberto = invoices
-    .filter((inv) => inv.payment_status === 'EM ABERTO')
-    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
-
-  const totalAgendado = invoices
-    .filter((inv) => inv.payment_status === 'AGENDADO')
-    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
-
-  const totalAtrasado = invoices
-    .filter((inv) => inv.payment_status === 'ATRASADO')
-    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
-
   const filteredInvoices = invoices.filter((inv) => {
     if (statusFilter !== 'all' && inv.payment_status !== statusFilter) {
       return false;
     }
 
-    if (monthFilter !== 0 && inv.exercise_month !== monthFilter) {
+    const [year, month, day] = inv.due_date.split('T')[0].split('-').map(Number);
+
+    if (monthFilter !== 0 && month !== monthFilter) {
       return false;
     }
 
-    if (yearFilter !== 0 && inv.exercise_year !== yearFilter) {
+    if (yearFilter !== 0 && year !== yearFilter) {
       return false;
     }
 
     if (startDateFilter && endDateFilter) {
-      const dueDate = new Date(inv.due_date);
+      const dueDate = new Date(year, month - 1, day);
       const startDate = new Date(startDateFilter);
       const endDate = new Date(endDateFilter);
 
@@ -656,6 +642,22 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     return true;
   });
+
+  const totalPago = filteredInvoices
+    .filter((inv) => inv.payment_status === 'PAGO')
+    .reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
+
+  const totalEmAberto = filteredInvoices
+    .filter((inv) => inv.payment_status === 'EM ABERTO')
+    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+
+  const totalAgendado = filteredInvoices
+    .filter((inv) => inv.payment_status === 'AGENDADO')
+    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+
+  const totalAtrasado = filteredInvoices
+    .filter((inv) => inv.payment_status === 'ATRASADO')
+    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
   if (loading) {
     return (
