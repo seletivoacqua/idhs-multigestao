@@ -46,7 +46,11 @@ const formatDate = (isoDate: string): string => {
   return `${day}/${month}/${year}`;
 };
 
-export function FluxoCaixaTab() {
+interface FluxoCaixaTabProps {
+  refreshTrigger?: number; // Prop para forçar recarregamento quando uma nota for paga
+}
+
+export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -88,23 +92,32 @@ export function FluxoCaixaTab() {
     description: '',
   });
 
+  // EFEITO PARA MUDANÇA DE MÊS
   useEffect(() => {
+    console.log('📅 Mês alterado para:', filterMonth);
     loadTransactions();
     loadFixedExpenses();
     loadInitialBalance();
     setCurrentPage(1);
   }, [filterMonth]);
 
+  // EFEITO PARA REFRESH TRIGGER (notas pagas no ControlePagamentoTab)
+  useEffect(() => {
+    if (refreshTrigger !== undefined) {
+      console.log('🔄 RefreshTrigger mudou para:', refreshTrigger, '- recarregando dados...');
+      loadTransactions();
+      loadFixedExpenses();
+      loadInitialBalance();
+    }
+  }, [refreshTrigger]);
+
+  // EFEITO PARA ATUALIZAR DATA DO FORMULÁRIO QUANDO O MÊS MUDAR
   useEffect(() => {
     setFormData(prev => ({
       ...prev,
       transaction_date: filterMonth + '-01'
     }));
   }, [filterMonth]);
-
-  useEffect(() => {
-    loadTransactions();
-  }, []);
 
   const loadInitialBalance = async () => {
     if (!user) return;
@@ -161,11 +174,15 @@ export function FluxoCaixaTab() {
   const loadTransactions = async () => {
     if (!user) return;
 
+    console.log('📊 Carregando transações do mês:', filterMonth);
+    
     const [year, month] = filterMonth.split('-').map(Number);
     const monthPadded = month.toString().padStart(2, '0');
     const startDate = `${year}-${monthPadded}-01`;
     const lastDayCorrected = new Date(year, month, 0).getDate();
     const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
+
+    console.log(`📅 Período: ${startDate} até ${endDate}`);
 
     const { data, error } = await supabase
       .from('cash_flow_transactions')
@@ -176,10 +193,12 @@ export function FluxoCaixaTab() {
       .order('transaction_date', { ascending: false });
 
     if (error) {
-      console.error('Error loading transactions:', error);
+      console.error('❌ Error loading transactions:', error);
       return;
     }
 
+    console.log(`✅ ${data?.length || 0} transações encontradas`);
+    
     // Tratar os dados para garantir que idhs e geral sejam booleanos
     const processedData = data?.map(transaction => ({
       ...transaction,
