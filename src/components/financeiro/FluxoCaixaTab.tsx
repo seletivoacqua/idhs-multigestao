@@ -92,22 +92,18 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     description: '',
   });
 
-  // EFEITO PARA MUDANÇA DE MÊS
   useEffect(() => {
-    console.log('📅 Mês alterado para:', filterMonth);
-    loadTransactions();
-    loadFixedExpenses();
-    loadInitialBalance();
-    setCurrentPage(1);
-  }, [filterMonth]);
-
-  // EFEITO PARA REFRESH TRIGGER (notas pagas no ControlePagamentoTab)
-  useEffect(() => {
-    if (refreshTrigger !== undefined) {
-      console.log('🔄 RefreshTrigger mudou para:', refreshTrigger, '- recarregando dados...');
+    if (user) {
       loadTransactions();
       loadFixedExpenses();
       loadInitialBalance();
+      setCurrentPage(1);
+    }
+  }, [filterMonth, user]);
+
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0 && user) {
+      loadTransactions();
     }
   }, [refreshTrigger]);
 
@@ -174,15 +170,11 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const loadTransactions = async () => {
     if (!user) return;
 
-    console.log('📊 Carregando transações do mês:', filterMonth);
-    
     const [year, month] = filterMonth.split('-').map(Number);
     const monthPadded = month.toString().padStart(2, '0');
     const startDate = `${year}-${monthPadded}-01`;
     const lastDayCorrected = new Date(year, month, 0).getDate();
     const endDate = `${year}-${monthPadded}-${lastDayCorrected.toString().padStart(2, '0')}`;
-
-    console.log(`📅 Período: ${startDate} até ${endDate}`);
 
     const { data, error } = await supabase
       .from('cash_flow_transactions')
@@ -193,19 +185,16 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
       .order('transaction_date', { ascending: false });
 
     if (error) {
-      console.error('❌ Error loading transactions:', error);
+      console.error('Error loading transactions:', error);
       return;
     }
 
-    console.log(`✅ ${data?.length || 0} transações encontradas`);
-    
-    // Tratar os dados para garantir que idhs e geral sejam booleanos
     const processedData = data?.map(transaction => ({
       ...transaction,
       idhs: transaction.idhs === true,
       geral: transaction.geral === true
     })) || [];
-    
+
     setTransactions(processedData);
   };
 

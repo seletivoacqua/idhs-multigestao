@@ -57,30 +57,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   
   const { user } = useAuth();
 
-  // Efeito para diagnosticar autenticação
-  useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { user: supabaseUser } } = await supabase.auth.getUser();
-      console.log('🔍 Diagnóstico de Autenticação:');
-      console.log('1. user do AuthContext:', user);
-      console.log('2. user.id do AuthContext:', user?.id);
-      console.log('3. user do Supabase direto:', supabaseUser);
-      console.log('4. supabaseUser.id:', supabaseUser?.id);
-      
-      if (supabaseUser?.id) {
-        const { data: financeiro } = await supabase
-          .from('users_financeiro')
-          .select('*')
-          .eq('id', supabaseUser.id);
-        
-        console.log('5. Existe na users_financeiro?', financeiro);
-      }
-    };
-    
-    if (user) {
-      checkAuth();
-    }
-  }, [user]);
 
   // Função utilitária para formatar datas sem problemas de fuso horário
   const formatDate = (dateString: string | undefined | null): string => {
@@ -104,10 +80,81 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   // Função para criar data no formato ISO sem perder o dia por causa do fuso
   const createISODate = (dateString: string): string => {
     if (!dateString) return '';
-    
+
     const [year, month, day] = dateString.split('-').map(Number);
     const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
     return date.toISOString();
+  };
+
+  const createCashFlowTransaction = async (
+    invoiceId: string,
+    invoiceNumber: string,
+    unitName: string,
+    amount: number,
+    paymentDate: string
+  ): Promise<boolean> => {
+    if (!user) return false;
+
+    try {
+      const paymentDateOnly = paymentDate.includes('T') ? paymentDate.split('T')[0] : paymentDate;
+
+      const existingCheck = await supabase
+        .from('cash_flow_transactions')
+        .select('id')
+        .eq('invoice_id', invoiceId)
+        .maybeSingle();
+
+      if (existingCheck.data) {
+        const { error: updateError } = await supabase
+          .from('cash_flow_transactions')
+          .update({
+            amount: amount,
+            transaction_date: paymentDateOnly,
+            description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingCheck.data.id);
+
+        if (updateError) {
+          console.error('Erro ao atualizar transação:', updateError);
+          return false;
+        }
+
+        return true;
+      }
+
+      const transactionData = {
+        user_id: user.id,
+        type: 'income' as const,
+        amount: amount,
+        method: 'transferencia' as const,
+        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+        transaction_date: paymentDateOnly,
+        fonte_pagadora: unitName,
+        com_nota: true,
+        invoice_id: invoiceId,
+        category: null,
+        fornecedor: null,
+        idhs: false,
+        geral: false,
+        subcategoria: null,
+        so_recibo: false,
+      };
+
+      const { error: insertError } = await supabase
+        .from('cash_flow_transactions')
+        .insert([transactionData]);
+
+      if (insertError) {
+        console.error('Erro ao criar transação:', insertError);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Erro ao criar transação no fluxo de caixa:', error);
+      return false;
+    }
   };
 
   const [formData, setFormData] = useState({
@@ -127,20 +174,18 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     estado: 'MA',
   });
 
-  // Carrega unidades quando o usuário estiver disponível
   useEffect(() => {
     if (user) {
       loadUnits();
+      updateOverdueInvoices();
     }
   }, [user]);
 
-  // Carrega invoices quando units estiverem disponíveis
   useEffect(() => {
-    if (user && units.length >= 0) {
+    if (user && units.length > 0) {
       loadInvoices();
-      updateOverdueInvoices();
     }
-  }, [user, units]);
+  }, [units]);
 
   const updateOverdueInvoices = async () => {
     if (!user) return;
@@ -378,38 +423,19 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       }
     }
 
-    if (wasMarkedAsPaid && paymentDateISO) {
-      const paymentDateOnly = paymentDateISO.split('T')[0];
+    if (wasMarkedAsPaid && paymentDateISO && invoiceId) {
       const amountToUse = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
 
-      const transactionData = {
-        user_id: user.id,
-        type: 'income' as const,
-        amount: amountToUse,
-        method: 'transferencia' as const,
-        description: `Pagamento da NF ${formData.invoice_number} - ${unitName}`,
-        transaction_date: paymentDateOnly,
-        fonte_pagadora: unitName,
-        com_nota: true,
-        category: null,
-        fornecedor: null,
-        idhs: false,
-        geral: false,
-        subcategoria: null,
-        so_recibo: false,
-      };
+      const success = await createCashFlowTransaction(
+        invoiceId,
+        formData.invoice_number,
+        unitName,
+        amountToUse,
+        paymentDateISO
+      );
 
-      const { error: transactionError } = await supabase
-        .from('cash_flow_transactions')
-        .insert([transactionData]);
-
-      if (transactionError) {
-        console.error('Erro ao criar transação no fluxo de caixa:', transactionError);
-      } else {
-        console.log('✅ Transação criada no fluxo de caixa com sucesso!');
-        if (onInvoicePaid) {
-          onInvoicePaid();
-        }
+      if (success && onInvoicePaid) {
+        onInvoicePaid();
       }
     }
 
@@ -486,171 +512,59 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
   };
 
-  // 🔥 FUNÇÃO CORRIGIDA - handleSavePaymentDate
-const handleSavePaymentDate = async (invoiceId: string) => {
-  console.log('🚀 ===== INICIANDO PAGAMENTO =====');
-  console.log('1. invoiceId:', invoiceId);
-  console.log('2. tempPaymentDate:', tempPaymentDate);
-  
-  if (!tempPaymentDate) {
-    alert('Por favor, selecione uma data de pagamento');
-    return;
-  }
-
-  try {
-    // Busca a invoice
-    const invoice = invoices.find(i => i.id === invoiceId);
-    console.log('3. Invoice encontrada:', invoice);
-    
-    if (!invoice) {
-      console.error('❌ Invoice não encontrada');
+  const handleSavePaymentDate = async (invoiceId: string) => {
+    if (!tempPaymentDate) {
+      alert('Por favor, selecione uma data de pagamento');
       return;
     }
 
-    console.log('3.1 Detalhes da invoice:');
-    console.log('   - Número:', invoice.invoice_number);
-    console.log('   - Valor:', invoice.net_value);
-    console.log('   - paid_value:', invoice.paid_value);
-    console.log('   - unit_name:', invoice.unit_name);
-    console.log('   - user_id:', invoice.user_id);
+    try {
+      const invoice = invoices.find(i => i.id === invoiceId);
 
-    // Pega usuário do Supabase direto
-    const { data: { user: supabaseUser }, error: userError } = await supabase.auth.getUser();
-    console.log('4. Usuário Supabase:', supabaseUser);
-    console.log('4.1 userError:', userError);
-    
-    if (userError || !supabaseUser) {
-      alert('Erro de autenticação');
-      return;
-    }
+      if (!invoice) {
+        alert('Nota fiscal não encontrada');
+        return;
+      }
 
-    console.log('4.2 Comparação de IDs:');
-    console.log('   - invoice.user_id:', invoice.user_id);
-    console.log('   - supabaseUser.id:', supabaseUser.id);
-    console.log('   - Iguais?', invoice.user_id === supabaseUser.id);
+      const paymentDateISO = createISODate(tempPaymentDate);
+      const paymentDateOnly = paymentDateISO.split('T')[0];
+      const amountToUse = invoice.paid_value || invoice.net_value;
 
-    const paymentDateISO = createISODate(tempPaymentDate);
-    const paymentDateOnly = paymentDateISO.split('T')[0];
-    console.log('5. Data formatada:', paymentDateOnly);
+      const { error: invoiceError } = await supabase
+        .from('invoices')
+        .update({
+          payment_status: 'PAGO',
+          payment_date: paymentDateOnly,
+          paid_value: amountToUse,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoiceId);
 
-    // ===== PASSO 1: ATUALIZAR INVOICE =====
-    console.log('6. Atualizando invoice...');
-    console.log('6.1 Dados do update:', {
-      payment_status: 'PAGO',
-      payment_date: paymentDateOnly,
-      paid_value: invoice.net_value,
-      updated_at: new Date().toISOString()
-    });
+      if (invoiceError) {
+        console.error('Erro ao atualizar invoice:', invoiceError);
+        alert('Erro ao atualizar nota fiscal');
+        return;
+      }
 
-    const { data: invoiceData, error: invoiceError } = await supabase
-      .from('invoices')
-      .update({
-        payment_status: 'PAGO',
-        payment_date: paymentDateOnly,
-        paid_value: invoice.net_value,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invoiceId)
-      .select();
+      const success = await createCashFlowTransaction(
+        invoiceId,
+        invoice.invoice_number,
+        invoice.unit_name,
+        amountToUse,
+        paymentDateOnly
+      );
 
-    console.log('7. Resposta update invoice:', { invoiceData, invoiceError });
+      if (success && onInvoicePaid) {
+        onInvoicePaid();
+      }
 
-    if (invoiceError) {
-      console.error('❌ Erro ao atualizar invoice:', invoiceError);
-      throw invoiceError;
-    }
+      setEditingPaymentDate(null);
+      setTempPaymentDate('');
+      await loadInvoices();
 
-    // ===== PASSO 2: CRIAR TRANSAÇÃO NO FLUXO DE CAIXA =====
-   // ===== PASSO 2: CRIAR TRANSAÇÃO NO FLUXO DE CAIXA (EXATAMENTE COMO O SCRIPT) =====
-console.log('8. Preparando criação de transação...');
-
-// Usa paid_value se existir, senão net_value (igual ao script)
-const amountToUse = invoice.paid_value || invoice.net_value;
-
-const transactionData = {
-  user_id: supabaseUser.id,
-  type: 'income',
-  amount: amountToUse,
-  method: 'transferencia', // método padrão (igual ao script)
-  description: `Pagamento da NF ${invoice.invoice_number} - ${invoice.unit_name}`,
-  transaction_date: paymentDateOnly, // YYYY-MM-DD (igual ao script)
-  fonte_pagadora: invoice.unit_name,
-  com_nota: true, // true = veio de nota fiscal (igual ao script)
-  category: null, // (igual ao script)
-  fornecedor: null, // (igual ao script)
-  idhs: false, // (igual ao script)
-  geral: false, // (igual ao script)
-  subcategoria: null, // (igual ao script)
-  so_recibo: false, // (igual ao script)
-  created_at: new Date().toISOString() // 🔥 IMPORTANTE: igual ao script que usa COALESCE(v_invoice.created_at, NOW())
-};
-
-console.log('9. Dados da transação:', JSON.stringify(transactionData, null, 2));
-
-const { data: insertData, error: insertError } = await supabase
-  .from('cash_flow_transactions')
-  .insert([transactionData])
-  .select();
-
-console.log('10. Resultado INSERT:', { 
-  success: !insertError, 
-  data: insertData, 
-  error: insertError 
-});
-
-    if (insertError) {
-      console.error('❌ ERRO DETALHADO:');
-      console.error('Código:', insertError.code);
-      console.error('Mensagem:', insertError.message);
-      console.error('Detalhes:', insertError.details);
-      console.error('Hint:', insertError.hint);
-      
-      // Tenta fazer um INSERT com menos campos para testar
-      console.log('10.1 Tentando INSERT simplificado...');
-      const simpleData = {
-        user_id: supabaseUser.id,
-        type: 'income',
-        amount: amountToUse,
-        method: 'transferencia',
-        description: `TESTE - Pagamento da NF ${invoice.invoice_number}`,
-        transaction_date: paymentDateOnly,
-        fonte_pagadora: invoice.unit_name,
-        com_nota: true
-      };
-      
-      const { data: simpleResult, error: simpleError } = await supabase
-        .from('cash_flow_transactions')
-        .insert([simpleData])
-        .select();
-      
-      console.log('10.2 Resultado INSERT simplificado:', { simpleResult, simpleError });
-      
-      throw insertError;
-    }
-
-    console.log('✅ Transação criada com sucesso! ID:', insertData?.[0]?.id);
-
-    // ===== PASSO 3: NOTIFICAR DASHBOARD =====
-    console.log('11. Chamando onInvoicePaid callback');
-    if (onInvoicePaid) {
-      onInvoicePaid();
-    }
-
-    // ===== PASSO 4: FINALIZAR =====
-    setEditingPaymentDate(null);
-    setTempPaymentDate('');
-    await loadInvoices();
-    
-    alert('Pagamento registrado com sucesso!');
-    
-  } catch (error: any) {
-    console.error('❌ ERRO GERAL:');
-    console.error('Nome:', error.name);
-    console.error('Mensagem:', error.message);
-    console.error('Stack:', error.stack);
-    if (error.details) console.error('Detalhes:', error.details);
-    if (error.hint) console.error('Hint:', error.hint);
-    if (error.code) console.error('Código:', error.code);
+      alert('Pagamento registrado com sucesso!');
+    } catch (error: any) {
+      console.error('Erro ao salvar data de pagamento:', error);
     
     alert(`Erro: ${error?.message || 'Erro desconhecido'}. Verifique o console.`);
   }
