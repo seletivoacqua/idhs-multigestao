@@ -1,5 +1,5 @@
-// FinanceiroDashboard.tsx - VERSÃO SIMPLES (igual à original)
-import { useState } from 'react';
+// FinanceiroDashboard.tsx - Versão com integração entre abas
+import { useState, useCallback } from 'react';
 import { LogOut, TrendingUp, FileText, Building, User } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { FluxoCaixaTab } from './FluxoCaixaTab';
@@ -11,6 +11,9 @@ type Tab = 'fluxo' | 'pagamento' | 'institucional';
 
 export function FinanceiroDashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('fluxo');
+  // 🔥 Estado para forçar recarregamento do Fluxo de Caixa quando uma nota for paga
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  
   const { signOut, userName } = useAuth();
 
   const handleSignOut = async () => {
@@ -20,6 +23,16 @@ export function FinanceiroDashboard() {
       console.error('Error signing out:', error);
     }
   };
+
+  // 🔥 Callback chamado quando uma nota é paga no ControlePagamentoTab
+  const handleInvoicePaid = useCallback(() => {
+    console.log('💰 Nota fiscal paga! Atualizando Fluxo de Caixa...');
+    setRefreshTrigger(prev => prev + 1); // Incrementa o trigger para recarregar o Fluxo de Caixa
+    
+    // Se estiver na aba de pagamento, muda para a aba de fluxo? (opcional)
+    // Se quiser, pode descomentar a linha abaixo para ir automaticamente para o Fluxo de Caixa
+    // setActiveTab('fluxo');
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -90,10 +103,18 @@ export function FinanceiroDashboard() {
             </nav>
           </div>
 
-          {/* CONTEÚDO DAS ABAS */}
+          {/* CONTEÚDO DAS ABAS - COM PROPS DE INTEGRAÇÃO */}
           <div className="p-6">
-            {activeTab === 'fluxo' && <FluxoCaixaTab />}
-            {activeTab === 'pagamento' && <ControlePagamentoTab />}
+            {activeTab === 'fluxo' && (
+              <FluxoCaixaTab 
+                refreshTrigger={refreshTrigger} // 🔥 Passa o trigger para recarregar quando necessário
+              />
+            )}
+            {activeTab === 'pagamento' && (
+              <ControlePagamentoTab 
+                onInvoicePaid={handleInvoicePaid} // 🔥 Callback para quando uma nota for paga
+              />
+            )}
             {activeTab === 'institucional' && <ControleInstitucionalTab />}
           </div>
         </div>
