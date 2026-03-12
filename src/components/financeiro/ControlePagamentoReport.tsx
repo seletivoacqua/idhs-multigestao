@@ -19,9 +19,10 @@ interface Invoice {
   issue_date: string;
   due_date: string;
   net_value: number;
-  payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO';
+  payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
   payment_date?: string;
   paid_value?: number;
+  data_prevista?: string;
   estado?: string;
 }
 
@@ -120,6 +121,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
 
     const totalPago = invoices.filter(inv => inv.payment_status === 'PAGO').reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
     const totalEmAberto = invoices.filter(inv => inv.payment_status === 'EM ABERTO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
+    const totalAgendado = invoices.filter(inv => inv.payment_status === 'AGENDADO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
     const totalAtrasado = invoices.filter(inv => inv.payment_status === 'ATRASADO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
     invoices.forEach((invoice) => {
@@ -147,6 +149,8 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
     yPos += 7;
     doc.text(`Total Em Aberto: ${formatCurrencyBR(totalEmAberto)}`, 14, yPos);
     yPos += 7;
+    doc.text(`Total Agendado: ${formatCurrencyBR(totalAgendado)}`, 14, yPos);
+    yPos += 7;
     doc.text(`Total Atrasado: ${formatCurrencyBR(totalAtrasado)}`, 14, yPos);
 
     doc.save('relatorio-controle-pagamento.pdf');
@@ -170,6 +174,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
 
     const totalPago = invoices.filter(inv => inv.payment_status === 'PAGO').reduce((sum, inv) => sum + Number(inv.paid_value || 0), 0);
     const totalEmAberto = invoices.filter(inv => inv.payment_status === 'EM ABERTO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
+    const totalAgendado = invoices.filter(inv => inv.payment_status === 'AGENDADO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
     const totalAtrasado = invoices.filter(inv => inv.payment_status === 'ATRASADO').reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
     data.push({
@@ -200,6 +205,21 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       Status: '',
       'Data Pagamento': 'Total Em Aberto:',
       'Valor Pago': formatCurrencyBR(totalEmAberto),
+    });
+
+    data.push({
+      Item: '' as any,
+      Unidade: '',
+      'CNPJ/CPF': '',
+      'Exercício': '',
+      'Tipo Documento': '',
+      'Número NF': '',
+      'Data Emissão': '',
+      'Data Vencimento': '',
+      'Valor Líquido': '',
+      Status: '',
+      'Data Pagamento': 'Total Agendado:',
+      'Valor Pago': formatCurrencyBR(totalAgendado),
     });
 
     data.push({
@@ -294,6 +314,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
                 <option value="all">Todos</option>
                 <option value="PAGO">PAGO</option>
                 <option value="EM ABERTO">EM ABERTO</option>
+                <option value="AGENDADO">AGENDADO</option>
                 <option value="ATRASADO">ATRASADO</option>
               </select>
             </div>
@@ -340,7 +361,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-sm text-green-600 font-medium">Total Pago</p>
                 <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totalPago)}</p>
@@ -348,6 +369,10 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <p className="text-sm text-yellow-600 font-medium">Total Em Aberto</p>
                 <p className="text-2xl font-bold text-yellow-700">{formatCurrencyBR(totalEmAberto)}</p>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-600 font-medium">Total Agendado</p>
+                <p className="text-2xl font-bold text-blue-700">{formatCurrencyBR(totalAgendado)}</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-sm text-red-600 font-medium">Total Atrasado</p>
@@ -396,6 +421,8 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
                               ? 'bg-green-100 text-green-700'
                               : invoice.payment_status === 'ATRASADO'
                               ? 'bg-red-100 text-red-700'
+                              : invoice.payment_status === 'AGENDADO'
+                              ? 'bg-blue-100 text-blue-700'
                               : 'bg-yellow-100 text-yellow-700'
                           }`}>
                             {invoice.payment_status}

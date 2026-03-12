@@ -23,9 +23,10 @@ interface Invoice {
   issue_date: string;
   due_date: string;
   net_value: number;
-  payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO';
+  payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
   payment_date?: string | null;
   paid_value?: number | null;
+  data_prevista?: string | null;
   document_url?: string | null;
   document_name?: string | null;
   document_type_file?: string | null;
@@ -46,7 +47,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO'>('all');
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -172,9 +173,10 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     issue_date: new Date().toISOString().split('T')[0],
     due_date: new Date().toISOString().split('T')[0],
     net_value: '',
-    payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'ATRASADO',
+    payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO',
     payment_date: '',
     paid_value: '',
+    data_prevista: '',
     estado: 'MA',
   });
 
@@ -329,6 +331,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const issueDateISO = createISODate(formData.issue_date);
     const dueDateISO = createISODate(formData.due_date);
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
+    const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
     if (editingInvoice) {
       const previousStatus = editingInvoice.payment_status;
@@ -358,6 +361,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: newPaidValue,
+          data_prevista: dataPrevistaISO,
           estado: formData.estado,
           updated_at: new Date().toISOString(),
         })
@@ -396,6 +400,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          data_prevista: dataPrevistaISO,
           estado: formData.estado,
         },
       ]).select();
@@ -467,6 +472,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       payment_status: 'EM ABERTO',
       payment_date: '',
       paid_value: '',
+      data_prevista: '',
       estado: 'MA',
     });
   };
@@ -487,6 +493,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       payment_status: invoice.payment_status,
       payment_date: invoice.payment_date?.split('T')[0] || '',
       paid_value: invoice.paid_value?.toString() || '',
+      data_prevista: invoice.data_prevista?.split('T')[0] || '',
       estado: invoice.estado || 'MA',
     });
     setShowAddModal(true);
@@ -587,6 +594,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         return <CheckCircle className="w-5 h-5 text-green-600" />;
       case 'ATRASADO':
         return <AlertCircle className="w-5 h-5 text-red-600" />;
+      case 'AGENDADO':
+        return <Clock className="w-5 h-5 text-blue-600" />;
       default:
         return <Clock className="w-5 h-5 text-yellow-600" />;
     }
@@ -598,6 +607,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         return 'bg-green-100 text-green-700';
       case 'ATRASADO':
         return 'bg-red-100 text-red-700';
+      case 'AGENDADO':
+        return 'bg-blue-100 text-blue-700';
       default:
         return 'bg-yellow-100 text-yellow-700';
     }
@@ -609,6 +620,10 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const totalEmAberto = invoices
     .filter((inv) => inv.payment_status === 'EM ABERTO')
+    .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+
+  const totalAgendado = invoices
+    .filter((inv) => inv.payment_status === 'AGENDADO')
     .reduce((sum, inv) => sum + Number(inv.net_value), 0);
 
   const totalAtrasado = invoices
@@ -664,6 +679,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             <option value="all">Todos os Status</option>
             <option value="PAGO">Pago</option>
             <option value="EM ABERTO">Em Aberto</option>
+            <option value="AGENDADO">Agendado</option>
             <option value="ATRASADO">Atrasado</option>
           </select>
 
@@ -758,7 +774,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             <span>Filtros ativos:</span>
             {statusFilter !== 'all' && (
               <span className="bg-blue-100 px-2 py-1 rounded">
-                Status: {statusFilter === 'PAGO' ? 'Pago' : statusFilter === 'EM ABERTO' ? 'Em Aberto' : 'Atrasado'}
+                Status: {statusFilter === 'PAGO' ? 'Pago' :
+                         statusFilter === 'EM ABERTO' ? 'Em Aberto' :
+                         statusFilter === 'AGENDADO' ? 'Agendado' : 'Atrasado'}
               </span>
             )}
             {monthFilter !== 0 && (
@@ -783,7 +801,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-8 h-8 text-green-600" />
@@ -800,6 +818,16 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             <div>
               <p className="text-sm text-yellow-600 font-medium">Em Aberto</p>
               <p className="text-xl font-bold text-yellow-700">{formatCurrency(totalEmAberto)}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center space-x-3">
+            <Clock className="w-8 h-8 text-blue-600" />
+            <div>
+              <p className="text-sm text-blue-600 font-medium">Agendado</p>
+              <p className="text-xl font-bold text-blue-700">{formatCurrency(totalAgendado)}</p>
             </div>
           </div>
         </div>
@@ -918,8 +946,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                       <div className="flex items-center space-x-2">
                         {getStatusIcon(invoice.payment_status)}
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(invoice.payment_status)}`}>
-                          {invoice.payment_status === 'PAGO' ? 'Pago' : 
-                           invoice.payment_status === 'EM ABERTO' ? 'Em Aberto' : 'Atrasado'}
+                          {invoice.payment_status === 'PAGO' ? 'Pago' :
+                           invoice.payment_status === 'EM ABERTO' ? 'Em Aberto' :
+                           invoice.payment_status === 'AGENDADO' ? 'Agendado' : 'Atrasado'}
                         </span>
                       </div>
                     </td>
@@ -1131,10 +1160,23 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="EM ABERTO">EM ABERTO</option>
+                    <option value="AGENDADO">AGENDADO</option>
                     <option value="PAGO">PAGO</option>
                     <option value="ATRASADO">ATRASADO</option>
                   </select>
                 </div>
+
+                {formData.payment_status === 'AGENDADO' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Data Prevista de Pagamento</label>
+                    <input
+                      type="date"
+                      value={formData.data_prevista || ''}
+                      onChange={(e) => setFormData({ ...formData, data_prevista: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+                )}
 
                 {formData.payment_status === 'PAGO' && (
                   <>
