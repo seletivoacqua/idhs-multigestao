@@ -111,7 +111,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             amount: amount,
             transaction_date: paymentDateOnly,
             description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-            updated_at: new Date().toISOString(),
+            fonte_pagadora: unitName,
           })
           .eq('id', existingCheck.data.id);
 
@@ -316,8 +316,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     if (!user) return;
 
     let invoiceId = editingInvoice?.id;
-    let isNewInvoice = !editingInvoice;
-    let wasMarkedAsPaid = false;
+    let shouldUpdateCashFlow = false;
 
     const selectedUnit = units.find(u => u.id === formData.unit_id);
 
@@ -331,9 +330,13 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     if (editingInvoice) {
       const previousStatus = editingInvoice.payment_status;
       const newStatus = formData.payment_status;
+      const previousPaidValue = editingInvoice.paid_value;
+      const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
 
       if (previousStatus !== 'PAGO' && newStatus === 'PAGO') {
-        wasMarkedAsPaid = true;
+        shouldUpdateCashFlow = true;
+      } else if (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) {
+        shouldUpdateCashFlow = true;
       }
 
       const { error } = await supabase
@@ -351,7 +354,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           net_value: parseFloat(formData.net_value),
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
-          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
+          paid_value: newPaidValue,
           estado: formData.estado,
           updated_at: new Date().toISOString(),
         })
@@ -403,7 +406,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       if (newInvoice && newInvoice.length > 0) {
         invoiceId = newInvoice[0].id;
         if (formData.payment_status === 'PAGO') {
-          wasMarkedAsPaid = true;
+          shouldUpdateCashFlow = true;
         }
       }
     }
@@ -423,7 +426,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       }
     }
 
-    if (wasMarkedAsPaid && paymentDateISO && invoiceId) {
+    if (shouldUpdateCashFlow && paymentDateISO && invoiceId) {
       const amountToUse = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
 
       const success = await createCashFlowTransaction(
