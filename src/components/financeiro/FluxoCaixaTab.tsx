@@ -102,6 +102,10 @@ export function FluxoCaixaTab() {
     }));
   }, [filterMonth]);
 
+  useEffect(() => {
+    loadTransactions();
+  }, []);
+
   const loadInitialBalance = async () => {
     if (!user) return;
 
