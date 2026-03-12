@@ -424,33 +424,43 @@ export function ControlePagamentoTab() {
     setTempPaymentDate(invoice.payment_date?.split('T')[0] || '');
   };
 
-  const handleSavePaymentDate = async (invoiceId: string) => {
-    if (!tempPaymentDate) {
-      alert('Por favor, selecione uma data de pagamento');
-      return;
-    }
+ // No ControlePagamentoTab.tsx, ajustar a função handleSavePaymentDate:
+
+const handleSavePaymentDate = async (invoiceId: string) => {
+  if (!tempPaymentDate) {
+    alert('Por favor, selecione uma data de pagamento');
+    return;
+  }
+
+  try {
+    const invoice = invoices.find(i => i.id === invoiceId);
+    if (!invoice) return;
 
     const paymentDateISO = createISODate(tempPaymentDate);
-
-    const { error } = await supabase
-      .from('invoices')
-      .update({
-        payment_date: paymentDateISO,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', invoiceId);
-
-    if (error) {
-      console.error('Error updating payment date:', error);
-      alert('Erro ao atualizar data de pagamento');
-      return;
-    }
-
+    
+    // Usar a função do contexto que já cria a transação
+    await updateInvoiceStatus(
+      invoiceId, 
+      'PAGO', 
+      paymentDateISO, 
+      invoice.net_value // Usar o valor líquido como valor pago
+    );
+    
     setEditingPaymentDate(null);
     setTempPaymentDate('');
-    loadInvoices();
-  };
-
+    
+    // Recarregar a lista
+    await loadInvoices();
+    
+    // Notificar o dashboard
+    onInvoicePaid?.();
+    
+    alert('Pagamento registrado com sucesso!');
+  } catch (error) {
+    console.error('Error updating payment:', error);
+    alert('Erro ao registrar pagamento');
+  }
+};
   const handleCancelEditPaymentDate = () => {
     setEditingPaymentDate(null);
     setTempPaymentDate('');
