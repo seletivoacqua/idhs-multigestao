@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, FileDown, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -28,13 +28,37 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [origens, setOrigens] = useState<string[]>([]);
   const [filters, setFilters] = useState({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
     type: 'all',
     documentType: 'all',
     category: 'all',
+    origem: 'all',
   });
+
+  const loadOrigens = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('cash_flow_transactions')
+        .select('fonte_pagadora')
+        .not('fonte_pagadora', 'is', null)
+        .order('fonte_pagadora', { ascending: true });
+
+      if (error) {
+        console.error('Error loading origens:', error);
+        return;
+      }
+
+      const uniqueOrigens = Array.from(new Set(data.map(t => t.fonte_pagadora).filter(Boolean)));
+      setOrigens(uniqueOrigens as string[]);
+    } catch (error) {
+      console.error('Error loading origens:', error);
+    }
+  };
 
   const handleGenerateReport = async () => {
     if (!user) return;
@@ -44,7 +68,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       let query = supabase
         .from('cash_flow_transactions')
         .select('*')
-        .eq('user_id', user.id)
         .gte('transaction_date', filters.startDate)
         .lte('transaction_date', filters.endDate)
         .order('transaction_date', { ascending: false });
@@ -63,6 +86,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         query = query.eq('category', filters.category);
       }
 
+      if (filters.origem !== 'all') {
+        query = query.eq('fonte_pagadora', filters.origem);
+      }
+
       const { data, error } = await query;
 
       if (error) {
@@ -79,6 +106,12 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (user) {
+      loadOrigens();
+    }
+  }, [user]);
 
   const exportToPDF = () => {
     const doc = new jsPDF();
@@ -274,6 +307,20 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                 <option value="all">Todas</option>
                 <option value="despesas_fixas">Despesas Fixas</option>
                 <option value="despesas_variaveis">Despesas Variáveis</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Origem</label>
+              <select
+                value={filters.origem}
+                onChange={(e) => setFilters({ ...filters, origem: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="all">Todas</option>
+                {origens.map((origem) => (
+                  <option key={origem} value={origem}>{origem}</option>
+                ))}
               </select>
             </div>
           </div>

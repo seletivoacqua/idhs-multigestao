@@ -50,11 +50,15 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [editingPaymentDate, setEditingPaymentDate] = useState<string | null>(null);
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
-  
+
   // Estados para filtro de período
   const [startDateFilter, setStartDateFilter] = useState<string>('');
   const [endDateFilter, setEndDateFilter] = useState<string>('');
-  
+
+  // Estados para filtro de mês e ano
+  const [monthFilter, setMonthFilter] = useState<number>(0);
+  const [yearFilter, setYearFilter] = useState<number>(0);
+
   const { user } = useAuth();
 
 
@@ -616,14 +620,22 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       return false;
     }
 
+    if (monthFilter !== 0 && inv.exercise_month !== monthFilter) {
+      return false;
+    }
+
+    if (yearFilter !== 0 && inv.exercise_year !== yearFilter) {
+      return false;
+    }
+
     if (startDateFilter && endDateFilter) {
       const dueDate = new Date(inv.due_date);
       const startDate = new Date(startDateFilter);
       const endDate = new Date(endDateFilter);
-      
+
       startDate.setHours(0, 0, 0, 0);
       endDate.setHours(23, 59, 59, 999);
-      
+
       return dueDate >= startDate && dueDate <= endDate;
     }
 
@@ -655,6 +667,39 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             <option value="ATRASADO">Atrasado</option>
           </select>
 
+          <select
+            value={monthFilter}
+            onChange={(e) => setMonthFilter(Number(e.target.value))}
+            className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value={0}>Todos os Meses</option>
+            <option value={1}>Janeiro</option>
+            <option value={2}>Fevereiro</option>
+            <option value={3}>Março</option>
+            <option value={4}>Abril</option>
+            <option value={5}>Maio</option>
+            <option value={6}>Junho</option>
+            <option value={7}>Julho</option>
+            <option value={8}>Agosto</option>
+            <option value={9}>Setembro</option>
+            <option value={10}>Outubro</option>
+            <option value={11}>Novembro</option>
+            <option value={12}>Dezembro</option>
+          </select>
+
+          <select
+            value={yearFilter}
+            onChange={(e) => setYearFilter(Number(e.target.value))}
+            className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value={0}>Todos os Anos</option>
+            <option value={2024}>2024</option>
+            <option value={2025}>2025</option>
+            <option value={2026}>2026</option>
+            <option value={2027}>2027</option>
+            <option value={2028}>2028</option>
+          </select>
+
           <div className="flex items-center space-x-2">
             <input
               type="date"
@@ -671,13 +716,15 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
               className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="Data final"
             />
-            
-            {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
+
+            {(startDateFilter || endDateFilter || statusFilter !== 'all' || monthFilter !== 0 || yearFilter !== 0) && (
               <button
                 onClick={() => {
                   setStartDateFilter('');
                   setEndDateFilter('');
                   setStatusFilter('all');
+                  setMonthFilter(0);
+                  setYearFilter(0);
                 }}
                 className="px-3 py-2 text-sm text-red-600 hover:text-red-800 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
               >
@@ -705,13 +752,23 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         </div>
       </div>
 
-      {(startDateFilter || endDateFilter || statusFilter !== 'all') && (
+      {(startDateFilter || endDateFilter || statusFilter !== 'all' || monthFilter !== 0 || yearFilter !== 0) && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700">
             <span>Filtros ativos:</span>
             {statusFilter !== 'all' && (
               <span className="bg-blue-100 px-2 py-1 rounded">
                 Status: {statusFilter === 'PAGO' ? 'Pago' : statusFilter === 'EM ABERTO' ? 'Em Aberto' : 'Atrasado'}
+              </span>
+            )}
+            {monthFilter !== 0 && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Mês: {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'][monthFilter - 1]}
+              </span>
+            )}
+            {yearFilter !== 0 && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Ano: {yearFilter}
               </span>
             )}
             {startDateFilter && endDateFilter && (
