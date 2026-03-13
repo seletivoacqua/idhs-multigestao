@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X, Building2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -39,6 +39,7 @@ interface Invoice {
 
 interface FilterState {
   status: 'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
+  unitId: string; // NOVO: filtro por unidade
   month: number;
   year: number;
   startDate: string;
@@ -78,6 +79,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     // Valores padrão
     return {
       status: 'all',
+      unitId: 'all', // NOVO: padrão é "todas as unidades"
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear(),
       startDate: '',
@@ -370,12 +372,25 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setLoading(false);
   }, [user, units]);
 
-  // Função de filtro melhorada usando useMemo
+  // Função de filtro melhorada com filtro por unidade
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
       // Filtro por status
       if (filters.status !== 'all' && inv.payment_status !== filters.status) {
         return false;
+      }
+
+      // NOVO: Filtro por unidade
+      if (filters.unitId !== 'all') {
+        // Verificar se a unidade da nota corresponde à unidade selecionada
+        // Pode ser por unit_id ou por unit_name
+        const unitMatches = 
+          (inv.unit_id && inv.unit_id === filters.unitId) || 
+          (inv.unit_name && units.find(u => u.id === filters.unitId)?.name === inv.unit_name);
+        
+        if (!unitMatches) {
+          return false;
+        }
       }
 
       // Filtro por mês/ano (usando a data apropriada)
@@ -430,7 +445,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
       return true;
     });
-  }, [invoices, filters]);
+  }, [invoices, filters, units]);
 
   // Calcular totais baseado nas invoices filtradas
   const totals = useMemo(() => {
@@ -478,6 +493,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const clearFilters = useCallback(() => {
     setFilters({
       status: 'all',
+      unitId: 'all',
       month: 0,
       year: 0,
       startDate: '',
@@ -489,6 +505,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   // Verificar se há filtros ativos
   const hasActiveFilters = useMemo(() => {
     return filters.status !== 'all' || 
+           filters.unitId !== 'all' ||
            filters.month !== 0 || 
            filters.year !== 0 || 
            (filters.startDate && filters.endDate);
@@ -915,7 +932,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Filtro por Status */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Status</label>
@@ -930,6 +947,26 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 <option value="AGENDADO">Agendado</option>
                 <option value="ATRASADO">Atrasado</option>
               </select>
+            </div>
+
+            {/* NOVO: Filtro por Unidade */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+              <div className="relative">
+                <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <select
+                  value={filters.unitId}
+                  onChange={(e) => setFilters({ ...filters, unitId: e.target.value })}
+                  className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Todas as Unidades</option>
+                  {units.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.name} - {unit.municipality}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Tipo de Data para Filtro */}
@@ -977,27 +1014,27 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 </select>
               </div>
             </div>
+          </div>
 
-            {/* Filtro por Período Personalizado */}
-            <div className="lg:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-2">Período Personalizado</label>
-              <div className="flex items-center space-x-2">
-                <input
-                  type="date"
-                  value={filters.startDate}
-                  onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="Data inicial"
-                />
-                <span className="text-slate-500">até</span>
-                <input
-                  type="date"
-                  value={filters.endDate}
-                  onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-                  className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="Data final"
-                />
-              </div>
+          {/* Filtro por Período Personalizado */}
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-2">Período Personalizado</label>
+            <div className="flex items-center space-x-2">
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="Data inicial"
+              />
+              <span className="text-slate-500">até</span>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="Data final"
+              />
             </div>
           </div>
 
@@ -1031,6 +1068,13 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 Status: {filters.status === 'PAGO' ? 'Pago' :
                          filters.status === 'EM ABERTO' ? 'Em Aberto' :
                          filters.status === 'AGENDADO' ? 'Agendado' : 'Atrasado'}
+              </span>
+            )}
+            {/* NOVO: Indicador de filtro por unidade */}
+            {filters.unitId !== 'all' && (
+              <span className="bg-blue-100 px-2 py-1 rounded flex items-center space-x-1">
+                <Building2 className="w-3 h-3" />
+                <span>Unidade: {units.find(u => u.id === filters.unitId)?.name || 'Selecionada'}</span>
               </span>
             )}
             {filters.filterType !== 'due_date' && (
@@ -1281,7 +1325,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             </div>
             <div className="overflow-y-auto flex-1 px-6 py-4">
               <form onSubmit={handleSubmit} className="space-y-4" id="invoice-form">
-                {/* ... conteúdo do formulário (igual ao anterior) ... */}
+                {/* ... conteúdo do formulário ... */}
               </form>
             </div>
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50">
