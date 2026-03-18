@@ -17,8 +17,11 @@ interface Transaction {
   description: string;
   transaction_date: string;
   fonte_pagadora?: string;
+  fornecedor?: string;
   com_nota?: boolean;
   so_recibo?: boolean;
+  idhs?: boolean;
+  geral?: boolean;
 }
 
 interface FluxoCaixaReportProps {
@@ -29,37 +32,14 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [origens, setOrigens] = useState<string[]>([]);
   const [filters, setFilters] = useState({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
     type: 'all',
     documentType: 'all',
     category: 'all',
-    origem: 'all',
+    origem: 'all', // 'all', 'idhs', 'geral', 'nenhuma'
   });
-
-  const loadOrigens = async () => {
-    if (!user) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('cash_flow_transactions')
-        .select('fonte_pagadora')
-        .not('fonte_pagadora', 'is', null)
-        .order('fonte_pagadora', { ascending: true });
-
-      if (error) {
-        console.error('Error loading origens:', error);
-        return;
-      }
-
-      const uniqueOrigens = Array.from(new Set(data.map(t => t.fonte_pagadora).filter(Boolean)));
-      setOrigens(uniqueOrigens as string[]);
-    } catch (error) {
-      console.error('Error loading origens:', error);
-    }
-  };
 
   const handleGenerateReport = async () => {
     if (!user) return;
@@ -73,23 +53,33 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         .lte('transaction_date', filters.endDate)
         .order('transaction_date', { ascending: false });
 
+      // Filtro por tipo (receita/despesa)
       if (filters.type !== 'all') {
         query = query.eq('type', filters.type);
       }
 
+      // Filtro por tipo de documento
       if (filters.documentType === 'com_nota') {
         query = query.eq('com_nota', true);
       } else if (filters.documentType === 'so_recibo') {
         query = query.eq('so_recibo', true);
       }
 
+      // Filtro por categoria
       if (filters.category !== 'all') {
         query = query.eq('category', filters.category);
       }
 
-      if (filters.origem !== 'all') {
-        query = query.eq('fonte_pagadora', filters.origem);
+      // FILTRO CORRIGIDO: IDHS / GERAL
+      if (filters.origem === 'idhs') {
+        query = query.eq('idhs', true);
+      } else if (filters.origem === 'geral') {
+        query = query.eq('geral', true);
+      } else if (filters.origem === 'nenhuma') {
+        // Filtra despesas que não são IDHS nem Geral
+        query = query.or('idhs.is.null,idhs.eq.false').or('geral.is.null,geral.eq.false');
       }
+      // Se for 'all', não aplica filtro de origem
 
       const { data, error } = await query;
 
@@ -99,7 +89,14 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         return;
       }
 
-      setTransactions(data || []);
+      // Processar os dados para garantir booleanos
+      const processedData = data?.map(transaction => ({
+        ...transaction,
+        idhs: transaction.idhs === true,
+        geral: transaction.geral === true
+      })) || [];
+
+      setTransactions(processedData);
     } catch (error) {
       console.error('Error generating report:', error);
       alert('Erro ao gerar relatório');
@@ -110,7 +107,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
   useEffect(() => {
     if (user) {
-      loadOrigens();
+      // Não precisa mais carregar origens (fonte_pagadora)
+      handleGenerateReport(); // Opcional: carregar relatório inicial
     }
   }, [user]);
 
@@ -129,13 +127,25 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     doc.setFontSize(11);
     doc.text(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`, pageWidth / 2, 32, { align: 'center' });
 
+    // Adicionar info dos filtros
+    let filtrosTexto = [];
+    if (filters.origem === 'idhs') filtrosTexto.push('IDHS');
+    else if (filters.origem === 'geral') filtrosTexto.push('Geral');
+    else if (filters.origem === 'nenhuma') filtrosTexto.push('Sem origem IDHS/Geral');
+    
+    if (filtrosTexto.length > 0) {
+      doc.setFontSize(10);
+      doc.text(`Filtros: ${filtrosTexto.join(', ')}`, pageWidth / 2, 38, { align: 'center' });
+    }
+
     let yPos = 45;
     doc.setFontSize(10);
 
     doc.text('Data', 14, yPos);
-    doc.text('Tipo', 45, yPos);
-    doc.text('Descrição', 70, yPos);
-    doc.text('Categoria', 140, yPos);
+    doc.text('Tipo', 40, yPos);
+    doc.text('Descrição', 65, yPos);
+    doc.text('Categoria', 120, yPos);
+    doc.text('Origem', 160, yPos);
     doc.text('Valor', 240, yPos);
 
     yPos += 5;
@@ -151,10 +161,18 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         yPos = 20;
       }
 
+      // Determinar origem para exibição
+      let origemTexto = '-';
+      if (transaction.type === 'expense') {
+        if (transaction.idhs) origemTexto = 'IDHS';
+        else if (transaction.geral) origemTexto = 'Geral';
+      }
+
       doc.text(new Date(transaction.transaction_date).toLocaleDateString('pt-BR'), 14, yPos);
-      doc.text(transaction.type === 'income' ? 'Entrada' : 'Saída', 45, yPos);
-      doc.text(transaction.description.substring(0, 50), 70, yPos);
-      doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', 140, yPos);
+      doc.text(transaction.type === 'income' ? 'Entrada' : 'Saída', 40, yPos);
+      doc.text(transaction.description.substring(0, 40), 65, yPos);
+      doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', 120, yPos);
+      doc.text(origemTexto, 160, yPos);
       doc.text(formatCurrencyBR(transaction.amount), 240, yPos);
 
       yPos += 7;
@@ -175,59 +193,45 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   };
 
   const exportToExcel = () => {
-    const data = transactions.map((transaction) => ({
-      Data: new Date(transaction.transaction_date).toLocaleDateString('pt-BR'),
-      Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
-      'Fonte Pagadora': transaction.fonte_pagadora || '-',
-      Descrição: transaction.description,
-      Método: transaction.method,
-      Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
-      Subcategoria: transaction.subcategoria || '-',
-      'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
-      'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
-      Valor: formatCurrencyBR(transaction.amount),
-    }));
+    const data = transactions.map((transaction) => {
+      // Determinar origem para exibição
+      let origem = '-';
+      if (transaction.type === 'expense') {
+        if (transaction.idhs) origem = 'IDHS';
+        else if (transaction.geral) origem = 'Geral';
+      }
+
+      return {
+        Data: new Date(transaction.transaction_date).toLocaleDateString('pt-BR'),
+        Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
+        Descrição: transaction.description,
+        Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
+        Subcategoria: transaction.subcategoria || '-',
+        Origem: origem,
+        'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
+        'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
+        Valor: formatCurrencyBR(transaction.amount),
+      };
+    });
 
     const totalIncome = transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + Number(t.amount), 0);
     const totalExpense = transactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + Number(t.amount), 0);
 
-    data.push({
-      Data: '',
-      Tipo: '',
-      'Fonte Pagadora': '',
-      Descrição: '',
-      Método: '',
-      Categoria: '',
-      Subcategoria: '',
-      'Com Nota': '',
-      'Só Recibo': 'Total Entradas:',
-      Valor: formatCurrencyBR(totalIncome),
+    // Totais
+    data.push({ 
+      Data: '', Tipo: '', Descrição: '', Categoria: '', 
+      Subcategoria: '', Origem: '', 'Com Nota': '', 
+      'Só Recibo': 'Total Entradas:', Valor: formatCurrencyBR(totalIncome) 
     });
-
-    data.push({
-      Data: '',
-      Tipo: '',
-      'Fonte Pagadora': '',
-      Descrição: '',
-      Método: '',
-      Categoria: '',
-      Subcategoria: '',
-      'Com Nota': '',
-      'Só Recibo': 'Total Saídas:',
-      Valor: formatCurrencyBR(totalExpense),
+    data.push({ 
+      Data: '', Tipo: '', Descrição: '', Categoria: '', 
+      Subcategoria: '', Origem: '', 'Com Nota': '', 
+      'Só Recibo': 'Total Saídas:', Valor: formatCurrencyBR(totalExpense) 
     });
-
-    data.push({
-      Data: '',
-      Tipo: '',
-      'Fonte Pagadora': '',
-      Descrição: '',
-      Método: '',
-      Categoria: '',
-      Subcategoria: '',
-      'Com Nota': '',
-      'Só Recibo': 'Saldo:',
-      Valor: formatCurrencyBR(totalIncome - totalExpense),
+    data.push({ 
+      Data: '', Tipo: '', Descrição: '', Categoria: '', 
+      Subcategoria: '', Origem: '', 'Com Nota': '', 
+      'Só Recibo': 'Saldo:', Valor: formatCurrencyBR(totalIncome - totalExpense) 
     });
 
     const worksheet = XLSX.utils.json_to_sheet(data);
@@ -313,17 +317,18 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
               </select>
             </div>
 
+            {/* FILTRO CORRIGIDO: IDHS / GERAL */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Origem</label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Origem (IDHS/Geral)</label>
               <select
                 value={filters.origem}
                 onChange={(e) => setFilters({ ...filters, origem: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="all">Todas</option>
-                {origens.map((origem) => (
-                  <option key={origem} value={origem}>{origem}</option>
-                ))}
+                <option value="idhs">IDHS</option>
+                <option value="geral">Geral</option>
+                <option value="nenhuma">Sem origem</option>
               </select>
             </div>
           </div>
@@ -383,44 +388,57 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Descrição</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Subcategoria</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Origem</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Doc</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {transactions.map((transaction) => (
-                      <tr key={transaction.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                          {new Date(transaction.transaction_date).toLocaleDateString('pt-BR')}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              transaction.type === 'income'
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-red-100 text-red-700'
-                            }`}
-                          >
-                            {transaction.type === 'income' ? 'Entrada' : 'Saída'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-slate-700">{transaction.description}</td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                          {transaction.category ? transaction.category.replace('_', ' ') : '-'}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                          {transaction.subcategoria || '-'}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                          {transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-'}
-                        </td>
-                        <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
-                          transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {formatCurrencyBR(transaction.amount)}
-                        </td>
-                      </tr>
-                    ))}
+                    {transactions.map((transaction) => {
+                      // Determinar origem para exibição
+                      let origemExibicao = '-';
+                      if (transaction.type === 'expense') {
+                        if (transaction.idhs) origemExibicao = 'IDHS';
+                        else if (transaction.geral) origemExibicao = 'Geral';
+                      }
+
+                      return (
+                        <tr key={transaction.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                            {new Date(transaction.transaction_date).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                transaction.type === 'income'
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-red-100 text-red-700'
+                              }`}
+                            >
+                              {transaction.type === 'income' ? 'Entrada' : 'Saída'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{transaction.description}</td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                            {transaction.category ? transaction.category.replace('_', ' ') : '-'}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                            {transaction.subcategoria || '-'}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                            {origemExibicao}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                            {transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-'}
+                          </td>
+                          <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
+                            transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {formatCurrencyBR(transaction.amount)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
