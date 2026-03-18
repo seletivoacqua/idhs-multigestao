@@ -740,16 +740,16 @@ pdf.setFontSize(8);
 // CORRIGIDO: Apenas "FREQUÊNCIA" no card verde
 pdf.text('FREQUÊNCIA', margin + 60, yPos + 5);
 pdf.setFontSize(10);
-pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
+pdf.text(stats.frequentes.toString(), margin + 70, yPos + 11);
 
 pdf.setFillColor(239, 68, 68);
 pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
 pdf.setTextColor(255, 255, 255);
 pdf.setFontSize(8);
 // CORRIGIDO: Apenas "INCOMPLETO" no card vermelho
-pdf.text('INCOMPLETO', margin + 105, yPos + 5);
+pdf.text('INCOMPLETO', margin + 110, yPos + 5);
 pdf.setFontSize(10);
-pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
+pdf.text(stats.incompletos.toString(), margin + 110, yPos + 11);
 
 pdf.setTextColor(100, 116, 139);
 pdf.setFontSize(8);
