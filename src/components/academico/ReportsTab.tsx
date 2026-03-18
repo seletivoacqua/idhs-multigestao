@@ -573,228 +573,229 @@ const generateReport = async () => {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Exportar para PDF
-  const exportToPDF = async () => {
-    if (!reportRef.current || filteredReportData.length === 0) return;
+ // Exportar para PDF
+const exportToPDF = async () => {
+  if (!reportRef.current || filteredReportData.length === 0) return;
 
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4',
+  const pdf = new jsPDF({
+    orientation: 'landscape',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 10;
+  const contentWidth = pageWidth - 2 * margin;
+
+  const createTableElement = (startRow: number, endRow: number) => {
+    const tableElement = document.createElement('table');
+    tableElement.style.width = '100%';
+    tableElement.style.borderCollapse = 'collapse';
+    tableElement.style.fontSize = '8px';
+    tableElement.style.fontFamily = 'Arial, sans-serif';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+
+    // HEADERS ATUALIZADOS: ALUNO + demais, sem MATRÍCULA
+    const headers = [
+      'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
+      'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
+    ];
+
+    headers.forEach(headerText => {
+      const th = document.createElement('th');
+      th.textContent = headerText;
+      th.style.padding = '4px 2px';
+      th.style.backgroundColor = '#1e293b';
+      th.style.color = 'white';
+      th.style.border = '1px solid #334155';
+      th.style.textAlign = 'left';
+      th.style.fontWeight = 'bold';
+      th.style.fontSize = '8px';
+      headerRow.appendChild(th);
     });
+    thead.appendChild(headerRow);
+    tableElement.appendChild(thead);
 
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
-    const contentWidth = pageWidth - 2 * margin;
+    const tbody = document.createElement('tbody');
+    for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
+      const row = filteredReportData[i];
+      const tr = document.createElement('tr');
 
-    const createTableElement = (startRow: number, endRow: number) => {
-      const tableElement = document.createElement('table');
-      tableElement.style.width = '100%';
-      tableElement.style.borderCollapse = 'collapse';
-      tableElement.style.fontSize = '8px';
-      tableElement.style.fontFamily = 'Arial, sans-serif';
-
-      const thead = document.createElement('thead');
-      const headerRow = document.createElement('tr');
-
-      // HEADERS ATUALIZADOS: ALUNO + demais, sem MATRÍCULA
-      const headers = [
-        'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
-        'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
+      // Células na nova ordem: ALUNO, TURMA, CICLO, MODALIDADE, ...
+      const cells = [
+        row.studentName.substring(0, 30),               // ALUNO (com limite)
+        row.className.substring(0, 15),                 // TURMA
+        row.cycleName.substring(0, 15),                 // CICLO
+        row.modality.includes('EAD') ? 'EAD' : 'VC',    // MODALIDADE (abreviada)
+        row.modality.includes('EAD')                    // AULAS/ACESSOS
+          ? `${row.totalAccesses}/3`
+          : `${row.classesAttended}/${row.totalClassesConsidered}`,
+        row.ultimoAcesso,                                // ÚLTIMO ACESSO
+        row.frequency,                                   // FREQ.
+        row.modality.includes('EAD')                     // STATUS EAD
+          ? (row.isFrequente ? 'FREQ' : 'NÃO FREQ')
+          : '-',
+        row.situacao,                                    // SITUAÇÃO
       ];
 
-      headers.forEach(headerText => {
-        const th = document.createElement('th');
-        th.textContent = headerText;
-        th.style.padding = '4px 2px';
-        th.style.backgroundColor = '#1e293b';
-        th.style.color = 'white';
-        th.style.border = '1px solid #334155';
-        th.style.textAlign = 'left';
-        th.style.fontWeight = 'bold';
-        th.style.fontSize = '8px';
-        headerRow.appendChild(th);
+      cells.forEach((cellText, idx) => {
+        const td = document.createElement('td');
+        td.textContent = cellText;
+        td.style.padding = '3px 2px';
+        td.style.border = '1px solid #cbd5e1';
+        td.style.fontSize = '7px';
+        td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+
+        // Destaque para a coluna SITUAÇÃO (índice 8)
+        if (idx === 8) {
+          td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
+          td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
+          td.style.fontWeight = 'bold';
+          td.style.textAlign = 'center';
+        }
+        // Alinhamento para colunas numéricas
+        if (idx === 4 || idx === 5 || idx === 6) {
+          td.style.textAlign = 'center';
+        }
+        tr.appendChild(td);
       });
-      thead.appendChild(headerRow);
-      tableElement.appendChild(thead);
 
-      const tbody = document.createElement('tbody');
-      for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
-        const row = filteredReportData[i];
-        const tr = document.createElement('tr');
+      tbody.appendChild(tr);
+    }
+    tableElement.appendChild(tbody);
 
-        // Células na nova ordem: ALUNO, TURMA, CICLO, MODALIDADE, ...
-        const cells = [
-          row.studentName.substring(0, 30),               // ALUNO (com limite)
-          row.className.substring(0, 15),                 // TURMA
-          row.cycleName.substring(0, 15),                 // CICLO
-          row.modality.includes('EAD') ? 'EAD' : 'VC',    // MODALIDADE (abreviada)
-          row.modality.includes('EAD')                    // AULAS/ACESSOS
-            ? `${row.totalAccesses}/3`
-            : `${row.classesAttended}/${row.totalClassesConsidered}`,
-          row.ultimoAcesso,                                // ÚLTIMO ACESSO
-          row.frequency,                                   // FREQ.
-          row.modality.includes('EAD')                     // STATUS EAD
-            ? (row.isFrequente ? 'FREQ' : 'NÃO FREQ')
-            : '-',
-          row.situacao,                                    // SITUAÇÃO
-        ];
+    return tableElement;
+  };
 
-        cells.forEach((cellText, idx) => {
-          const td = document.createElement('td');
-          td.textContent = cellText;
-          td.style.padding = '3px 2px';
-          td.style.border = '1px solid #cbd5e1';
-          td.style.fontSize = '7px';
-          td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+  const rowsPerPage = 18;
+  const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
 
-          // Destaque para a coluna SITUAÇÃO (índice 8)
-          if (idx === 8) {
-            td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
-            td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
-            td.style.fontWeight = 'bold';
-            td.style.textAlign = 'center';
-          }
-          // Alinhamento para colunas numéricas
-          if (idx === 4 || idx === 5 || idx === 6) {
-            td.style.textAlign = 'center';
-          }
-          tr.appendChild(td);
-        });
+  for (let page = 0; page < totalPages; page++) {
+    if (page > 0) pdf.addPage();
 
-        tbody.appendChild(tr);
-      }
-      tableElement.appendChild(tbody);
-
-      return tableElement;
-    };
-
-    const rowsPerPage = 18;
-    const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
-
-    for (let page = 0; page < totalPages; page++) {
-      if (page > 0) pdf.addPage();
-
-      try {
-        pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
-      } catch (e) {
-        console.warn('Logo não pôde ser carregada');
-      }
-
-      pdf.setFontSize(16);
-      pdf.setTextColor(30, 41, 59);
-      pdf.setFont('helvetica', 'bold');
-      pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
-
-      pdf.setFontSize(10);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setTextColor(71, 85, 105);
-      pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
-
-      pdf.setDrawColor(203, 213, 225);
-      pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
-
-      let yPos = margin + 26;
-      pdf.setFontSize(9);
-      pdf.setTextColor(51, 65, 85);
-
-      const filterInfo: string[] = [];
-
-      const selectedCycle = cycles.find(c => c.id === filters.cycleId);
-      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
-
-      const selectedUnit = units.find(u => u.id === filters.unitId);
-      if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
-
-      const selectedClass = classes.find(c => c.id === filters.classId);
-      if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
-
-      if (filters.modality !== 'all') {
-        filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
-      }
-
-      if (filters.startDate && filters.endDate) {
-        filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
-      }
-
-      if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
-
-      pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
-
-      yPos += 8;
-
-      pdf.setFillColor(59, 130, 246);
-      pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(8);
-      pdf.text('Total', margin + 5, yPos + 5);
-      pdf.setFontSize(10);
-      pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
-
-      pdf.setFillColor(34, 197, 94);
-      pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(8);
-      pdf.text('Freq≥60%', margin + 55, yPos + 5);
-      pdf.setFontSize(10);
-      pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
-
-      pdf.setFillColor(239, 68, 68);
-      pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
-      pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(8);
-      pdf.text('Incomp', margin + 105, yPos + 5);
-      pdf.setFontSize(10);
-      pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
-
-      pdf.setTextColor(100, 116, 139);
-      pdf.setFontSize(8);
-      pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
-
-      yPos += 20;
-
-      const tableStartY = yPos;
-      const startRow = page * rowsPerPage;
-      const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
-
-      if (startRow < filteredReportData.length) {
-        const tableElement = createTableElement(startRow, endRow);
-
-        const tempDiv = document.createElement('div');
-        tempDiv.style.position = 'absolute';
-        tempDiv.style.left = '-9999px';
-        tempDiv.style.top = '0';
-        tempDiv.style.width = `${contentWidth * 3.78}px`;
-        tempDiv.appendChild(tableElement);
-        document.body.appendChild(tempDiv);
-
-        const canvas = await html2canvas(tableElement, {
-          scale: 2,
-          logging: false,
-          backgroundColor: '#ffffff',
-        });
-
-        const imgData = canvas.toDataURL('image/png');
-        const imgHeight = (canvas.height * contentWidth) / canvas.width;
-
-        pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
-
-        document.body.removeChild(tempDiv);
-      }
-
-      pdf.setFontSize(8);
-      pdf.setTextColor(148, 163, 184);
-      pdf.text(
-        `Página ${page + 1} de ${totalPages} • Total de registros: ${filteredReportData.length}`,
-        pageWidth / 2,
-        pageHeight - 5,
-        { align: 'center' }
-      );
+    try {
+      pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
+    } catch (e) {
+      console.warn('Logo não pôde ser carregada');
     }
 
-    pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
-  };
+    pdf.setFontSize(16);
+    pdf.setTextColor(30, 41, 59);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
+
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
+
+    pdf.setDrawColor(203, 213, 225);
+    pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
+
+    let yPos = margin + 26;
+    pdf.setFontSize(9);
+    pdf.setTextColor(51, 65, 85);
+
+    const filterInfo: string[] = [];
+
+    const selectedCycle = cycles.find(c => c.id === filters.cycleId);
+    if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
+
+    const selectedUnit = units.find(u => u.id === filters.unitId);
+    if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
+
+    const selectedClass = classes.find(c => c.id === filters.classId);
+    if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
+
+    if (filters.modality !== 'all') {
+      filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
+    }
+
+    if (filters.startDate && filters.endDate) {
+      filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
+    }
+
+    if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
+
+    pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
+
+    yPos += 8;
+
+    // CORREÇÃO DOS CARDS - Escrita correta conforme a imagem
+    pdf.setFillColor(59, 130, 246);
+    pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(8);
+    pdf.text('Total', margin + 5, yPos + 5);
+    pdf.setFontSize(10);
+    pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
+
+    pdf.setFillColor(34, 197, 94);
+    pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(8);
+    pdf.text('Freq ≥ 60%', margin + 52, yPos + 5); // CORRIGIDO: "Freq ≥ 60%" em vez de "Freq" e 0"
+    pdf.setFontSize(10);
+    pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
+
+    pdf.setFillColor(239, 68, 68);
+    pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(8);
+    pdf.text('Incomp', margin + 107, yPos + 5); // CORRIGIDO: "Incomp" em vez de "Incomp 0"
+    pdf.setFontSize(10);
+    pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
+
+    pdf.setTextColor(100, 116, 139);
+    pdf.setFontSize(8);
+    pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
+
+    yPos += 20;
+
+    const tableStartY = yPos;
+    const startRow = page * rowsPerPage;
+    const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
+
+    if (startRow < filteredReportData.length) {
+      const tableElement = createTableElement(startRow, endRow);
+
+      const tempDiv = document.createElement('div');
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.left = '-9999px';
+      tempDiv.style.top = '0';
+      tempDiv.style.width = `${contentWidth * 3.78}px`;
+      tempDiv.appendChild(tableElement);
+      document.body.appendChild(tempDiv);
+
+      const canvas = await html2canvas(tableElement, {
+        scale: 2,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+      pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
+
+      document.body.removeChild(tempDiv);
+    }
+
+    pdf.setFontSize(8);
+    pdf.setTextColor(148, 163, 184);
+    pdf.text(
+      `Página ${page + 1} de ${totalPages} • Total de registros: ${filteredReportData.length}`,
+      pageWidth / 2,
+      pageHeight - 5,
+      { align: 'center' }
+    );
+  }
+
+  pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
+};
 
   const displayData = filteredReportData;
 
