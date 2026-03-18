@@ -725,33 +725,35 @@ const exportToPDF = async () => {
     yPos += 8;
 
     // CORREÇÃO DOS CARDS - Escrita correta conforme a imagem
-    pdf.setFillColor(59, 130, 246);
-    pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(8);
-    pdf.text('Total', margin + 5, yPos + 5);
-    pdf.setFontSize(10);
-    pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
+   pdf.setFillColor(59, 130, 246);
+pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
+pdf.setTextColor(255, 255, 255);
+pdf.setFontSize(8);
+pdf.text('Total', margin + 5, yPos + 5);
+pdf.setFontSize(10);
+pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
 
-    pdf.setFillColor(34, 197, 94);
-    pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(8);
-    pdf.text('Freq ≥ 60%', margin + 52, yPos + 5); // CORRIGIDO: "Freq ≥ 60%" em vez de "Freq" e 0"
-    pdf.setFontSize(10);
-    pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
+pdf.setFillColor(34, 197, 94);
+pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
+pdf.setTextColor(255, 255, 255);
+pdf.setFontSize(8);
+// CORRIGIDO: Apenas "FREQUÊNCIA" no card verde
+pdf.text('FREQUÊNCIA', margin + 45, yPos + 5);
+pdf.setFontSize(10);
+pdf.text(stats.frequentes.toString(), margin + 55, yPos + 11);
 
-    pdf.setFillColor(239, 68, 68);
-    pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(8);
-    pdf.text('Incomp', margin + 107, yPos + 5); // CORRIGIDO: "Incomp" em vez de "Incomp 0"
-    pdf.setFontSize(10);
-    pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
+pdf.setFillColor(239, 68, 68);
+pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
+pdf.setTextColor(255, 255, 255);
+pdf.setFontSize(8);
+// CORRIGIDO: Apenas "INCOMPLETO" no card vermelho
+pdf.text('INCOMPLETO', margin + 100, yPos + 5);
+pdf.setFontSize(10);
+pdf.text(stats.incompletos.toString(), margin + 105, yPos + 11);
 
-    pdf.setTextColor(100, 116, 139);
-    pdf.setFontSize(8);
-    pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
+pdf.setTextColor(100, 116, 139);
+pdf.setFontSize(8);
+pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
 
     yPos += 20;
 
