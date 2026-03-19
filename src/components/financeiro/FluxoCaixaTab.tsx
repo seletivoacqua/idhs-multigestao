@@ -50,6 +50,9 @@ interface FluxoCaixaTabProps {
   refreshTrigger?: number; // Prop para forçar recarregamento quando uma nota for paga
 }
 
+// Chave para armazenar a página no sessionStorage
+const STORAGE_KEY = 'fluxo_caixa_current_page';
+
 export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
@@ -66,7 +69,12 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const [initialBalanceInput, setInitialBalanceInput] = useState('0');
   const { user } = useAuth();
 
-  const [currentPage, setCurrentPage] = useState(1);
+  // 🔥 CORREÇÃO: Inicializar currentPage com valor do sessionStorage ou 1
+  const [currentPage, setCurrentPage] = useState<number>(() => {
+    const savedPage = sessionStorage.getItem(STORAGE_KEY);
+    return savedPage ? parseInt(savedPage, 10) : 1;
+  });
+  
   const itemsPerPage = 30;
 
   const [formData, setFormData] = useState({
@@ -92,14 +100,46 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     description: '',
   });
 
+  // 🔥 CORREÇÃO: Salvar página no sessionStorage quando mudar
+  useEffect(() => {
+    sessionStorage.setItem(STORAGE_KEY, currentPage.toString());
+  }, [currentPage]);
+
+  // 🔥 CORREÇÃO: Detectar quando o usuário retorna à aba/janela
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Quando a aba ficar visível novamente, NÃO resetamos a página
+        // Apenas recarregamos os dados se necessário
+        if (user) {
+          loadTransactions();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user, filterMonth]); // Dependências necessárias para recarregar dados
+
+  // 🔥 CORREÇÃO: Limpar storage quando componente for desmontado (opcional)
+  useEffect(() => {
+    return () => {
+      // Se quiser limpar o storage quando sair do componente completamente
+      // sessionStorage.removeItem(STORAGE_KEY);
+    };
+  }, []);
+
   useEffect(() => {
     if (user) {
       loadTransactions();
       loadFixedExpenses();
       loadInitialBalance();
-      setCurrentPage(1);
+      // 🔥 CORREÇÃO: Não resetar currentPage para 1 aqui
     }
-  }, [filterMonth, user]);
+  }, [filterMonth, user]); // Removido currentPage das dependências
 
   useEffect(() => {
     if (refreshTrigger !== undefined && refreshTrigger > 0 && user) {
@@ -413,6 +453,24 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     setCurrentPage(page);
   };
 
+  // 🔥 CORREÇÃO: Função para resetar para página 1 quando necessário
+  const resetToFirstPage = () => {
+    setCurrentPage(1);
+    sessionStorage.setItem(STORAGE_KEY, '1');
+  };
+
+  // 🔥 CORREÇÃO: Quando o filtro de tipo muda, podemos opcionalmente resetar para página 1
+  const handleFilterTypeChange = (newType: 'all' | 'income' | 'expense') => {
+    setFilterType(newType);
+    resetToFirstPage(); // Opcional: volta para página 1 ao mudar filtro
+  };
+
+  // 🔥 CORREÇÃO: Quando o mês muda, resetamos para página 1
+  const handleMonthChange = (newMonth: string) => {
+    setFilterMonth(newMonth);
+    resetToFirstPage();
+  };
+
   const renderPagination = () => {
     if (totalPages <= 1) return null;
 
@@ -501,13 +559,13 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
             <input
               type="month"
               value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
+              onChange={(e) => handleMonthChange(e.target.value)}
               className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
           <select
             value={filterType}
-            onChange={(e) => setFilterType(e.target.value as 'all' | 'income' | 'expense')}
+            onChange={(e) => handleFilterTypeChange(e.target.value as 'all' | 'income' | 'expense')}
             className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="all">Todas</option>
