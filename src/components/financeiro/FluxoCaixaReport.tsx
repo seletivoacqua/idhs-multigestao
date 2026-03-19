@@ -59,13 +59,24 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     origem: 'all',
   });
 
-  // Validação de datas
+  // 🔥 CORREÇÃO: Validar e ajustar datas
   const validateDates = useCallback((): boolean => {
     if (filters.startDate > filters.endDate) {
       setError('Data inicial não pode ser maior que data final');
       return false;
     }
     return true;
+  }, [filters.startDate, filters.endDate]);
+
+  // 🔥 CORREÇÃO: Função para ajustar datas para consulta no Supabase
+  const getDateRangeForQuery = useCallback(() => {
+    // Data inicial: início do dia (00:00:00)
+    const startDateTime = `${filters.startDate}T00:00:00`;
+    
+    // Data final: fim do dia (23:59:59)
+    const endDateTime = `${filters.endDate}T23:59:59`;
+    
+    return { startDateTime, endDateTime };
   }, [filters.startDate, filters.endDate]);
 
   // Reset de filtros
@@ -81,7 +92,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
   }, []);
 
-  // Geração do relatório
+  // Geração do relatório com datas corrigidas
   const handleGenerateReport = useCallback(async () => {
     if (!user) {
       setError('Usuário não autenticado');
@@ -94,12 +105,17 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
 
     try {
+      // 🔥 CORREÇÃO: Obter datas com horário para consulta precisa
+      const { startDateTime, endDateTime } = getDateRangeForQuery();
+      
+      console.log('Consultando transações de:', startDateTime, 'até', endDateTime);
+
       let query = supabase
         .from('cash_flow_transactions')
         .select('*')
         .eq('user_id', user.id)
-        .gte('transaction_date', filters.startDate)
-        .lte('transaction_date', filters.endDate);
+        .gte('transaction_date', startDateTime) // Agora considera horário
+        .lte('transaction_date', endDateTime);   // Agora considera horário
 
       if (filters.type !== 'all') {
         query = query.eq('type', filters.type);
@@ -153,6 +169,16 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         return;
       }
 
+      // 🔥 CORREÇÃO: Verificar datas retornadas para debug
+      console.log('Transações encontradas:', data?.length);
+      if (data && data.length > 0) {
+        console.log('Primeira transação:', {
+          data: data[0].transaction_date,
+          esperado_inicio: startDateTime,
+          esperado_fim: endDateTime
+        });
+      }
+
       const processedData = data?.map(transaction => ({
         ...transaction,
         amount: Number(transaction.amount),
@@ -169,7 +195,20 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     } finally {
       setLoading(false);
     }
-  }, [user, filters, validateDates]);
+  }, [user, filters, validateDates, getDateRangeForQuery]);
+
+  // 🔥 CORREÇÃO: Função para formatar data de exibição com segurança
+  const formatDisplayDate = useCallback((dateString: string): string => {
+    try {
+      // Extrair apenas a parte da data (YYYY-MM-DD)
+      const datePart = dateString.split('T')[0];
+      const [year, month, day] = datePart.split('-');
+      return `${day}/${month}/${year}`;
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateString;
+    }
+  }, []);
 
   // Carregar relatório inicial
   useEffect(() => {
@@ -239,7 +278,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       : '-';
 
     return {
-      Data: new Date(transaction.transaction_date).toLocaleDateString('pt-BR'),
+      Data: formatDisplayDate(transaction.transaction_date),
       Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
       Descrição: transaction.description,
       Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
@@ -253,7 +292,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       Método: transaction.method,
       'Valor (R$)': transaction.amount,
     };
-  }, []);
+  }, [formatDisplayDate]);
 
   // Exportação para PDF
   const exportToPDF = useCallback(async () => {
@@ -271,7 +310,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 14;
-      const contentWidth = pageWidth - (margin * 2);
       
       // Configurar colunas
       const colWidths = {
@@ -310,10 +348,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setFontSize(18);
       doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
 
-      // Período
+      // Período (usando formato de exibição)
       doc.setFontSize(11);
       doc.text(
-        `Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`,
+        `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
         pageWidth / 2,
         32,
         { align: 'center' }
@@ -384,8 +422,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           colWidths.descricao - 2
         );
         
-        // Data
-        doc.text(new Date(transaction.transaction_date).toLocaleDateString('pt-BR'), colPositions.data, yPos);
+        // Data formatada
+        doc.text(formatDisplayDate(transaction.transaction_date), colPositions.data, yPos);
         
         // Tipo (abreviado)
         doc.text(transaction.type === 'income' ? 'REC' : 'DESP', colPositions.tipo, yPos);
@@ -442,7 +480,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     } finally {
       setExporting('none');
     }
-  }, [transactions, totals, filters, validateExportData]);
+  }, [transactions, totals, filters, validateExportData, formatDisplayDate]);
 
   // Exportação para Excel
   const exportToExcel = useCallback(() => {
@@ -465,7 +503,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       // Aba de Resumo
       const summaryData = [
         ['RELATÓRIO DE FLUXO DE CAIXA'],
-        [`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`],
+        [`Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`],
         [''],
         ['FILTROS APLICADOS'],
         [`Tipo: ${filters.type === 'all' ? 'Todos' : filters.type === 'income' ? 'Apenas Entradas' : 'Apenas Saídas'}`],
@@ -495,7 +533,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
       
-      // Ajustar largura das colunas na aba de resumo
       summarySheet['!cols'] = [
         { wch: 30 },
         { wch: 20 },
@@ -569,7 +606,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     } finally {
       setExporting('none');
     }
-  }, [transactions, totals, statistics, filters, formatTransactionForExcel, validateExportData]);
+  }, [transactions, totals, statistics, filters, formatTransactionForExcel, validateExportData, formatDisplayDate]);
 
   // Renderização condicional de loading
   if (initialLoading) {
@@ -894,7 +931,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       return (
                         <tr key={transaction.id} className="hover:bg-slate-50">
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                            {new Date(transaction.transaction_date).toLocaleDateString('pt-BR')}
+                            {formatDisplayDate(transaction.transaction_date)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span
@@ -941,7 +978,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
               
               {/* Rodapé da tabela com contador */}
               <div className="bg-slate-50 px-4 py-2 border-t border-slate-200 text-xs text-slate-500">
-                Total de {transactions.length} transação(ões) encontrada(s)
+                Total de {transactions.length} transação(ões) encontrada(s) no período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
               </div>
             </div>
           </>
@@ -949,7 +986,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
         {!loading && transactions.length === 0 && (
           <div className="text-center py-12 text-slate-500">
-            Nenhuma transação encontrada para os filtros selecionados
+            Nenhuma transação encontrada para os filtros selecionados no período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
           </div>
         )}
       </div>
