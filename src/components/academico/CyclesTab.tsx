@@ -1221,6 +1221,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   const loadTotalClassesGiven = async () => {
     const total = await getTotalClassesGiven(classData.id);
+    console.log('🔄 Total de aulas realizadas buscado do banco:', total);
     setTotalClassesGiven(total);
   };
 
