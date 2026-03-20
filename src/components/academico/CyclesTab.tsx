@@ -1170,14 +1170,16 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     enrollmentType: 'regular' | 'exceptional';
   } | null>(null);
 
-  // Função para buscar o próximo número de aula
   const loadNextClassNumber = async () => {
+    console.log('🔄 Buscando próximo número de aula do banco...');
     const { data, error } = await supabase.rpc('get_next_class_number', {
       p_class_id: classData.id
     });
     if (!error && data) {
+      console.log('✅ Próximo número de aula retornado do banco:', data);
       setNextClassNumber(data);
-      console.log('Próxima aula carregada:', data); // debug
+    } else if (error) {
+      console.error('❌ Erro ao buscar próximo número:', error);
     }
   };
 
@@ -1190,10 +1192,11 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     loadNextClassNumber(); // <-- ADICIONADO: carrega o próximo número já na abertura
   }, []);
 
-  // Efeito para recarregar o próximo número sempre que a aba mudar para 'attendance'
   useEffect(() => {
-    if (tab === 'attendance') {
-      loadNextClassNumber(); // <-- ADICIONADO: atualiza ao entrar na aba de frequência
+    if (tab === 'attendance' || tab === 'close') {
+      console.log('🔄 Aba alterada para:', tab, '- Recarregando dados do banco...');
+      loadNextClassNumber();
+      loadTotalClassesGiven();
     }
   }, [tab]);
 
@@ -2506,6 +2509,7 @@ function VideoconferenciaAttendance({
 
   // Atualiza o número da aula quando o próximo número calculado no pai mudar
   useEffect(() => {
+    console.log('📊 Próximo número de aula recebido do banco:', nextClassNumber);
     setClassNumber(nextClassNumber);
   }, [nextClassNumber]);
 
@@ -2616,14 +2620,13 @@ function VideoconferenciaAttendance({
 
       if (error) throw error;
 
-      // Feedback imediato: próximo número = aulaAtual + 1
-      setClassNumber(aulaAtual + 1);
+      console.log('✅ Frequência salva! Recarregando dados do banco...');
       setAttendance({});
-      
-      // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
+
+      // Recarrega os dados do banco (nextClassNumber e totalClassesGiven)
       onUpdate();
 
-      alert(`✅ Aula ${aulaAtual} registrada!`);
+      alert(`✅ Aula ${aulaAtual} registrada com sucesso!`);
     } catch (error: any) {
       console.error(error);
       alert(`Erro: ${error.message}`);
