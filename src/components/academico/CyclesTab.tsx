@@ -157,10 +157,10 @@ async function calculateAttendancePercentage(
 
   // Contar presenças apenas nas aulas consideradas
   const presentCount = filteredAttendances.filter(a => a.present).length;
-  
+
   // Calcular porcentagem baseada no total de aulas que deveriam ser consideradas
-  const percentage = totalClassesToConsider > 0 
-    ? (presentCount / totalClassesToConsider) * 100 
+  const percentage = totalClassesToConsider > 0
+    ? Math.min((presentCount / totalClassesToConsider) * 100, 100)
     : 0;
 
   return {
@@ -1291,11 +1291,11 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
         (data || []).map(async (cs) => {
           const enrollmentDate = extractDatePart(cs.enrollment_date);
           const isExceptional = cs.enrollment_type === 'exceptional';
-          
-          const { percentage, presentCount, totalClassesToConsider, isProportional } = 
+
+          const { percentage, presentCount, totalClassesToConsider, isProportional } =
             await calculateAttendancePercentage(
-              classData.id, 
-              cs.student_id, 
+              classData.id,
+              cs.student_id,
               isExceptional ? enrollmentDate : null
             );
 
@@ -1303,7 +1303,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
             ...cs,
             attendanceCount: presentCount,
             attendancePercentage: percentage,
-            totalClasses: totalClassesToConsider,
+            totalClassesCalculated: totalClassesToConsider,
             totalClassesGiven: totalClassesGiven,
             isProportionalCalculation: isProportional,
           };
@@ -2131,7 +2131,7 @@ const handleSaveEditEnrollment = async () => {
                                         : 'text-red-700'
                                     }`}
                                   >
-                                    {student.attendancePercentage.toFixed(1)}%
+                                    {Math.min(student.attendancePercentage, 100).toFixed(1)}%
                                   </span>
                                 </div>
                               ) : (
@@ -2155,7 +2155,7 @@ const handleSaveEditEnrollment = async () => {
                               {classData.modality === 'VIDEOCONFERENCIA' ? (
                                 <div className="flex flex-col">
                                   <span className="font-medium">
-                                    {student.attendanceCount} de {student.totalClasses || totalClassesGiven} aulas
+                                    {student.attendanceCount} de {totalClassesGiven} aulas
                                   </span>
                                   <span className="text-xs text-slate-500">
                                     {student.isProportionalCalculation && student.enrollment_date
