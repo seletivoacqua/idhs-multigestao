@@ -73,8 +73,8 @@ async function getTotalClassesGiven(classId: string): Promise<number> {
     .select('class_number')
     .eq('class_id', classId);
 
-  if (!data || data.length === 0) return 0;
-
+  if (!data) return 0;
+  
   const uniqueClasses = [...new Set(data.map(a => a.class_number))];
   return uniqueClasses.length;
 }
@@ -677,8 +677,8 @@ export function CyclesTab() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl
-            w-[95vw] sm:w-[85vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] sm:w-[80vw] md:w-[60vw] lg:w-[50vw] xl:w-[40vw] max-w-2xl 
             max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <h3 className="text-xl font-bold text-slate-800 mb-4">
@@ -904,8 +904,8 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl
-        w-[98vw] md:w-[95vw] lg:w-[92vw] xl:w-[88vw] 2xl:w-[85vw] max-w-[1900px]
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-7xl 
         p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
         
         <div className="flex justify-between items-start mb-6">
@@ -1013,8 +1013,8 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 
         {showClassModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-            <div className="bg-white rounded-xl shadow-xl
-              w-[95vw] md:w-[85vw] lg:w-[75vw] xl:w-[65vw] max-w-4xl
+            <div className="bg-white rounded-xl shadow-xl 
+              w-[95vw] md:w-[80vw] lg:w-[70vw] xl:w-[60vw] max-w-3xl
               max-h-[90vh] overflow-y-auto">
               <div className="p-6">
                 <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
@@ -1190,12 +1190,10 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     loadNextClassNumber(); // <-- ADICIONADO: carrega o próximo número já na abertura
   }, []);
 
-  // Efeito para recarregar dados sempre que a aba mudar para 'attendance'
+  // Efeito para recarregar o próximo número sempre que a aba mudar para 'attendance'
   useEffect(() => {
     if (tab === 'attendance') {
-      loadNextClassNumber();
-      loadTotalClassesGiven();
-      loadClassStudents();
+      loadNextClassNumber(); // <-- ADICIONADO: atualiza ao entrar na aba de frequência
     }
   }, [tab]);
 
@@ -1220,7 +1218,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   const loadTotalClassesGiven = async () => {
     const total = await getTotalClassesGiven(classData.id);
-    console.log('Total de aulas realizadas carregado:', total);
     setTotalClassesGiven(total);
   };
 
@@ -1727,8 +1724,8 @@ const handleSaveEditEnrollment = async () => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl
-        w-[98vw] md:w-[95vw] lg:w-[92vw] xl:w-[88vw] 2xl:w-[85vw] max-w-[1800px]
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-6xl
         p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
         
         <div className="flex justify-between items-start mb-6">
@@ -2218,8 +2215,8 @@ const handleSaveEditEnrollment = async () => {
       {/* NOVO: Modal de edição de matrícula */}
       {editEnrollmentModal?.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[70] p-4">
-          <div className="bg-white rounded-xl shadow-xl
-            w-[95vw] md:w-[70vw] lg:w-[55vw] xl:w-[45vw] max-w-3xl
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] md:w-[60vw] lg:w-[40vw] max-w-2xl
             max-h-[90vh] overflow-y-auto">
             
             <div className="p-6">
@@ -2338,8 +2335,8 @@ const handleSaveEditEnrollment = async () => {
 
       {showEnrollmentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl shadow-xl
-            w-[95vw] md:w-[85vw] lg:w-[70vw] xl:w-[60vw] max-w-4xl
+          <div className="bg-white rounded-xl shadow-xl 
+            w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
             max-h-[90vh] overflow-y-auto">
             
             <div className="p-6">
@@ -2483,12 +2480,12 @@ const handleSaveEditEnrollment = async () => {
   );
 }
 
-function VideoconferenciaAttendance({
-  classData,
-  students,
-  onUpdate,
-  totalClassesGiven,
-  nextClassNumber
+function VideoconferenciaAttendance({ 
+  classData, 
+  students, 
+  onUpdate, 
+  totalClassesGiven, 
+  nextClassNumber 
 }: any) {
   const [classNumber, setClassNumber] = useState(nextClassNumber);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2501,28 +2498,11 @@ function VideoconferenciaAttendance({
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
   const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
-  const [localTotalClassesGiven, setLocalTotalClassesGiven] = useState(totalClassesGiven);
 
-  // Função para recarregar o total de aulas
-  const reloadTotalClasses = async () => {
-    console.log('🔄 reloadTotalClasses chamado para turma:', classData.id);
-    const total = await getTotalClassesGiven(classData.id);
-    console.log('✅ Total recalculado:', total);
-    setLocalTotalClassesGiven(total);
-    console.log('✅ Estado localTotalClassesGiven atualizado para:', total);
-  };
-
-  // Carrega as datas do ciclo e força atualização dos dados
+  // Carrega as datas do ciclo
   useEffect(() => {
     loadCycleDates();
-    reloadTotalClasses();
-    onUpdate();
   }, []);
-
-  // Atualiza quando a prop totalClassesGiven mudar
-  useEffect(() => {
-    setLocalTotalClassesGiven(totalClassesGiven);
-  }, [totalClassesGiven]);
 
   // Atualiza o número da aula quando o próximo número calculado no pai mudar
   useEffect(() => {
@@ -2636,10 +2616,11 @@ function VideoconferenciaAttendance({
 
       if (error) throw error;
 
-      // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
-      await reloadTotalClasses();
-      await loadNextClassNumber();
+      // Feedback imediato: próximo número = aulaAtual + 1
+      setClassNumber(aulaAtual + 1);
       setAttendance({});
+      
+      // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
       onUpdate();
 
       alert(`✅ Aula ${aulaAtual} registrada!`);
@@ -2660,10 +2641,6 @@ function VideoconferenciaAttendance({
     return student.students.full_name.toLowerCase().includes(search);
   });
 
-  console.log('🎨 Renderizando VideoconferenciaAttendance');
-  console.log('🎨 localTotalClassesGiven atual:', localTotalClassesGiven);
-  console.log('🎨 totalClassesGiven (prop):', totalClassesGiven);
-
   return (
     <>
       {validationError && (
@@ -2674,7 +2651,7 @@ function VideoconferenciaAttendance({
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📊 Aulas realizadas:</strong> {localTotalClassesGiven} de {classData.total_classes}
+          <strong>📊 Aulas realizadas:</strong> {totalClassesGiven} de {classData.total_classes}
         </p>
       </div>
 
@@ -2721,7 +2698,7 @@ function VideoconferenciaAttendance({
             className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
           <p className="text-xs text-slate-500 mt-1">
-            Próxima aula: {nextClassNumber}
+            Próxima aula: {totalClassesGiven + 1}
           </p>
         </div>
         <div>
@@ -2901,7 +2878,6 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   const [editData, setEditData] = useState<{ classNumber: number; classDate: string; present: boolean } | null>(null);
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
-  const [totalClassesInClass, setTotalClassesInClass] = useState<number>(0);
 
   useEffect(() => {
     loadCycleData();
@@ -2940,16 +2916,6 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     }
 
     setAttendanceRecords(data || []);
-
-    const { data: allClassData } = await supabase
-      .from('attendance')
-      .select('class_number')
-      .eq('class_id', classData.id);
-
-    if (allClassData) {
-      const uniqueNumbers = [...new Set(allClassData.map(a => a.class_number))];
-      setTotalClassesInClass(uniqueNumbers.length);
-    }
   };
 
   const handleEdit = (record: any) => {
@@ -3029,15 +2995,16 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     alert('Frequência excluída com sucesso!');
   };
 
-  const totalClassesGiven = totalClassesInClass || [...new Set(attendanceRecords.map(r => r.class_number))].length;
-
+  const uniqueClasses = [...new Set(attendanceRecords.map(r => r.class_number))];
+  const totalClassesGiven = uniqueClasses.length;
+  
   const presentCount = attendanceRecords.filter(r => r.present).length;
   const percentage = totalClassesGiven > 0 ? (presentCount / totalClassesGiven) * 100 : 0;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-xl shadow-xl
-        w-[98vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] 2xl:w-[75vw] max-w-[1600px]
+      <div className="bg-white rounded-xl shadow-xl 
+        w-[95vw] md:w-[85vw] lg:w-[75vw] xl:w-[65vw] max-w-5xl
         max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-start mb-6">
@@ -3661,4 +3628,5 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     </div>
   );
 }
+
 
