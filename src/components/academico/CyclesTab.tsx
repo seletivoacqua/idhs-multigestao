@@ -74,8 +74,12 @@ async function getTotalClassesGiven(classId: string): Promise<number> {
     .eq('class_id', classId);
 
   if (!data) return 0;
-  
+
   const uniqueClasses = [...new Set(data.map(a => a.class_number))];
+  console.log('🔍 getTotalClassesGiven - class_id:', classId);
+  console.log('🔍 Dados retornados:', data);
+  console.log('🔍 Números únicos de aula:', uniqueClasses);
+  console.log('🔍 Total calculado:', uniqueClasses.length);
   return uniqueClasses.length;
 }
 
@@ -2505,8 +2509,11 @@ function VideoconferenciaAttendance({
 
   // Função para recarregar o total de aulas
   const reloadTotalClasses = async () => {
+    console.log('🔄 reloadTotalClasses chamado para turma:', classData.id);
     const total = await getTotalClassesGiven(classData.id);
+    console.log('✅ Total recalculado:', total);
     setLocalTotalClassesGiven(total);
+    console.log('✅ Estado localTotalClassesGiven atualizado para:', total);
   };
 
   // Carrega as datas do ciclo e força atualização dos dados
@@ -2658,6 +2665,10 @@ function VideoconferenciaAttendance({
     const search = studentSearchTerm.toLowerCase();
     return student.students.full_name.toLowerCase().includes(search);
   });
+
+  console.log('🎨 Renderizando VideoconferenciaAttendance');
+  console.log('🎨 localTotalClassesGiven atual:', localTotalClassesGiven);
+  console.log('🎨 totalClassesGiven (prop):', totalClassesGiven);
 
   return (
     <>
