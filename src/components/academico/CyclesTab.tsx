@@ -68,16 +68,19 @@ function validateEADAccess(
 
 // Função para contar aulas já realizadas
 async function getTotalClassesGiven(classId: string): Promise<number> {
-  const { data } = await supabase
+  const { data, count } = await supabase
     .from('attendance')
-    .select('class_number')
-    .eq('class_id', classId);
+    .select('class_number', { count: 'exact' })
+    .eq('class_id', classId)
+    .limit(10000);
+
+  console.log('🔍 getTotalClassesGiven - class_id:', classId);
+  console.log('🔍 Total de registros no banco:', count);
+  console.log('🔍 Dados retornados:', data?.length, 'registros');
 
   if (!data) return 0;
 
-  const uniqueClasses = [...new Set(data.map(a => a.class_number))];
-  console.log('🔍 getTotalClassesGiven - class_id:', classId);
-  console.log('🔍 Dados retornados:', data);
+  const uniqueClasses = [...new Set(data.map(a => a.class_number))].sort((a, b) => a - b);
   console.log('🔍 Números únicos de aula:', uniqueClasses);
   console.log('🔍 Total calculado:', uniqueClasses.length);
   return uniqueClasses.length;
