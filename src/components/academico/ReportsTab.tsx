@@ -53,7 +53,7 @@ interface ReportData {
   ultimoAcesso: string;
   frequency: string;
   frequencyValue: number;
-  situacao: 'FREQUENTE' | 'INCOMPLETO';
+  situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE';
   totalAccesses: number;
   isFrequente?: boolean;
   accessDates?: string[];
@@ -190,9 +190,19 @@ export function ReportsTab() {
       );
     }
     if (filters.situacao !== 'all') {
-      filtered = filtered.filter(item =>
-        item.situacao === (filters.situacao === 'frequentes' ? 'FREQUENTE' : 'INCOMPLETO')
-      );
+      filtered = filtered.filter(item => {
+        if (filters.situacao === 'frequentes') {
+          return item.situacao === 'FREQUENTE';
+        } else if (filters.situacao === 'incompletos') {
+          // Para não frequentes, verifica se é EAD (AUSENTE) ou VC (INCOMPLETO)
+          if (item.modality.includes('EAD')) {
+            return item.situacao === 'AUSENTE';
+          } else {
+            return item.situacao === 'INCOMPLETO';
+          }
+        }
+        return true;
+      });
     }
     if (filters.startDate || filters.endDate) {
       filtered = filtered.filter(item => {
@@ -214,297 +224,297 @@ export function ReportsTab() {
     setStats({
       totalStudents: data.length,
       frequentes: data.filter(d => d.situacao === 'FREQUENTE').length,
-      incompletos: data.filter(d => d.situacao === 'INCOMPLETO').length,
+      incompletos: data.filter(d => d.situacao === 'INCOMPLETO' || d.situacao === 'AUSENTE').length,
       totalEAD: data.filter(d => d.modality.includes('EAD')).length,
       totalVideoconferencia: data.filter(d => d.modality.includes('Videoconferência')).length,
     });
   };
 
-const generateReport = async () => {
-  if (!user) return;
+  const generateReport = async () => {
+    if (!user) return;
 
-  setLoading(true);
-  setInitialLoading(false);
+    setLoading(true);
+    setInitialLoading(false);
 
-  try {
-    console.log('🔄 Gerando relatório...');
+    try {
+      console.log('🔄 Gerando relatório...');
 
-    // 1. Buscar turmas
-    let classesQuery = supabase
-      .from('classes')
-      .select(`
-        id,
-        name,
-        modality,
-        total_classes,
-        cycle_id,
-        courses (name, modality),
-        cycles (id, name, start_date, end_date, status)
-      `);
-
-    if (filters.cycleId) {
-      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-    }
-
-    const { data: classes, error: classesError } = await classesQuery;
-
-    if (classesError) throw classesError;
-    if (!classes || classes.length === 0) {
-      setReportData([]);
-      setFilteredReportData([]);
-      setLoading(false);
-      return;
-    }
-
-    console.log(`📚 Total de turmas: ${classes.length}`);
-
-    // 2. IDs das turmas
-    const classIds = classes.map(c => c.id);
-
-    // 3. Buscar todos os alunos
-    const { data: classStudents, error: studentsError } = await supabase
-      .from('class_students')
-      .select(`
-        id,
-        student_id,
-        class_id,
-        enrollment_date,
-        enrollment_type,
-        current_status,
-        students (
+      // 1. Buscar turmas
+      let classesQuery = supabase
+        .from('classes')
+        .select(`
           id,
-          full_name,
-          cpf,
-          unit_id,
-          units (
+          name,
+          modality,
+          total_classes,
+          cycle_id,
+          courses (name, modality),
+          cycles (id, name, start_date, end_date, status)
+        `);
+
+      if (filters.cycleId) {
+        classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+      }
+
+      const { data: classes, error: classesError } = await classesQuery;
+
+      if (classesError) throw classesError;
+      if (!classes || classes.length === 0) {
+        setReportData([]);
+        setFilteredReportData([]);
+        setLoading(false);
+        return;
+      }
+
+      console.log(`📚 Total de turmas: ${classes.length}`);
+
+      // 2. IDs das turmas
+      const classIds = classes.map(c => c.id);
+
+      // 3. Buscar todos os alunos
+      const { data: classStudents, error: studentsError } = await supabase
+        .from('class_students')
+        .select(`
+          id,
+          student_id,
+          class_id,
+          enrollment_date,
+          enrollment_type,
+          current_status,
+          students (
             id,
-            name,
-            municipality
+            full_name,
+            cpf,
+            unit_id,
+            units (
+              id,
+              name,
+              municipality
+            )
           )
-        )
-      `)
-      .in('class_id', classIds);
+        `)
+        .in('class_id', classIds);
 
-    if (studentsError) throw studentsError;
-    if (!classStudents || classStudents.length === 0) {
-      setReportData([]);
-      setFilteredReportData([]);
-      setLoading(false);
-      return;
-    }
+      if (studentsError) throw studentsError;
+      if (!classStudents || classStudents.length === 0) {
+        setReportData([]);
+        setFilteredReportData([]);
+        setLoading(false);
+        return;
+      }
 
-    console.log(`👥 Total de matrículas: ${classStudents.length}`);
+      console.log(`👥 Total de matrículas: ${classStudents.length}`);
 
-    // 4. Separar por modalidade
-    const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
-    const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
+      // 4. Separar por modalidade
+      const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
+      const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
 
-    // Mapa de alunos por turma
-    const studentsByClass: Record<string, typeof classStudents> = {};
-    classStudents.forEach(cs => {
-      if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
-      studentsByClass[cs.class_id].push(cs);
-    });
+      // Mapa de alunos por turma
+      const studentsByClass: Record<string, typeof classStudents> = {};
+      classStudents.forEach(cs => {
+        if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
+        studentsByClass[cs.class_id].push(cs);
+      });
 
-    // 5. Buscar dados de EAD (funciona bem)
-    let eadAccessData: any[] = [];
-    if (eadClassIds.length > 0) {
-      const studentIds = [
-        ...new Set(
-          classStudents
-            .filter(cs => eadClassIds.includes(cs.class_id))
-            .map(cs => cs.student_id)
-        )
-      ];
+      // 5. Buscar dados de EAD
+      let eadAccessData: any[] = [];
+      if (eadClassIds.length > 0) {
+        const studentIds = [
+          ...new Set(
+            classStudents
+              .filter(cs => eadClassIds.includes(cs.class_id))
+              .map(cs => cs.student_id)
+          )
+        ];
 
-      if (studentIds.length > 0) {
-        const batchSize = 900;
-        for (let i = 0; i < eadClassIds.length; i += batchSize) {
-          const classBatch = eadClassIds.slice(i, i + batchSize);
-          for (let j = 0; j < studentIds.length; j += batchSize) {
-            const studentBatch = studentIds.slice(j, j + batchSize);
-            const { data, error } = await supabase
-              .from('ead_access')
-              .select('*')
-              .in('class_id', classBatch)
-              .in('student_id', studentBatch);
+        if (studentIds.length > 0) {
+          const batchSize = 900;
+          for (let i = 0; i < eadClassIds.length; i += batchSize) {
+            const classBatch = eadClassIds.slice(i, i + batchSize);
+            for (let j = 0; j < studentIds.length; j += batchSize) {
+              const studentBatch = studentIds.slice(j, j + batchSize);
+              const { data, error } = await supabase
+                .from('ead_access')
+                .select('*')
+                .in('class_id', classBatch)
+                .in('student_id', studentBatch);
 
-            if (error) console.error('Erro EAD:', error);
-            else eadAccessData = [...eadAccessData, ...(data || [])];
+              if (error) console.error('Erro EAD:', error);
+              else eadAccessData = [...eadAccessData, ...(data || [])];
+            }
           }
         }
       }
-    }
 
-    // 6. Buscar dados de ATTENDANCE (videoconferência) - OTIMIZADO
-    let attendanceData: any[] = [];
-    if (videoClassIds.length > 0) {
-      // Processar cada turma individualmente para evitar URLs longas
-      for (const classId of videoClassIds) {
-        const studentsInClass = studentsByClass[classId] || [];
-        if (studentsInClass.length === 0) continue;
+      // 6. Buscar dados de ATTENDANCE (videoconferência)
+      let attendanceData: any[] = [];
+      if (videoClassIds.length > 0) {
+        for (const classId of videoClassIds) {
+          const studentsInClass = studentsByClass[classId] || [];
+          if (studentsInClass.length === 0) continue;
 
-        const studentIds = studentsInClass.map(cs => cs.student_id);
-        
-        // Dividir os alunos da turma em lotes de 300
-        const batchSize = 300;
-        for (let i = 0; i < studentIds.length; i += batchSize) {
-          const studentBatch = studentIds.slice(i, i + batchSize);
+          const studentIds = studentsInClass.map(cs => cs.student_id);
           
-          const { data, error } = await supabase
-            .from('attendance')
-            .select('class_id, student_id, class_number, class_date, present')
-            .eq('class_id', classId)
-            .in('student_id', studentBatch)
-            .order('class_number');
+          const batchSize = 300;
+          for (let i = 0; i < studentIds.length; i += batchSize) {
+            const studentBatch = studentIds.slice(i, i + batchSize);
+            
+            const { data, error } = await supabase
+              .from('attendance')
+              .select('class_id, student_id, class_number, class_date, present')
+              .eq('class_id', classId)
+              .in('student_id', studentBatch)
+              .order('class_number');
 
-          if (error) {
-            console.error(`Erro attendance turma ${classId}:`, error);
-          } else {
-            attendanceData = [...attendanceData, ...(data || [])];
+            if (error) {
+              console.error(`Erro attendance turma ${classId}:`, error);
+            } else {
+              attendanceData = [...attendanceData, ...(data || [])];
+            }
           }
         }
       }
-    }
 
-    console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
-    console.log(`📊 Total attendanceData: ${attendanceData.length}`);
+      console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
+      console.log(`📊 Total attendanceData: ${attendanceData.length}`);
 
-    // 7. Construir mapas
-    const eadMap: Record<string, any> = {};
-    eadAccessData.forEach(item => {
-      eadMap[`${item.class_id}-${item.student_id}`] = item;
-    });
+      // 7. Construir mapas
+      const eadMap: Record<string, any> = {};
+      eadAccessData.forEach(item => {
+        eadMap[`${item.class_id}-${item.student_id}`] = item;
+      });
 
-    const attendanceMap: Record<string, any[]> = {};
-    attendanceData.forEach(item => {
-      const key = `${item.class_id}-${item.student_id}`;
-      if (!attendanceMap[key]) attendanceMap[key] = [];
-      attendanceMap[key].push(item);
-    });
+      const attendanceMap: Record<string, any[]> = {};
+      attendanceData.forEach(item => {
+        const key = `${item.class_id}-${item.student_id}`;
+        if (!attendanceMap[key]) attendanceMap[key] = [];
+        attendanceMap[key].push(item);
+      });
 
-    // 8. Montar relatório final
-    const allReportData: ReportData[] = [];
+      // 8. Montar relatório final
+      const allReportData: ReportData[] = [];
 
-    for (const cls of classes) {
-      const students = studentsByClass[cls.id] || [];
-      console.log(`🔄 Processando turma ${cls.name} (${cls.modality}) → ${students.length} alunos`);
+      for (const cls of classes) {
+        const students = studentsByClass[cls.id] || [];
+        console.log(`🔄 Processando turma ${cls.name} (${cls.modality}) → ${students.length} alunos`);
 
-      for (const cs of students) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
+        for (const cs of students) {
+          if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
 
-        const unitId = cs.students?.unit_id || '';
-        const unitName = cs.students?.units?.name || 'Não informado';
-        const enrollmentDate = extractDatePart(cs.enrollment_date);
-        const enrollmentType = cs.enrollment_type;
+          const unitId = cs.students?.unit_id || '';
+          const unitName = cs.students?.units?.name || 'Não informado';
+          const enrollmentDate = extractDatePart(cs.enrollment_date);
+          const enrollmentType = cs.enrollment_type;
 
-        let classesAttended = 0;
-        let totalClassesConsidered = 0;
-        let ultimoAcesso = '-';
-        let frequency = '';
-        let frequencyValue = 0;
-        let situacao: 'FREQUENTE' | 'INCOMPLETO' = 'INCOMPLETO';
-        let totalAccesses = 0;
-        let isFrequente = false;
+          let classesAttended = 0;
+          let totalClassesConsidered = 0;
+          let ultimoAcesso = '-';
+          let frequency = '';
+          let frequencyValue = 0;
+          let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
+          let totalAccesses = 0;
+          let isFrequente = false;
 
-        if (cls.modality === 'VIDEOCONFERENCIA') {
-          const key = `${cls.id}-${cs.student_id}`;
-          const attendanceList = attendanceMap[key] || [];
+          if (cls.modality === 'VIDEOCONFERENCIA') {
+            const key = `${cls.id}-${cs.student_id}`;
+            const attendanceList = attendanceMap[key] || [];
 
-          if (attendanceList.length > 0) {
-            const relevantAttendance = attendanceList.filter(att => {
-              if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
-              const attDate = extractDatePart(att.class_date);
-              return attDate && attDate >= enrollmentDate;
-            });
+            if (attendanceList.length > 0) {
+              const relevantAttendance = attendanceList.filter(att => {
+                if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
+                const attDate = extractDatePart(att.class_date);
+                return attDate && attDate >= enrollmentDate;
+              });
 
-            classesAttended = relevantAttendance.filter(a => a.present).length;
-            const uniqueClasses = new Set(relevantAttendance.map(a => a.class_number));
-            totalClassesConsidered = uniqueClasses.size;
+              classesAttended = relevantAttendance.filter(a => a.present).length;
+              const uniqueClasses = new Set(relevantAttendance.map(a => a.class_number));
+              totalClassesConsidered = uniqueClasses.size;
 
-            frequencyValue = totalClassesConsidered > 0
-              ? (classesAttended / totalClassesConsidered) * 100
-              : 0;
-            frequency = `${frequencyValue.toFixed(1)}%`;
-            situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
+              frequencyValue = totalClassesConsidered > 0
+                ? (classesAttended / totalClassesConsidered) * 100
+                : 0;
+              frequency = `${frequencyValue.toFixed(1)}%`;
+              situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
-            if (relevantAttendance.length > 0) {
-              const dates = relevantAttendance.map(a => a.class_date);
-              const mostRecent = getMostRecentDate(dates);
-              ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+              if (relevantAttendance.length > 0) {
+                const dates = relevantAttendance.map(a => a.class_date);
+                const mostRecent = getMostRecentDate(dates);
+                ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+              }
+            } else {
+              classesAttended = 0;
+              totalClassesConsidered = 0;
+              frequency = '0.0%';
+              frequencyValue = 0;
+              situacao = 'INCOMPLETO';
+              ultimoAcesso = '-';
             }
           } else {
-            classesAttended = 0;
-            totalClassesConsidered = 0;
-            frequency = '0.0%';
-            frequencyValue = 0;
-            situacao = 'INCOMPLETO';
-            ultimoAcesso = '-';
-          }
-        } else {
-          const key = `${cls.id}-${cs.student_id}`;
-          const accessData = eadMap[key];
-          isFrequente = accessData?.is_frequente === true;
+            // EAD
+            const key = `${cls.id}-${cs.student_id}`;
+            const accessData = eadMap[key];
+            isFrequente = accessData?.is_frequente === true;
 
-          const allAccesses = [
-            accessData?.access_date_1,
-            accessData?.access_date_2,
-            accessData?.access_date_3,
-          ];
-          const validAccesses = allAccesses.filter(date => date !== null) as string[];
-          totalAccesses = validAccesses.length;
+            const allAccesses = [
+              accessData?.access_date_1,
+              accessData?.access_date_2,
+              accessData?.access_date_3,
+            ];
+            const validAccesses = allAccesses.filter(date => date !== null) as string[];
+            totalAccesses = validAccesses.length;
 
-          totalClassesConsidered = 3;
-          classesAttended = totalAccesses;
-          frequencyValue = (totalAccesses / 3) * 100;
-          frequency = `${frequencyValue.toFixed(1)}%`;
+            totalClassesConsidered = 3;
+            classesAttended = totalAccesses;
+            frequencyValue = (totalAccesses / 3) * 100;
+            frequency = `${frequencyValue.toFixed(1)}%`;
 
-          if (validAccesses.length > 0) {
-            const mostRecent = getMostRecentDate(validAccesses);
-            ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+            if (validAccesses.length > 0) {
+              const mostRecent = getMostRecentDate(validAccesses);
+              ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+            }
+
+            // ALTERAÇÃO: EAD não frequente mostra AUSENTE
+            situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
           }
 
-          situacao = isFrequente ? 'FREQUENTE' : 'INCOMPLETO';
+          allReportData.push({
+            unitId,
+            unitName,
+            studentName: cs.students?.full_name || 'Nome não informado',
+            studentCpf: cs.students?.cpf || '',
+            className: cls.name,
+            classId: cls.id,
+            cycleName: cls.cycles?.name || 'Sem ciclo',
+            cycleId: cls.cycles?.id || '',
+            modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+            classesAttended,
+            totalClassesConsidered,
+            ultimoAcesso,
+            frequency,
+            frequencyValue,
+            situacao,
+            totalAccesses,
+            isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
+            enrollmentDate: enrollmentDate || undefined,
+            enrollmentType,
+          });
         }
-
-        allReportData.push({
-          unitId,
-          unitName,
-          studentName: cs.students?.full_name || 'Nome não informado',
-          studentCpf: cs.students?.cpf || '',
-          className: cls.name,
-          classId: cls.id,
-          cycleName: cls.cycles?.name || 'Sem ciclo',
-          cycleId: cls.cycles?.id || '',
-          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
-          classesAttended,
-          totalClassesConsidered,
-          ultimoAcesso,
-          frequency,
-          frequencyValue,
-          situacao,
-          totalAccesses,
-          isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
-          enrollmentDate: enrollmentDate || undefined,
-          enrollmentType,
-        });
       }
+
+      console.log(`📊 Total de registros gerados: ${allReportData.length}`);
+
+      allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+      setReportData(allReportData);
+      applyFilters();
+
+    } catch (error) {
+      console.error('❌ Erro ao gerar relatório:', error);
+      alert('Erro ao carregar dados. Tente novamente.');
+    } finally {
+      setLoading(false);
+      setShouldGenerateReport(false);
     }
-
-    console.log(`📊 Total de registros gerados: ${allReportData.length}`);
-
-    allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-    setReportData(allReportData);
-    applyFilters();
-
-  } catch (error) {
-    console.error('❌ Erro ao gerar relatório:', error);
-    alert('Erro ao carregar dados. Tente novamente.');
-  } finally {
-    setLoading(false);
-    setShouldGenerateReport(false);
-  }
-};
+  };
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -553,9 +563,9 @@ const generateReport = async () => {
       row.ultimoAcesso,
       row.frequency,
       row.modality.includes('EAD')
-        ? (row.isFrequente ? 'FREQUENTE (manual)' : 'NÃO FREQUENTE (manual)')
+        ? (row.isFrequente ? 'FREQUENTE (manual)' : 'AUSENTE (manual)')
         : 'N/A',
-      row.situacao,
+      row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -573,231 +583,232 @@ const generateReport = async () => {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
- // Exportar para PDF
-const exportToPDF = async () => {
-  if (!reportRef.current || filteredReportData.length === 0) return;
+  // Exportar para PDF
+  const exportToPDF = async () => {
+    if (!reportRef.current || filteredReportData.length === 0) return;
 
-  const pdf = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4',
-  });
-
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 10;
-  const contentWidth = pageWidth - 2 * margin;
-
-  const createTableElement = (startRow: number, endRow: number) => {
-    const tableElement = document.createElement('table');
-    tableElement.style.width = '100%';
-    tableElement.style.borderCollapse = 'collapse';
-    tableElement.style.fontSize = '8px';
-    tableElement.style.fontFamily = 'Arial, sans-serif';
-
-    const thead = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-
-    // HEADERS ATUALIZADOS: ALUNO + demais, sem MATRÍCULA
-    const headers = [
-      'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
-      'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
-    ];
-
-    headers.forEach(headerText => {
-      const th = document.createElement('th');
-      th.textContent = headerText;
-      th.style.padding = '4px 2px';
-      th.style.backgroundColor = '#1e293b';
-      th.style.color = 'white';
-      th.style.border = '1px solid #334155';
-      th.style.textAlign = 'left';
-      th.style.fontWeight = 'bold';
-      th.style.fontSize = '8px';
-      headerRow.appendChild(th);
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
     });
-    thead.appendChild(headerRow);
-    tableElement.appendChild(thead);
 
-    const tbody = document.createElement('tbody');
-    for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
-      const row = filteredReportData[i];
-      const tr = document.createElement('tr');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const contentWidth = pageWidth - 2 * margin;
 
-      // Células na nova ordem: ALUNO, TURMA, CICLO, MODALIDADE, ...
-      const cells = [
-        row.studentName.substring(0, 30),               // ALUNO (com limite)
-        row.className.substring(0, 15),                 // TURMA
-        row.cycleName.substring(0, 15),                 // CICLO
-        row.modality.includes('EAD') ? 'EAD' : 'VC',    // MODALIDADE (abreviada)
-        row.modality.includes('EAD')                    // AULAS/ACESSOS
-          ? `${row.totalAccesses}/3`
-          : `${row.classesAttended}/${row.totalClassesConsidered}`,
-        row.ultimoAcesso,                                // ÚLTIMO ACESSO
-        row.frequency,                                   // FREQ.
-        row.modality.includes('EAD')                     // STATUS EAD
-          ? (row.isFrequente ? 'FREQ' : 'NÃO FREQ')
-          : '-',
-        row.situacao,                                    // SITUAÇÃO
+    const createTableElement = (startRow: number, endRow: number) => {
+      const tableElement = document.createElement('table');
+      tableElement.style.width = '100%';
+      tableElement.style.borderCollapse = 'collapse';
+      tableElement.style.fontSize = '8px';
+      tableElement.style.fontFamily = 'Arial, sans-serif';
+
+      const thead = document.createElement('thead');
+      const headerRow = document.createElement('tr');
+
+      const headers = [
+        'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
+        'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
       ];
 
-      cells.forEach((cellText, idx) => {
-        const td = document.createElement('td');
-        td.textContent = cellText;
-        td.style.padding = '3px 2px';
-        td.style.border = '1px solid #cbd5e1';
-        td.style.fontSize = '7px';
-        td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
-
-        // Destaque para a coluna SITUAÇÃO (índice 8)
-        if (idx === 8) {
-          td.style.backgroundColor = row.situacao === 'FREQUENTE' ? '#dcfce7' : '#fee2e2';
-          td.style.color = row.situacao === 'FREQUENTE' ? '#166534' : '#991b1b';
-          td.style.fontWeight = 'bold';
-          td.style.textAlign = 'center';
-        }
-        // Alinhamento para colunas numéricas
-        if (idx === 4 || idx === 5 || idx === 6) {
-          td.style.textAlign = 'center';
-        }
-        tr.appendChild(td);
+      headers.forEach(headerText => {
+        const th = document.createElement('th');
+        th.textContent = headerText;
+        th.style.padding = '4px 2px';
+        th.style.backgroundColor = '#1e293b';
+        th.style.color = 'white';
+        th.style.border = '1px solid #334155';
+        th.style.textAlign = 'left';
+        th.style.fontWeight = 'bold';
+        th.style.fontSize = '8px';
+        headerRow.appendChild(th);
       });
+      thead.appendChild(headerRow);
+      tableElement.appendChild(thead);
 
-      tbody.appendChild(tr);
+      const tbody = document.createElement('tbody');
+      for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
+        const row = filteredReportData[i];
+        const tr = document.createElement('tr');
+
+        const cells = [
+          row.studentName.substring(0, 30),
+          row.className.substring(0, 15),
+          row.cycleName.substring(0, 15),
+          row.modality.includes('EAD') ? 'EAD' : 'VC',
+          row.modality.includes('EAD')
+            ? `${row.totalAccesses}/3`
+            : `${row.classesAttended}/${row.totalClassesConsidered}`,
+          row.ultimoAcesso,
+          row.frequency,
+          row.modality.includes('EAD')
+            ? (row.isFrequente ? 'FREQ' : 'AUSENTE')
+            : '-',
+          row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
+        ];
+
+        cells.forEach((cellText, idx) => {
+          const td = document.createElement('td');
+          td.textContent = cellText;
+          td.style.padding = '3px 2px';
+          td.style.border = '1px solid #cbd5e1';
+          td.style.fontSize = '7px';
+          td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+
+          if (idx === 8) {
+            if (row.modality.includes('EAD') && !row.isFrequente) {
+              td.style.backgroundColor = '#fed7aa';
+              td.style.color = '#9b2c1d';
+            } else if (row.situacao === 'FREQUENTE') {
+              td.style.backgroundColor = '#dcfce7';
+              td.style.color = '#166534';
+            } else if (row.situacao === 'INCOMPLETO') {
+              td.style.backgroundColor = '#fee2e2';
+              td.style.color = '#991b1b';
+            }
+            td.style.fontWeight = 'bold';
+            td.style.textAlign = 'center';
+          }
+          if (idx === 4 || idx === 5 || idx === 6) {
+            td.style.textAlign = 'center';
+          }
+          tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+      }
+      tableElement.appendChild(tbody);
+
+      return tableElement;
+    };
+
+    const rowsPerPage = 18;
+    const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
+
+    for (let page = 0; page < totalPages; page++) {
+      if (page > 0) pdf.addPage();
+
+      try {
+        pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
+      } catch (e) {
+        console.warn('Logo não pôde ser carregada');
+      }
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(30, 41, 59);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
+
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
+
+      pdf.setDrawColor(203, 213, 225);
+      pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
+
+      let yPos = margin + 26;
+      pdf.setFontSize(9);
+      pdf.setTextColor(51, 65, 85);
+
+      const filterInfo: string[] = [];
+
+      const selectedCycle = cycles.find(c => c.id === filters.cycleId);
+      if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
+
+      const selectedUnit = units.find(u => u.id === filters.unitId);
+      if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
+
+      const selectedClass = classes.find(c => c.id === filters.classId);
+      if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
+
+      if (filters.modality !== 'all') {
+        filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
+      }
+
+      if (filters.startDate && filters.endDate) {
+        filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
+      }
+
+      if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
+
+      pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
+
+      yPos += 8;
+
+      pdf.setFillColor(59, 130, 246);
+      pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text('Total', margin + 5, yPos + 5);
+      pdf.setFontSize(10);
+      pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
+
+      pdf.setFillColor(34, 197, 94);
+      pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text('FREQUÊNCIA', margin + 60, yPos + 5);
+      pdf.setFontSize(10);
+      pdf.text(stats.frequentes.toString(), margin + 70, yPos + 11);
+
+      pdf.setFillColor(239, 68, 68);
+      pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text('INCOMPLETOS/AUSENTES', margin + 105, yPos + 5);
+      pdf.setFontSize(10);
+      pdf.text(stats.incompletos.toString(), margin + 115, yPos + 11);
+
+      pdf.setTextColor(100, 116, 139);
+      pdf.setFontSize(8);
+      pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
+
+      yPos += 20;
+
+      const tableStartY = yPos;
+      const startRow = page * rowsPerPage;
+      const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
+
+      if (startRow < filteredReportData.length) {
+        const tableElement = createTableElement(startRow, endRow);
+
+        const tempDiv = document.createElement('div');
+        tempDiv.style.position = 'absolute';
+        tempDiv.style.left = '-9999px';
+        tempDiv.style.top = '0';
+        tempDiv.style.width = `${contentWidth * 3.78}px`;
+        tempDiv.appendChild(tableElement);
+        document.body.appendChild(tempDiv);
+
+        const canvas = await html2canvas(tableElement, {
+          scale: 2,
+          logging: false,
+          backgroundColor: '#ffffff',
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+        const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+        pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
+
+        document.body.removeChild(tempDiv);
+      }
+
+      pdf.setFontSize(8);
+      pdf.setTextColor(148, 163, 184);
+      pdf.text(
+        `Página ${page + 1} de ${totalPages} • Total de registros: ${filteredReportData.length}`,
+        pageWidth / 2,
+        pageHeight - 5,
+        { align: 'center' }
+      );
     }
-    tableElement.appendChild(tbody);
 
-    return tableElement;
+    pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
   };
-
-  const rowsPerPage = 18;
-  const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
-
-  for (let page = 0; page < totalPages; page++) {
-    if (page > 0) pdf.addPage();
-
-    try {
-      pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
-    } catch (e) {
-      console.warn('Logo não pôde ser carregada');
-    }
-
-    pdf.setFontSize(16);
-    pdf.setTextColor(30, 41, 59);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
-
-    pdf.setFontSize(10);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
-
-    pdf.setDrawColor(203, 213, 225);
-    pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
-
-    let yPos = margin + 26;
-    pdf.setFontSize(9);
-    pdf.setTextColor(51, 65, 85);
-
-    const filterInfo: string[] = [];
-
-    const selectedCycle = cycles.find(c => c.id === filters.cycleId);
-    if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
-
-    const selectedUnit = units.find(u => u.id === filters.unitId);
-    if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
-
-    const selectedClass = classes.find(c => c.id === filters.classId);
-    if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
-
-    if (filters.modality !== 'all') {
-      filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
-    }
-
-    if (filters.startDate && filters.endDate) {
-      filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
-    }
-
-    if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
-
-    pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
-
-    yPos += 8;
-
-    // CORREÇÃO DOS CARDS - Escrita correta conforme a imagem
-   pdf.setFillColor(59, 130, 246);
-pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
-pdf.setTextColor(255, 255, 255);
-pdf.setFontSize(8);
-pdf.text('Total', margin + 5, yPos + 5);
-pdf.setFontSize(10);
-pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
-
-pdf.setFillColor(34, 197, 94);
-pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
-pdf.setTextColor(255, 255, 255);
-pdf.setFontSize(8);
-// CORRIGIDO: Apenas "FREQUÊNCIA" no card verde
-pdf.text('FREQUÊNCIA', margin + 60, yPos + 5);
-pdf.setFontSize(10);
-pdf.text(stats.frequentes.toString(), margin + 70, yPos + 11);
-
-pdf.setFillColor(239, 68, 68);
-pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
-pdf.setTextColor(255, 255, 255);
-pdf.setFontSize(8);
-// CORRIGIDO: Apenas "INCOMPLETO" no card vermelho
-pdf.text('INCOMPLETO', margin + 110, yPos + 5);
-pdf.setFontSize(10);
-pdf.text(stats.incompletos.toString(), margin + 110, yPos + 11);
-
-pdf.setTextColor(100, 116, 139);
-pdf.setFontSize(8);
-pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
-
-    yPos += 20;
-
-    const tableStartY = yPos;
-    const startRow = page * rowsPerPage;
-    const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
-
-    if (startRow < filteredReportData.length) {
-      const tableElement = createTableElement(startRow, endRow);
-
-      const tempDiv = document.createElement('div');
-      tempDiv.style.position = 'absolute';
-      tempDiv.style.left = '-9999px';
-      tempDiv.style.top = '0';
-      tempDiv.style.width = `${contentWidth * 3.78}px`;
-      tempDiv.appendChild(tableElement);
-      document.body.appendChild(tempDiv);
-
-      const canvas = await html2canvas(tableElement, {
-        scale: 2,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const imgHeight = (canvas.height * contentWidth) / canvas.width;
-
-      pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
-
-      document.body.removeChild(tempDiv);
-    }
-
-    pdf.setFontSize(8);
-    pdf.setTextColor(148, 163, 184);
-    pdf.text(
-      `Página ${page + 1} de ${totalPages} • Total de registros: ${filteredReportData.length}`,
-      pageWidth / 2,
-      pageHeight - 5,
-      { align: 'center' }
-    );
-  }
-
-  pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
-};
 
   const displayData = filteredReportData;
 
@@ -937,7 +948,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
               >
                 <option value="all">Todas</option>
                 <option value="frequentes">Apenas Frequentes</option>
-                <option value="incompletos">Apenas Incompletos</option>
+                <option value="incompletos">Apenas Incompletos/Ausentes</option>
               </select>
             </div>
           </div>
@@ -1008,7 +1019,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
         </div>
 
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-sm text-red-600 font-medium">Incompletos (&lt;60%)</p>
+          <p className="text-sm text-red-600 font-medium">Incompletos/Ausentes (&lt;60%)</p>
           <p className="text-2xl font-bold text-red-700">{stats.incompletos}</p>
           <p className="text-xs text-red-600 mt-1">{incompletosPercentage.toFixed(1)}% do total</p>
         </div>
@@ -1036,7 +1047,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
                 Frequentes: {stats.frequentes} ({frequentesPercentage.toFixed(1)}%)
               </span>
               <span className="text-red-600 font-medium">
-                Incompletos: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)
+                Incompletos/Ausentes: {stats.incompletos} ({incompletosPercentage.toFixed(1)}%)
               </span>
             </div>
           </div>
@@ -1067,7 +1078,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
         </div>
       )}
 
-      {/* Tabela de Resultados - COM ALUNO E SEM MATRÍCULA */}
+      {/* Tabela de Resultados */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1115,11 +1126,12 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
                   {/* COLUNA STATUS EAD */}
                   {row.modality.includes('EAD') ? (
                     <td className="px-4 py-2 text-sm text-center">
-                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${row.isFrequente
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                        row.isFrequente
                           ? 'bg-green-100 text-green-800 border border-green-300'
-                          : 'bg-slate-100 text-slate-600 border border-slate-300'
-                        }`}>
-                        {row.isFrequente ? '✅ FREQUENTE' : '⚪ NÃO FREQUENTE'}
+                          : 'bg-orange-100 text-orange-800 border border-orange-300'
+                      }`}>
+                        {row.isFrequente ? '✅ FREQUENTE' : '⚠️ AUSENTE'}
                       </span>
                     </td>
                   ) : (
@@ -1131,11 +1143,16 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
                   {/* COLUNA SITUAÇÃO */}
                   <td className="px-4 py-2 text-sm text-center">
                     <div className="flex flex-col items-center">
-                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold ${row.situacao === 'FREQUENTE'
-                          ? 'bg-green-500 text-white shadow-md'
-                          : 'bg-red-500 text-white shadow-md'
-                        }`}>
-                        {row.situacao}
+                      <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold shadow-md ${
+                        row.situacao === 'FREQUENTE'
+                          ? 'bg-green-500 text-white'
+                          : row.modality.includes('EAD')
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-red-500 text-white'
+                      }`}>
+                        {row.modality.includes('EAD') && row.situacao !== 'FREQUENTE'
+                          ? 'AUSENTE'
+                          : row.situacao}
                       </span>
                       {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
                         <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
@@ -1147,7 +1164,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
                 </tr>
               ))}
 
-              {/* Linha de "nenhum dado encontrado" - colSpan 9 */}
+              {/* Linha de "nenhum dado encontrado" */}
               {displayData.length === 0 && !loading && !initialLoading && (
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
@@ -1162,7 +1179,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
                 </tr>
               )}
 
-              {/* Linha de loading - colSpan 9 */}
+              {/* Linha de loading */}
               {loading && (
                 <tr>
                   <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
@@ -1184,7 +1201,7 @@ pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin +
           <div>
             Total de registros: {displayData.length} •
             Frequentes: {stats.frequentes} •
-            Incompletos: {stats.incompletos} •
+            Incompletos/Ausentes: {stats.incompletos} •
             EAD: {stats.totalEAD} •
             VC: {stats.totalVideoconferencia}
           </div>
