@@ -2643,12 +2643,10 @@ function VideoconferenciaAttendance({
 
       if (error) throw error;
 
-      // Feedback imediato: próximo número = aulaAtual + 1
-      setClassNumber(aulaAtual + 1);
-      setAttendance({});
-
       // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
       await reloadTotalClasses();
+      await loadNextClassNumber();
+      setAttendance({});
       onUpdate();
 
       alert(`✅ Aula ${aulaAtual} registrada!`);
