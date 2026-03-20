@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Calendar, Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye, Award, User, Search } from 'lucide-react';
+import { Plus, Calendar, CreditCard as Edit2, Save, X, GraduationCap, Users, CheckSquare, Eye, Award, User, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { CertificateModal } from './CertificateModal';
@@ -1945,12 +1945,13 @@ const handleSaveEditEnrollment = async () => {
                 onUpdate={() => {
                   loadClassStudents();
                   loadTotalClassesGiven();
-               loadNextClassNumber(); // ✅ adicione esta linha
-    }}
-    totalClassesGiven={totalClassesGiven}
-    nextClassNumber={nextClassNumber} // ✅ passe a prop
-  />
-)}
+                  loadNextClassNumber();
+                }}
+                totalClassesGiven={totalClassesGiven}
+                nextClassNumber={nextClassNumber}
+              />
+            </div>
+          )}
 
           {tab === 'attendance' && classData.modality === 'EAD' && (
             <div className="min-h-[500px]">
