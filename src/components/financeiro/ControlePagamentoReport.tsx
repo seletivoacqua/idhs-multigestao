@@ -59,7 +59,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
   const [exporting, setExporting] = useState<ExportType>('none');
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<string | null>(null);
-  
+
   const [filters, setFilters] = useState<Filters>({
     startDate: new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
@@ -82,8 +82,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
     }
   }, []);
 
-  // Função para obter data com horário para query
-  const getDateForQuery = useCallback((date: string, isEnd: boolean): string => {
+  // Função para obter data com horário para query (retorna null se vazia)
+  const getDateForQuery = useCallback((date: string, isEnd: boolean): string | null => {
+    if (!date) return null;
     return isEnd ? `${date}T23:59:59` : `${date}T00:00:00`;
   }, []);
 
@@ -117,6 +118,12 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       return;
     }
 
+    // Validar datas preenchidas
+    if (!filters.startDate || !filters.endDate) {
+      setError('Selecione as datas inicial e final');
+      return;
+    }
+
     if (!validateDates()) return;
 
     setLoading(true);
@@ -133,23 +140,33 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       const startDateTime = getDateForQuery(filters.startDate, false);
       const endDateTime = getDateForQuery(filters.endDate, true);
 
-      switch (filters.dateFilterType) {
-        case 'issue':
-          query = query
-            .gte('issue_date', startDateTime)
-            .lte('issue_date', endDateTime);
-          break;
-        case 'due':
-          query = query
-            .gte('due_date', startDateTime)
-            .lte('due_date', endDateTime);
-          break;
-        case 'payment':
-          query = query
-            .not('payment_date', 'is', null)
-            .gte('payment_date', startDateTime)
-            .lte('payment_date', endDateTime);
-          break;
+      // Só aplica filtros se as datas forem válidas
+      if (startDateTime) {
+        switch (filters.dateFilterType) {
+          case 'issue':
+            query = query.gte('issue_date', startDateTime);
+            break;
+          case 'due':
+            query = query.gte('due_date', startDateTime);
+            break;
+          case 'payment':
+            query = query.not('payment_date', 'is', null).gte('payment_date', startDateTime);
+            break;
+        }
+      }
+
+      if (endDateTime) {
+        switch (filters.dateFilterType) {
+          case 'issue':
+            query = query.lte('issue_date', endDateTime);
+            break;
+          case 'due':
+            query = query.lte('due_date', endDateTime);
+            break;
+          case 'payment':
+            query = query.lte('payment_date', endDateTime);
+            break;
+        }
       }
 
       if (filters.invoiceNumber) {
@@ -175,6 +192,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       if (queryError) {
         console.error('Error loading invoices:', queryError);
         setError('Erro ao carregar notas fiscais');
+        setInvoices([]);
         return;
       }
 
@@ -189,32 +207,34 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
     } catch (error) {
       console.error('Error generating report:', error);
       setError('Erro ao gerar relatório');
+      setInvoices([]);
     } finally {
       setLoading(false);
     }
   }, [user, filters, validateDates, getDateForQuery]);
 
-  // Carregar relatório inicial
+  // Carregar relatório inicial (apenas uma vez, quando o modal abrir)
   useEffect(() => {
     if (user) {
       handleGenerateReport().finally(() => setInitialLoading(false));
     }
-  }, [user, handleGenerateReport]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]); // Executa apenas quando user muda (ou na montagem)
 
   // Cálculos com useMemo
   const totals = useMemo(() => {
     const pago = invoices
       .filter(inv => inv.payment_status === 'PAGO')
       .reduce((sum, inv) => sum + (inv.paid_value || inv.net_value), 0);
-    
+
     const emAberto = invoices
       .filter(inv => inv.payment_status === 'EM ABERTO')
       .reduce((sum, inv) => sum + inv.net_value, 0);
-    
+
     const agendado = invoices
       .filter(inv => inv.payment_status === 'AGENDADO')
       .reduce((sum, inv) => sum + inv.net_value, 0);
-    
+
     const atrasado = invoices
       .filter(inv => inv.payment_status === 'ATRASADO')
       .reduce((sum, inv) => sum + inv.net_value, 0);
@@ -259,9 +279,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
   // Exportação para PDF
   const exportToPDF = useCallback(() => {
     if (!validateExportData()) return;
-    
+
     setExporting('pdf');
-    
+
     try {
       const doc = new jsPDF({ orientation: 'landscape' });
 
@@ -290,7 +310,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         due: 'Data de Vencimento',
         payment: 'Data de Pagamento'
       }[filters.dateFilterType];
-      
+
       doc.text(
         `${tipoDataTexto}: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
         pageWidth / 2,
@@ -336,7 +356,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       yPos += 3;
       doc.line(margin, yPos, pageWidth - margin, yPos);
       yPos += 4;
-      
+
       doc.setFont(undefined, 'normal');
 
       // Dados
@@ -344,7 +364,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         if (yPos > pageHeight - 25) {
           doc.addPage('landscape');
           yPos = 25;
-          
+
           // Recriar cabeçalho
           doc.setFontSize(8);
           doc.setFont(undefined, 'bold');
@@ -362,12 +382,12 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         }
 
         doc.text(invoice.item_number.toString(), colPositions.item, yPos);
-        
-        const unidade = invoice.unit_name.length > 20 
-          ? invoice.unit_name.substring(0, 17) + '...' 
+
+        const unidade = invoice.unit_name.length > 20
+          ? invoice.unit_name.substring(0, 17) + '...'
           : invoice.unit_name;
         doc.text(unidade, colPositions.unidade, yPos);
-        
+
         doc.text(invoice.invoice_number, colPositions.nf, yPos);
         doc.text(formatDisplayDate(invoice.issue_date), colPositions.emissao, yPos);
         doc.text(formatDisplayDate(invoice.due_date), colPositions.vencimento, yPos);
@@ -406,9 +426,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
   // Exportação para Excel
   const exportToExcel = useCallback(() => {
     if (!validateExportData()) return;
-    
+
     setExporting('excel');
-    
+
     try {
       // Dados detalhados
       const data = invoices.map((invoice) => ({
@@ -531,9 +551,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
               </label>
               <select
                 value={filters.dateFilterType}
-                onChange={(e) => setFilters({ 
-                  ...filters, 
-                  dateFilterType: e.target.value as DateFilterType 
+                onChange={(e) => setFilters({
+                  ...filters,
+                  dateFilterType: e.target.value as DateFilterType
                 })}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
@@ -801,7 +821,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
                   </tbody>
                 </table>
               </div>
-              
+
               {/* Rodapé */}
               <div className="bg-slate-50 px-4 py-2 border-t border-slate-200 text-xs text-slate-500">
                 Total de {invoices.length} nota(s) fiscal(is) encontrada(s)
