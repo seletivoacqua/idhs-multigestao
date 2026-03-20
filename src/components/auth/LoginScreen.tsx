@@ -1,21 +1,72 @@
-import { useState } from 'react';
-import { Building2, GraduationCap, LogIn, UserPlus } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Building2, GraduationCap, LogIn, UserPlus, Key } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserModule } from '../../lib/supabase';
 import logoImg from '../../assets/image.png';
+import { supabase } from '../../lib/supabase';
 
 export function LoginScreen() {
   const [selectedModule, setSelectedModule] = useState<UserModule | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [isResetPassword, setIsResetPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
-  const { signIn, signUp, resetPassword } = useAuth();
+  const { signIn, signUp, resetPassword, updatePassword } = useAuth();
+
+  useEffect(() => {
+    const checkResetToken = async () => {
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const type = hashParams.get('type');
+
+      if (type === 'recovery') {
+        setIsResetPassword(true);
+      }
+    };
+
+    checkResetToken();
+  }, []);
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (newPassword !== confirmPassword) {
+      setError('As senhas não coincidem');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setError('A senha deve ter no mínimo 6 caracteres');
+      return;
+    }
+
+    setError('');
+    setSuccessMessage('');
+    setLoading(true);
+
+    try {
+      await updatePassword(newPassword);
+      setSuccessMessage('Senha atualizada com sucesso! Redirecionando...');
+
+      setTimeout(() => {
+        window.location.hash = '';
+        setIsResetPassword(false);
+        setNewPassword('');
+        setConfirmPassword('');
+      }, 2000);
+    } catch (err: any) {
+      setError(err.message || 'Erro ao atualizar senha');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +93,80 @@ export function LoginScreen() {
     }
   };
 
+  if (isResetPassword) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+        <div className="max-w-md w-full">
+          <div className="bg-white rounded-2xl shadow-xl p-8">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                <Key className="w-8 h-8 text-blue-600" />
+              </div>
+            </div>
+
+            <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">
+              Redefinir Senha
+            </h2>
+            <p className="text-center text-slate-600 mb-6">
+              Digite sua nova senha
+            </p>
+
+            <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Nova Senha
+                </label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Confirmar Nova Senha
+                </label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
+
+              {successMessage && (
+                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+                  {successMessage}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 rounded-lg font-semibold text-white flex items-center justify-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Key className="w-5 h-5" />
+                <span>{loading ? 'Atualizando...' : 'Atualizar Senha'}</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!selectedModule) {
     return (
       <div className="min-h-screen bg-white from-slate-50 to-slate-100 flex items-center justify-center p-4">
@@ -49,7 +174,7 @@ export function LoginScreen() {
           <div className="text-center mb-12">
             <img src={logoImg} alt="IDHS" className="h-24 mx-auto mb-6" />
             <h1 className="text-4xl font-bold text-slate-600 mb-3">IDHS Multigestão</h1>
-            
+
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
