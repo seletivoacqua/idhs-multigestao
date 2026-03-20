@@ -68,21 +68,14 @@ function validateEADAccess(
 
 // Função para contar aulas já realizadas
 async function getTotalClassesGiven(classId: string): Promise<number> {
-  const { data, count } = await supabase
+  const { data } = await supabase
     .from('attendance')
-    .select('class_number', { count: 'exact' })
-    .eq('class_id', classId)
-    .limit(10000);
+    .select('class_number')
+    .eq('class_id', classId);
 
-  console.log('🔍 getTotalClassesGiven - class_id:', classId);
-  console.log('🔍 Total de registros no banco:', count);
-  console.log('🔍 Dados retornados:', data?.length, 'registros');
+  if (!data || data.length === 0) return 0;
 
-  if (!data) return 0;
-
-  const uniqueClasses = [...new Set(data.map(a => a.class_number))].sort((a, b) => a - b);
-  console.log('🔍 Números únicos de aula:', uniqueClasses);
-  console.log('🔍 Total calculado:', uniqueClasses.length);
+  const uniqueClasses = [...new Set(data.map(a => a.class_number))];
   return uniqueClasses.length;
 }
 
@@ -2908,6 +2901,7 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
   const [editData, setEditData] = useState<{ classNumber: number; classDate: string; present: boolean } | null>(null);
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
+  const [totalClassesInClass, setTotalClassesInClass] = useState<number>(0);
 
   useEffect(() => {
     loadCycleData();
@@ -2946,6 +2940,16 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     }
 
     setAttendanceRecords(data || []);
+
+    const { data: allClassData } = await supabase
+      .from('attendance')
+      .select('class_number')
+      .eq('class_id', classData.id);
+
+    if (allClassData) {
+      const uniqueNumbers = [...new Set(allClassData.map(a => a.class_number))];
+      setTotalClassesInClass(uniqueNumbers.length);
+    }
   };
 
   const handleEdit = (record: any) => {
@@ -3025,9 +3029,8 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
     alert('Frequência excluída com sucesso!');
   };
 
-  const uniqueClasses = [...new Set(attendanceRecords.map(r => r.class_number))];
-  const totalClassesGiven = uniqueClasses.length;
-  
+  const totalClassesGiven = totalClassesInClass || [...new Set(attendanceRecords.map(r => r.class_number))].length;
+
   const presentCount = attendanceRecords.filter(r => r.present).length;
   const percentage = totalClassesGiven > 0 ? (presentCount / totalClassesGiven) * 100 : 0;
 
