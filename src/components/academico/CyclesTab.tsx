@@ -677,8 +677,8 @@ export function CyclesTab() {
 
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl 
-            w-[95vw] sm:w-[80vw] md:w-[60vw] lg:w-[50vw] xl:w-[40vw] max-w-2xl 
+          <div className="bg-white rounded-xl shadow-xl
+            w-[95vw] sm:w-[85vw] md:w-[70vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
             max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <h3 className="text-xl font-bold text-slate-800 mb-4">
@@ -904,8 +904,8 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl 
-        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-7xl 
+      <div className="bg-white rounded-xl shadow-xl
+        w-[98vw] md:w-[95vw] lg:w-[92vw] xl:w-[88vw] 2xl:w-[85vw] max-w-[1900px]
         p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
         
         <div className="flex justify-between items-start mb-6">
@@ -1013,8 +1013,8 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 
         {showClassModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-            <div className="bg-white rounded-xl shadow-xl 
-              w-[95vw] md:w-[80vw] lg:w-[70vw] xl:w-[60vw] max-w-3xl
+            <div className="bg-white rounded-xl shadow-xl
+              w-[95vw] md:w-[85vw] lg:w-[75vw] xl:w-[65vw] max-w-4xl
               max-h-[90vh] overflow-y-auto">
               <div className="p-6">
                 <h3 className="text-xl font-bold text-slate-800 mb-4">Nova Turma</h3>
@@ -1190,10 +1190,12 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     loadNextClassNumber(); // <-- ADICIONADO: carrega o próximo número já na abertura
   }, []);
 
-  // Efeito para recarregar o próximo número sempre que a aba mudar para 'attendance'
+  // Efeito para recarregar dados sempre que a aba mudar para 'attendance'
   useEffect(() => {
     if (tab === 'attendance') {
-      loadNextClassNumber(); // <-- ADICIONADO: atualiza ao entrar na aba de frequência
+      loadNextClassNumber();
+      loadTotalClassesGiven();
+      loadClassStudents();
     }
   }, [tab]);
 
@@ -1724,8 +1726,8 @@ const handleSaveEditEnrollment = async () => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl 
-        w-[95vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] max-w-6xl
+      <div className="bg-white rounded-xl shadow-xl
+        w-[98vw] md:w-[95vw] lg:w-[92vw] xl:w-[88vw] 2xl:w-[85vw] max-w-[1800px]
         p-4 md:p-6 my-4 md:my-8 max-h-[95vh] md:max-h-[90vh] overflow-y-auto">
         
         <div className="flex justify-between items-start mb-6">
@@ -2215,8 +2217,8 @@ const handleSaveEditEnrollment = async () => {
       {/* NOVO: Modal de edição de matrícula */}
       {editEnrollmentModal?.show && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[70] p-4">
-          <div className="bg-white rounded-xl shadow-xl 
-            w-[95vw] md:w-[60vw] lg:w-[40vw] max-w-2xl
+          <div className="bg-white rounded-xl shadow-xl
+            w-[95vw] md:w-[70vw] lg:w-[55vw] xl:w-[45vw] max-w-3xl
             max-h-[90vh] overflow-y-auto">
             
             <div className="p-6">
@@ -2335,8 +2337,8 @@ const handleSaveEditEnrollment = async () => {
 
       {showEnrollmentModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-xl shadow-xl 
-            w-[95vw] md:w-[80vw] lg:w-[60vw] xl:w-[50vw] max-w-3xl
+          <div className="bg-white rounded-xl shadow-xl
+            w-[95vw] md:w-[85vw] lg:w-[70vw] xl:w-[60vw] max-w-4xl
             max-h-[90vh] overflow-y-auto">
             
             <div className="p-6">
@@ -3003,8 +3005,8 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-xl shadow-xl 
-        w-[95vw] md:w-[85vw] lg:w-[75vw] xl:w-[65vw] max-w-5xl
+      <div className="bg-white rounded-xl shadow-xl
+        w-[98vw] md:w-[90vw] lg:w-[85vw] xl:w-[80vw] 2xl:w-[75vw] max-w-[1600px]
         max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <div className="flex justify-between items-start mb-6">

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Download, Edit2, Save, Upload, Trash2 } from 'lucide-react';
+import { X, Download, CreditCard as Edit2, Save, Upload, Trash2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
@@ -314,7 +314,7 @@ export function CertificateModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[70] p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-[1900px] max-h-[95vh] overflow-y-auto">
         <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
           <div>
             <h3 className="text-2xl font-bold text-slate-800">Certificado de Conclusão</h3>
