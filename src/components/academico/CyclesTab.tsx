@@ -1220,6 +1220,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   const loadTotalClassesGiven = async () => {
     const total = await getTotalClassesGiven(classData.id);
+    console.log('Total de aulas realizadas carregado:', total);
     setTotalClassesGiven(total);
   };
 
@@ -2501,9 +2502,10 @@ function VideoconferenciaAttendance({
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
   const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
 
-  // Carrega as datas do ciclo
+  // Carrega as datas do ciclo e força atualização dos dados
   useEffect(() => {
     loadCycleDates();
+    onUpdate();
   }, []);
 
   // Atualiza o número da aula quando o próximo número calculado no pai mudar
@@ -2700,7 +2702,7 @@ function VideoconferenciaAttendance({
             className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
           <p className="text-xs text-slate-500 mt-1">
-            Próxima aula: {totalClassesGiven + 1}
+            Próxima aula: {nextClassNumber}
           </p>
         </div>
         <div>
