@@ -1159,6 +1159,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [cycleStatus, setCycleStatus] = useState<string>('');
   const [totalClassesGiven, setTotalClassesGiven] = useState<number>(0);
+  const [nextClassNumber, setNextClassNumber] = useState(1);
   const { user } = useAuth();
 
   // NOVO: Estado para controle do modal de edição de matrícula
@@ -1169,12 +1170,32 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     enrollmentType: 'regular' | 'exceptional';
   } | null>(null);
 
+  // Função para buscar o próximo número de aula
+  const loadNextClassNumber = async () => {
+    const { data, error } = await supabase.rpc('get_next_class_number', {
+      p_class_id: classData.id
+    });
+    if (!error && data) {
+      setNextClassNumber(data);
+      console.log('Próxima aula carregada:', data); // debug
+    }
+  };
+
+  // Efeito inicial: carrega todos os dados ao abrir o modal
   useEffect(() => {
     loadCycleData();
     loadClassStudents();
     loadAvailableStudents();
     loadTotalClassesGiven();
+    loadNextClassNumber(); // <-- ADICIONADO: carrega o próximo número já na abertura
   }, []);
+
+  // Efeito para recarregar o próximo número sempre que a aba mudar para 'attendance'
+  useEffect(() => {
+    if (tab === 'attendance') {
+      loadNextClassNumber(); // <-- ADICIONADO: atualiza ao entrar na aba de frequência
+    }
+  }, [tab]);
 
   const loadCycleData = async () => {
     const { data, error } = await supabase
@@ -1200,60 +1221,57 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     setTotalClassesGiven(total);
   };
 
- // ===========================================
-// FUNÇÃO: loadClassStudents (PARTE EAD - CORRIGIDA)
-// PROBLEMA: Usava validateEADAccess (obsoleta)
-// CORREÇÃO: Usar is_frequente do banco
-// ===========================================
+  // ===========================================
+  // FUNÇÃO: loadClassStudents (PARTE EAD - CORRIGIDA)
+  // ===========================================
+  const loadClassStudents = async () => {
+    const { data, error } = await supabase
+      .from('class_students')
+      .select('*, students(*)')
+      .eq('class_id', classData.id);
 
-const loadClassStudents = async () => {
-  const { data, error } = await supabase
-    .from('class_students')
-    .select('*, students(*)')
-    .eq('class_id', classData.id);
+    if (error) {
+      console.error('Error loading class students:', error);
+      return;
+    }
 
-  if (error) {
-    console.error('Error loading class students:', error);
-    return;
-  }
+    if (classData.modality === 'VIDEOCONFERENCIA') {
+      // Código existente para videoconferência (mantido)
+      const { data: allAttendances } = await supabase
+        .from('attendance')
+        .select('class_number, class_date')
+        .eq('class_id', classData.id)
+        .order('class_number');
 
-  if (classData.modality === 'VIDEOCONFERENCIA') {
-    // Código existente para videoconferência (mantido)
-    const { data: allAttendances } = await supabase
-      .from('attendance')
-      .select('class_number, class_date')
-      .eq('class_id', classData.id)
-      .order('class_number');
+      const uniqueClassNumbers = allAttendances 
+        ? [...new Set(allAttendances.map(a => a.class_number))]
+        : [];
+      const totalClassesGiven = uniqueClassNumbers.length;
 
-    const uniqueClassNumbers = allAttendances 
-      ? [...new Set(allAttendances.map(a => a.class_number))]
-      : [];
-    const totalClassesGiven = uniqueClassNumbers.length;
+      const studentsWithAttendance = await Promise.all(
+        (data || []).map(async (cs) => {
+          const enrollmentDate = extractDatePart(cs.enrollment_date);
+          const isExceptional = cs.enrollment_type === 'exceptional';
+          
+          const { percentage, presentCount, totalClassesToConsider, isProportional } = 
+            await calculateAttendancePercentage(
+              classData.id, 
+              cs.student_id, 
+              isExceptional ? enrollmentDate : null
+            );
 
-    const studentsWithAttendance = await Promise.all(
-      (data || []).map(async (cs) => {
-        const enrollmentDate = extractDatePart(cs.enrollment_date);
-        const isExceptional = cs.enrollment_type === 'exceptional';
-        
-        const { percentage, presentCount, totalClassesToConsider, isProportional } = 
-          await calculateAttendancePercentage(
-            classData.id, 
-            cs.student_id, 
-            isExceptional ? enrollmentDate : null
-          );
+          return {
+            ...cs,
+            attendanceCount: presentCount,
+            attendancePercentage: percentage,
+            totalClasses: totalClassesToConsider,
+            totalClassesGiven: totalClassesGiven,
+            isProportionalCalculation: isProportional,
+          };
+        })
+      );
 
-        return {
-          ...cs,
-          attendanceCount: presentCount,
-          attendancePercentage: percentage,
-          totalClasses: totalClassesToConsider,
-          totalClassesGiven: totalClassesGiven,
-          isProportionalCalculation: isProportional,
-        };
-      })
-    );
-
-    setStudents(studentsWithAttendance);
+      setStudents(studentsWithAttendance);
     
   } else {
     // ===========================================
