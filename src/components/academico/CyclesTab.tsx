@@ -1183,17 +1183,25 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
 
   // Efeito inicial: carrega todos os dados ao abrir o modal
   useEffect(() => {
-    loadCycleData();
-    loadClassStudents();
-    loadAvailableStudents();
-    loadTotalClassesGiven();
-    loadNextClassNumber(); // <-- ADICIONADO: carrega o próximo número já na abertura
-  }, []);
+    console.log('🚀 Modal aberto - carregando dados iniciais');
 
-  // Efeito para recarregar o próximo número sempre que a aba mudar para 'attendance'
+    const loadInitialData = async () => {
+      await Promise.all([
+        loadCycleData(),
+        loadClassStudents(),
+        loadAvailableStudents(),
+        loadAttendanceStats()
+      ]);
+    };
+
+    loadInitialData();
+  }, [classData.id]);
+
+  // Efeito para recarregar ao mudar de aba
   useEffect(() => {
-    if (tab === 'attendance') {
-      loadNextClassNumber(); // <-- ADICIONADO: atualiza ao entrar na aba de frequência
+    if (tab === 'attendance' || tab === 'close') {
+      console.log('🔄 Aba alterada para:', tab, '- recarregando estatísticas');
+      loadAttendanceStats();
     }
   }, [tab]);
 
@@ -1216,9 +1224,40 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     }
   };
 
-  const loadTotalClassesGiven = async () => {
-    const total = await getTotalClassesGiven(classData.id);
-    setTotalClassesGiven(total);
+  const loadAttendanceStats = async () => {
+    try {
+      console.log('📊 Carregando estatísticas da turma:', classData.id);
+
+      const { data, error } = await supabase
+        .rpc('get_class_attendance_stats', {
+          p_class_id: classData.id
+        });
+
+      if (error) {
+        console.error('Erro na RPC:', error);
+
+        // Fallback: fazer as duas consultas separadas
+        const total = await getTotalClassesGiven(classData.id);
+        const { data: nextData } = await supabase.rpc('get_next_class_number', {
+          p_class_id: classData.id
+        });
+
+        setTotalClassesGiven(total);
+        setNextClassNumber(nextData || total + 1);
+
+        console.log('📊 Fallback - aulas:', total, 'próxima:', nextData);
+        return;
+      }
+
+      // Atualizar ambos os estados com os dados do banco
+      setTotalClassesGiven(data.unique_classes);
+      setNextClassNumber(data.next_number);
+
+      console.log('📊 Estatísticas atualizadas - Aulas:', data.unique_classes, 'Próxima:', data.next_number);
+
+    } catch (error) {
+      console.error('❌ Erro ao carregar estatísticas:', error);
+    }
   };
 
   // ===========================================
@@ -1942,10 +1981,12 @@ const handleSaveEditEnrollment = async () => {
               <VideoconferenciaAttendance
                 classData={classData}
                 students={students}
-                onUpdate={() => {
-                  loadClassStudents();
-                  loadTotalClassesGiven();
-                  loadNextClassNumber();
+                onUpdate={async () => {
+                  console.log('🔄 Callback onUpdate chamado - recarregando dados');
+                  await Promise.all([
+                    loadClassStudents(),
+                    loadAttendanceStats()
+                  ]);
                 }}
                 totalClassesGiven={totalClassesGiven}
                 nextClassNumber={nextClassNumber}
@@ -2480,12 +2521,12 @@ const handleSaveEditEnrollment = async () => {
   );
 }
 
-function VideoconferenciaAttendance({ 
-  classData, 
-  students, 
-  onUpdate, 
-  totalClassesGiven, 
-  nextClassNumber 
+function VideoconferenciaAttendance({
+  classData,
+  students,
+  onUpdate,
+  totalClassesGiven,
+  nextClassNumber
 }: any) {
   const [classNumber, setClassNumber] = useState(nextClassNumber);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2499,13 +2540,12 @@ function VideoconferenciaAttendance({
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
   const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
 
-  // Carrega as datas do ciclo
   useEffect(() => {
     loadCycleDates();
   }, []);
 
-  // Atualiza o número da aula quando o próximo número calculado no pai mudar
   useEffect(() => {
+    console.log('📅 Atualizando número da aula no filho:', nextClassNumber);
     setClassNumber(nextClassNumber);
   }, [nextClassNumber]);
 
@@ -2596,7 +2636,7 @@ function VideoconferenciaAttendance({
   const handleSaveAttendance = async () => {
     if (!validateAttendance()) return;
 
-    const aulaAtual = classNumber; // valor que está no input (pode ser manual)
+    const aulaAtual = classNumber;
 
     const records = eligibleStudents.map((student: any) => ({
       class_id: classData.id,
@@ -2609,21 +2649,19 @@ function VideoconferenciaAttendance({
     try {
       const { error } = await supabase
         .from('attendance')
-        .upsert(records, { 
+        .upsert(records, {
           onConflict: 'class_id, student_id, class_number',
-          ignoreDuplicates: false 
+          ignoreDuplicates: false
         });
 
       if (error) throw error;
 
-      // Feedback imediato: próximo número = aulaAtual + 1
-      setClassNumber(aulaAtual + 1);
+      console.log('✅ Frequência salva! Recarregando dados do banco...');
       setAttendance({});
-      
-      // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
-      onUpdate();
 
-      alert(`✅ Aula ${aulaAtual} registrada!`);
+      await onUpdate();
+
+      alert(`✅ Aula ${aulaAtual} registrada com sucesso!`);
     } catch (error: any) {
       console.error(error);
       alert(`Erro: ${error.message}`);
