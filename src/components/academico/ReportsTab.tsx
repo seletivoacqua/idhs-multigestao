@@ -194,7 +194,6 @@ export function ReportsTab() {
         if (filters.situacao === 'frequentes') {
           return item.situacao === 'FREQUENTE';
         } else if (filters.situacao === 'incompletos') {
-          // Para não frequentes, verifica se é EAD (AUSENTE) ou VC (INCOMPLETO)
           if (item.modality.includes('EAD')) {
             return item.situacao === 'AUSENTE';
           } else {
@@ -239,7 +238,6 @@ export function ReportsTab() {
     try {
       console.log('🔄 Gerando relatório...');
 
-      // 1. Buscar turmas
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -268,10 +266,8 @@ export function ReportsTab() {
 
       console.log(`📚 Total de turmas: ${classes.length}`);
 
-      // 2. IDs das turmas
       const classIds = classes.map(c => c.id);
 
-      // 3. Buscar todos os alunos
       const { data: classStudents, error: studentsError } = await supabase
         .from('class_students')
         .select(`
@@ -305,18 +301,15 @@ export function ReportsTab() {
 
       console.log(`👥 Total de matrículas: ${classStudents.length}`);
 
-      // 4. Separar por modalidade
       const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
       const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
 
-      // Mapa de alunos por turma
       const studentsByClass: Record<string, typeof classStudents> = {};
       classStudents.forEach(cs => {
         if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
         studentsByClass[cs.class_id].push(cs);
       });
 
-      // 5. Buscar dados de EAD
       let eadAccessData: any[] = [];
       if (eadClassIds.length > 0) {
         const studentIds = [
@@ -346,7 +339,6 @@ export function ReportsTab() {
         }
       }
 
-      // 6. Buscar dados de ATTENDANCE (videoconferência)
       let attendanceData: any[] = [];
       if (videoClassIds.length > 0) {
         for (const classId of videoClassIds) {
@@ -378,7 +370,6 @@ export function ReportsTab() {
       console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
       console.log(`📊 Total attendanceData: ${attendanceData.length}`);
 
-      // 7. Construir mapas
       const eadMap: Record<string, any> = {};
       eadAccessData.forEach(item => {
         eadMap[`${item.class_id}-${item.student_id}`] = item;
@@ -391,7 +382,6 @@ export function ReportsTab() {
         attendanceMap[key].push(item);
       });
 
-      // 8. Montar relatório final
       const allReportData: ReportData[] = [];
 
       for (const cls of classes) {
@@ -450,7 +440,6 @@ export function ReportsTab() {
               ultimoAcesso = '-';
             }
           } else {
-            // EAD
             const key = `${cls.id}-${cs.student_id}`;
             const accessData = eadMap[key];
             isFrequente = accessData?.is_frequente === true;
@@ -473,7 +462,6 @@ export function ReportsTab() {
               ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
 
-            // ALTERAÇÃO: EAD não frequente mostra AUSENTE
             situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
           }
 
@@ -569,14 +557,36 @@ export function ReportsTab() {
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    
     const colWidths = headers.map((_, idx) => {
-      const maxLength = Math.max(
+      let maxLength = Math.max(
         headers[idx].length,
         ...rows.map(row => (row[idx]?.toString() || '').length)
       );
-      return { wch: Math.min(maxLength + 2, 50) };
+      if (idx === 3) {
+        maxLength = Math.min(maxLength + 2, 60);
+      } else {
+        maxLength = Math.min(maxLength + 2, 30);
+      }
+      return { wch: maxLength };
     });
     worksheet['!cols'] = colWidths;
+
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!worksheet[cellAddress]) continue;
+        
+        worksheet[cellAddress].s = {
+          alignment: {
+            wrapText: true,
+            vertical: 'top',
+            horizontal: C === 3 ? 'left' : 'center'
+          }
+        };
+      }
+    }
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Relatório Acadêmico');
@@ -604,6 +614,7 @@ export function ReportsTab() {
       tableElement.style.borderCollapse = 'collapse';
       tableElement.style.fontSize = '8px';
       tableElement.style.fontFamily = 'Arial, sans-serif';
+      tableElement.style.tableLayout = 'fixed';
 
       const thead = document.createElement('thead');
       const headerRow = document.createElement('tr');
@@ -612,17 +623,21 @@ export function ReportsTab() {
         'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
         'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
       ];
+      
+      const columnWidths = ['15%', '28%', '12%', '8%', '8%', '10%', '6%', '8%', '5%'];
 
-      headers.forEach(headerText => {
+      headers.forEach((headerText, idx) => {
         const th = document.createElement('th');
         th.textContent = headerText;
         th.style.padding = '4px 2px';
         th.style.backgroundColor = '#1e293b';
         th.style.color = 'white';
         th.style.border = '1px solid #334155';
-        th.style.textAlign = 'left';
+        th.style.textAlign = idx === 1 ? 'left' : 'center';
         th.style.fontWeight = 'bold';
         th.style.fontSize = '8px';
+        th.style.width = columnWidths[idx];
+        th.style.wordWrap = 'break-word';
         headerRow.appendChild(th);
       });
       thead.appendChild(headerRow);
@@ -634,9 +649,9 @@ export function ReportsTab() {
         const tr = document.createElement('tr');
 
         const cells = [
-          row.studentName.substring(0, 30),
-          row.className.substring(0, 15),
-          row.cycleName.substring(0, 15),
+          row.studentName,
+          row.className,
+          row.cycleName,
           row.modality.includes('EAD') ? 'EAD' : 'VC',
           row.modality.includes('EAD')
             ? `${row.totalAccesses}/3`
@@ -656,6 +671,17 @@ export function ReportsTab() {
           td.style.border = '1px solid #cbd5e1';
           td.style.fontSize = '7px';
           td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+          td.style.wordWrap = 'break-word';
+          td.style.whiteSpace = 'normal';
+          
+          if (idx === 1) {
+            td.style.textAlign = 'left';
+            td.style.verticalAlign = 'top';
+          } else if (idx === 4 || idx === 5 || idx === 6) {
+            td.style.textAlign = 'center';
+          } else {
+            td.style.textAlign = 'center';
+          }
 
           if (idx === 8) {
             if (row.modality.includes('EAD') && !row.isFrequente) {
@@ -671,9 +697,6 @@ export function ReportsTab() {
             td.style.fontWeight = 'bold';
             td.style.textAlign = 'center';
           }
-          if (idx === 4 || idx === 5 || idx === 6) {
-            td.style.textAlign = 'center';
-          }
           tr.appendChild(td);
         });
 
@@ -684,7 +707,7 @@ export function ReportsTab() {
       return tableElement;
     };
 
-    const rowsPerPage = 18;
+    const rowsPerPage = 16;
     const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
 
     for (let page = 0; page < totalPages; page++) {
@@ -1085,7 +1108,7 @@ export function ReportsTab() {
             <thead className="bg-slate-800 text-white">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">ALUNO</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">TURMA</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider w-48">TURMA</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CICLO</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MODALIDADE</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">AULAS/ACESSOS</th>
@@ -1102,7 +1125,11 @@ export function ReportsTab() {
                   className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}
                 >
                   <td className="px-4 py-2 text-sm text-slate-700">{row.studentName}</td>
-                  <td className="px-4 py-2 text-sm text-slate-700">{row.className}</td>
+                  <td className="px-4 py-2 text-sm text-slate-700">
+                    <div className="whitespace-normal break-words max-w-xs">
+                      {row.className}
+                    </div>
+                  </td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
                   <td className="px-4 py-2 text-sm text-center font-medium">
