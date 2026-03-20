@@ -1945,11 +1945,12 @@ const handleSaveEditEnrollment = async () => {
                 onUpdate={() => {
                   loadClassStudents();
                   loadTotalClassesGiven();
-                }}
-                totalClassesGiven={totalClassesGiven}
-              />
-            </div>
-          )}
+               loadNextClassNumber(); // ✅ adicione esta linha
+    }}
+    totalClassesGiven={totalClassesGiven}
+    nextClassNumber={nextClassNumber} // ✅ passe a prop
+  />
+)}
 
           {tab === 'attendance' && classData.modality === 'EAD' && (
             <div className="min-h-[500px]">
@@ -2478,11 +2479,14 @@ const handleSaveEditEnrollment = async () => {
   );
 }
 
-// ===========================================
-// COMPONENTE - VideoconferenciaAttendance CORRIGIDO
-// ===========================================
-function VideoconferenciaAttendance({ classData, students, onUpdate, totalClassesGiven }: any) {
-  const [classNumber, setClassNumber] = useState(totalClassesGiven + 1);
+function VideoconferenciaAttendance({ 
+  classData, 
+  students, 
+  onUpdate, 
+  totalClassesGiven, 
+  nextClassNumber 
+}: any) {
+  const [classNumber, setClassNumber] = useState(nextClassNumber);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
   const [attendance, setAttendance] = useState<Record<string, boolean>>({});
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
@@ -2494,10 +2498,15 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
   const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
 
+  // Carrega as datas do ciclo
   useEffect(() => {
     loadCycleDates();
-    setClassNumber(totalClassesGiven + 1);
-  }, [totalClassesGiven]);
+  }, []);
+
+  // Atualiza o número da aula quando o próximo número calculado no pai mudar
+  useEffect(() => {
+    setClassNumber(nextClassNumber);
+  }, [nextClassNumber]);
 
   // 🔥 FILTRO PRINCIPAL - Quando a data da aula mudar
   useEffect(() => {
@@ -2584,41 +2593,42 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   };
 
   const handleSaveAttendance = async () => {
-  if (!validateAttendance()) return;
+    if (!validateAttendance()) return;
 
-  const aulaAtual = classNumber; // valor que está no input (pode ser manual)
+    const aulaAtual = classNumber; // valor que está no input (pode ser manual)
 
-  const records = eligibleStudents.map((student: any) => ({
-    class_id: classData.id,
-    student_id: student.student_id,
-    class_number: aulaAtual,
-    class_date: classDate,
-    present: attendance[student.student_id] || false,
-  }));
+    const records = eligibleStudents.map((student: any) => ({
+      class_id: classData.id,
+      student_id: student.student_id,
+      class_number: aulaAtual,
+      class_date: classDate,
+      present: attendance[student.student_id] || false,
+    }));
 
-  try {
-    const { error } = await supabase
-      .from('attendance')
-      .upsert(records, { 
-        onConflict: 'class_id, student_id, class_number', // usa a nova constraint
-        ignoreDuplicates: false 
-      });
+    try {
+      const { error } = await supabase
+        .from('attendance')
+        .upsert(records, { 
+          onConflict: 'class_id, student_id, class_number',
+          ignoreDuplicates: false 
+        });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    // Feedback imediato: próximo número = aulaAtual + 1
-    setClassNumber(aulaAtual + 1);
-    setAttendance({});
-    
-    // Recarrega os dados no pai para consistência (atualiza totalClassesGiven)
-    onUpdate();
+      // Feedback imediato: próximo número = aulaAtual + 1
+      setClassNumber(aulaAtual + 1);
+      setAttendance({});
+      
+      // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
+      onUpdate();
 
-    alert(`✅ Aula ${aulaAtual} registrada!`);
-  } catch (error: any) {
-    console.error(error);
-    alert(`Erro: ${error.message}`);
-  }
-};
+      alert(`✅ Aula ${aulaAtual} registrada!`);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Erro: ${error.message}`);
+    }
+  };
+
   const handleViewDetails = (student: any) => {
     setSelectedStudent(student);
     setShowDetailsModal(true);
