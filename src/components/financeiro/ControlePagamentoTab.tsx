@@ -39,7 +39,7 @@ interface Invoice {
 
 interface FilterState {
   status: 'all' | 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
-  unitId: string; // NOVO: filtro por unidade
+  unitId: string;
   month: number;
   year: number;
   startDate: string;
@@ -64,9 +64,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [loading, setLoading] = useState(true);
   const [syncingInvoices, setSyncingInvoices] = useState(false);
 
-  // Estados de filtro unificados
   const [filters, setFilters] = useState<FilterState>(() => {
-    // Tentar recuperar filtros salvos no localStorage
     const savedFilters = localStorage.getItem('controlePagamento_filters');
     if (savedFilters) {
       try {
@@ -75,11 +73,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         console.error('Erro ao carregar filtros salvos:', e);
       }
     }
-    
-    // Valores padrão
     return {
       status: 'all',
-      unitId: 'all', // NOVO: padrão é "todas as unidades"
+      unitId: 'all',
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear(),
       startDate: '',
@@ -92,19 +88,16 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
-  // Salvar filtros no localStorage quando mudarem
   useEffect(() => {
     localStorage.setItem('controlePagamento_filters', JSON.stringify(filters));
   }, [filters]);
 
-  // Função utilitária para formatar datas
   const formatDate = useCallback((dateString: string | undefined | null): string => {
     if (!dateString) return '-';
     const [year, month, day] = dateString.split('T')[0].split('-').map(Number);
     return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
   }, []);
 
-  // Função para formatar valores como moeda
   const formatCurrency = useCallback((value: number | null | undefined): string => {
     if (value === null || value === undefined) return '-';
     return new Intl.NumberFormat('pt-BR', {
@@ -113,14 +106,13 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }).format(value);
   }, []);
 
-  // Função para criar data no formato ISO
-  const createISODate = useCallback((dateString: string): string => {
-    if (!dateString) return '';
+  // ✅ CORRIGIDO: retorna null em vez de string vazia
+  const createISODate = useCallback((dateString: string): string | null => {
+    if (!dateString) return null;
     const [year, month, day] = dateString.split('-').map(Number);
     return new Date(year, month - 1, day, 12, 0, 0).toISOString();
   }, []);
 
-  // Função para criar/atualizar transação no fluxo de caixa
   const createCashFlowTransaction = useCallback(async (
     invoiceId: string,
     invoiceNumber: string,
@@ -194,7 +186,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   }, [user]);
 
-  // Sincronizar notas pagas com fluxo de caixa
   const syncPaidInvoicesWithCashFlow = useCallback(async () => {
     if (!user) return;
     
@@ -249,7 +240,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   }, [user, createCashFlowTransaction, onInvoicePaid]);
 
-  // Formulário de nota fiscal
   const [formData, setFormData] = useState({
     unit_id: '',
     unit_name: '',
@@ -268,7 +258,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     estado: 'MA',
   });
 
-  // Carregar dados iniciais
   useEffect(() => {
     if (user) {
       loadUnits();
@@ -282,7 +271,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   }, [units, user]);
 
-  // Atualizar notas atrasadas
   const updateOverdueInvoices = useCallback(async () => {
     if (!user) return;
 
@@ -372,18 +360,13 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setLoading(false);
   }, [user, units]);
 
-  // Função de filtro melhorada com filtro por unidade
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
-      // Filtro por status
       if (filters.status !== 'all' && inv.payment_status !== filters.status) {
         return false;
       }
 
-      // NOVO: Filtro por unidade
       if (filters.unitId !== 'all') {
-        // Verificar se a unidade da nota corresponde à unidade selecionada
-        // Pode ser por unit_id ou por unit_name
         const unitMatches = 
           (inv.unit_id && inv.unit_id === filters.unitId) || 
           (inv.unit_name && units.find(u => u.id === filters.unitId)?.name === inv.unit_name);
@@ -393,7 +376,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         }
       }
 
-      // Filtro por mês/ano (usando a data apropriada)
       if (filters.month !== 0 || filters.year !== 0) {
         let dateToCheck: Date;
         
@@ -418,7 +400,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         if (filters.year !== 0 && year !== filters.year) return false;
       }
 
-      // Filtro por período personalizado
       if (filters.startDate && filters.endDate) {
         const start = new Date(filters.startDate);
         const end = new Date(filters.endDate);
@@ -447,7 +428,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     });
   }, [invoices, filters, units]);
 
-  // Calcular totais baseado nas invoices filtradas
   const totals = useMemo(() => {
     const totalPago = filteredInvoices
       .filter(inv => inv.payment_status === 'PAGO')
@@ -468,7 +448,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return { totalPago, totalEmAberto, totalAgendado, totalAtrasado };
   }, [filteredInvoices]);
 
-  // Calcular totais gerais (sem filtro)
   const geralTotals = useMemo(() => {
     const totalPago = invoices
       .filter(inv => inv.payment_status === 'PAGO')
@@ -489,7 +468,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return { totalPago, totalEmAberto, totalAgendado, totalAtrasado };
   }, [invoices]);
 
-  // Função para limpar todos os filtros
   const clearFilters = useCallback(() => {
     setFilters({
       status: 'all',
@@ -502,7 +480,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     });
   }, []);
 
-  // Verificar se há filtros ativos
   const hasActiveFilters = useMemo(() => {
     return filters.status !== 'all' || 
            filters.unitId !== 'all' ||
@@ -511,7 +488,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
            (filters.startDate && filters.endDate);
   }, [filters]);
 
-  // Funções para manipular o formulário
   const uploadDocument = useCallback(async (invoiceId: string): Promise<string | null> => {
     if (!selectedFile || !user) return null;
 
@@ -779,6 +755,10 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       }
 
       const paymentDateISO = createISODate(tempPaymentDate);
+      if (!paymentDateISO) {
+        alert('Data inválida');
+        return;
+      }
       const paymentDateOnly = paymentDateISO.split('T')[0];
       
       const amountToUse = invoice.paid_value !== null && invoice.paid_value !== undefined 
@@ -874,7 +854,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
           
-          {/* Botão para abrir painel de filtros */}
           <button
             onClick={() => setShowFilterPanel(!showFilterPanel)}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
@@ -949,7 +928,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
               </select>
             </div>
 
-            {/* NOVO: Filtro por Unidade */}
+            {/* Filtro por Unidade */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
               <div className="relative">
@@ -1070,7 +1049,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                          filters.status === 'AGENDADO' ? 'Agendado' : 'Atrasado'}
               </span>
             )}
-            {/* NOVO: Indicador de filtro por unidade */}
             {filters.unitId !== 'all' && (
               <span className="bg-blue-100 px-2 py-1 rounded flex items-center space-x-1">
                 <Building2 className="w-3 h-3" />
@@ -1314,39 +1292,234 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         </div>
       </div>
 
-      {/* Modal de Nova/Editar Nota Fiscal */}
+      {/* Modal de Nova/Editar Nota Fiscal - VERSÃO ANTERIOR COM TODOS OS CAMPOS */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-200">
-              <h3 className="text-xl font-bold text-slate-800">
-                {editingInvoice ? 'Editar Nota Fiscal' : 'Nova Nota Fiscal'}
-              </h3>
-            </div>
-            <div className="overflow-y-auto flex-1 px-6 py-4">
-              <form onSubmit={handleSubmit} className="space-y-4" id="invoice-form">
-                {/* ... conteúdo do formulário ... */}
-              </form>
-            </div>
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50">
-              <div className="flex space-x-3">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 my-8">
+            <h3 className="text-xl font-bold text-slate-800 mb-4">
+              {editingInvoice ? 'Editar Nota Fiscal' : 'Nova Nota Fiscal'}
+            </h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Unidade
+                    {!editingInvoice && <span className="text-xs text-slate-500 ml-2">(opcional)</span>}
+                  </label>
+                  <select
+                    value={formData.unit_id}
+                    onChange={(e) => {
+                      const selectedUnit = units.find(u => u.id === e.target.value);
+                      setFormData({ 
+                        ...formData, 
+                        unit_id: e.target.value,
+                        unit_name: selectedUnit ? selectedUnit.name : formData.unit_name
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="">Selecione uma unidade (opcional)</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.name} - {unit.municipality}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Nome da Unidade (manual)
+                    <span className="text-xs text-slate-500 ml-2">use apenas se não selecionar acima</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.unit_name}
+                    onChange={(e) => setFormData({ ...formData, unit_name: e.target.value })}
+                    placeholder="Digite o nome da unidade"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">CNPJ/CPF</label>
+                  <input
+                    type="text"
+                    value={formData.cnpj_cpf}
+                    onChange={(e) => setFormData({ ...formData, cnpj_cpf: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
+                  <select
+                    value={formData.estado}
+                    onChange={(e) => setFormData({ ...formData, estado: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="MA">MA</option>
+                    <option value="PA">PA</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Exercício - Mês</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="12"
+                    value={formData.exercise_month}
+                    onChange={(e) => setFormData({ ...formData, exercise_month: parseInt(e.target.value) })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Exercício - Ano</label>
+                  <input
+                    type="number"
+                    min="2000"
+                    value={formData.exercise_year}
+                    onChange={(e) => setFormData({ ...formData, exercise_year: parseInt(e.target.value) })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Documento</label>
+                  <input
+                    type="text"
+                    value={formData.document_type}
+                    onChange={(e) => setFormData({ ...formData, document_type: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Número da NF</label>
+                  <input
+                    type="text"
+                    value={formData.invoice_number}
+                    onChange={(e) => setFormData({ ...formData, invoice_number: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Data de Emissão</label>
+                  <input
+                    type="date"
+                    value={formData.issue_date}
+                    onChange={(e) => setFormData({ ...formData, issue_date: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Data de Vencimento</label>
+                  <input
+                    type="date"
+                    value={formData.due_date}
+                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Valor Líquido</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.net_value}
+                    onChange={(e) => setFormData({ ...formData, net_value: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Status do Pagamento</label>
+                  <select
+                    value={formData.payment_status}
+                    onChange={(e) => setFormData({ ...formData, payment_status: e.target.value as any })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="EM ABERTO">EM ABERTO</option>
+                    <option value="PAGO">PAGO</option>
+                    <option value="ATRASADO">ATRASADO</option>
+                  </select>
+                </div>
+
+                {formData.payment_status === 'PAGO' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Data do Pagamento</label>
+                      <input
+                        type="date"
+                        value={formData.payment_date}
+                        onChange={(e) => setFormData({ ...formData, payment_date: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Valor Pago</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={formData.paid_value}
+                        onChange={(e) => setFormData({ ...formData, paid_value: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="pt-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Anexar Documento</label>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                  />
+                  {selectedFile && (
+                    <span className="text-sm text-green-600 flex items-center space-x-1">
+                      <Upload className="w-4 h-4" />
+                      <span>{selectedFile.name}</span>
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Formatos aceitos: Imagens (JPG, PNG) e PDF</p>
+              </div>
+
+              <div className="flex space-x-3 pt-4">
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-100 transition-colors font-medium"
+                  className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  form="invoice-form"
-                  disabled={uploadingFile}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                 >
-                  {uploadingFile ? 'Enviando...' : (editingInvoice ? 'Atualizar' : 'Adicionar')}
+                  {editingInvoice ? 'Atualizar' : 'Adicionar'}
                 </button>
               </div>
-            </div>
+            </form>
           </div>
         </div>
       )}
