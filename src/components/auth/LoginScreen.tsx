@@ -5,11 +5,15 @@ import { UserModule } from '../../lib/supabase';
 import logoImg from '../../assets/image.png';
 import { supabase } from '../../lib/supabase';
 
-export function LoginScreen() {
+interface LoginScreenProps {
+  isResetPasswordRoute?: boolean;
+}
+
+export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) {
   const [selectedModule, setSelectedModule] = useState<UserModule | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [isResetPassword, setIsResetPassword] = useState(false);
+  const [isResetPassword, setIsResetPassword] = useState(isResetPasswordRoute);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -22,17 +26,21 @@ export function LoginScreen() {
   const { signIn, signUp, resetPassword, updatePassword } = useAuth();
 
   useEffect(() => {
-    const checkResetToken = async () => {
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const type = hashParams.get('type');
+    if (isResetPasswordRoute) {
+      setIsResetPassword(true);
+    } else {
+      const checkResetToken = async () => {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1));
+        const type = hashParams.get('type');
 
-      if (type === 'recovery') {
-        setIsResetPassword(true);
-      }
-    };
+        if (type === 'recovery') {
+          setIsResetPassword(true);
+        }
+      };
 
-    checkResetToken();
-  }, []);
+      checkResetToken();
+    }
+  }, [isResetPasswordRoute]);
 
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,10 +64,8 @@ export function LoginScreen() {
       setSuccessMessage('Senha atualizada com sucesso! Redirecionando...');
 
       setTimeout(() => {
-        window.location.hash = '';
-        setIsResetPassword(false);
-        setNewPassword('');
-        setConfirmPassword('');
+        window.history.pushState({}, '', '/');
+        window.location.reload();
       }, 2000);
     } catch (err: any) {
       setError(err.message || 'Erro ao atualizar senha');

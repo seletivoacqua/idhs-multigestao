@@ -2,9 +2,20 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LoginScreen } from './components/auth/LoginScreen';
 import { FinanceiroDashboard } from './components/financeiro/FinanceiroDashboard';
 import { AcademicoDashboard } from './components/academico/AcademicoDashboard';
+import { useEffect, useState } from 'react';
 
 function AppContent() {
   const { user, module, loading } = useAuth();
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setCurrentPath(window.location.pathname);
+    };
+
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
 
   if (loading) {
     return (
@@ -15,6 +26,10 @@ function AppContent() {
         </div>
       </div>
     );
+  }
+
+  if (currentPath === '/reset-password') {
+    return <LoginScreen isResetPasswordRoute={true} />;
   }
 
   if (!user || !module) {
