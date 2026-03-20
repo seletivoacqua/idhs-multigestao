@@ -2566,65 +2566,41 @@ function VideoconferenciaAttendance({ classData, students, onUpdate, totalClasse
   };
 
   const handleSaveAttendance = async () => {
-    if (!validateAttendance()) return;
+  if (!validateAttendance()) return;
 
-    if (eligibleStudents.length === 0) {
-      alert('Não há alunos elegíveis para esta data. Verifique se a data está correta.');
-      return;
-    }
+  const aulaAtual = classNumber; // valor que está no input (pode ser manual)
 
-    try {
-      const { data: maxClassData } = await supabase
-        .from('attendance')
-        .select('class_number')
-        .eq('class_id', classData.id)
-        .order('class_number', { ascending: false })
-        .limit(1);
+  const records = eligibleStudents.map((student: any) => ({
+    class_id: classData.id,
+    student_id: student.student_id,
+    class_number: aulaAtual,
+    class_date: classDate,
+    present: attendance[student.student_id] || false,
+  }));
 
-      const proximaAula = (maxClassData?.[0]?.class_number || 0) + 1;
-      
-      const records = eligibleStudents.map((student: any) => ({
-        class_id: classData.id,
-        student_id: student.student_id,
-        class_number: proximaAula,
-        class_date: classDate,
-        present: attendance[student.student_id] || false,
-      }));
+  try {
+    const { error } = await supabase
+      .from('attendance')
+      .upsert(records, { 
+        onConflict: 'class_id, student_id, class_number', // usa a nova constraint
+        ignoreDuplicates: false 
+      });
 
-      const presentes = records.filter(r => r.present).length;
-      const ausentes = records.filter(r => !r.present).length;
-      
-      if (!confirm(`Salvar frequência da aula ${proximaAula}?\n\n` +
-                   `📅 Data: ${formatDateToDisplay(classDate)}\n` +
-                   `👥 Alunos elegíveis: ${eligibleStudents.length}\n` +
-                   `✅ Presentes: ${presentes}\n` +
-                   `❌ Ausentes: ${ausentes}\n` +
-                   `🚫 Ignorados (matrícula posterior): ${ignoredStudents.length}`)) {
-        return;
-      }
+    if (error) throw error;
 
-      const { error } = await supabase
-        .from('attendance')
-        .upsert(records, { 
-          onConflict: 'class_id,student_id,class_number',
-          ignoreDuplicates: false 
-        });
+    // Feedback imediato: próximo número = aulaAtual + 1
+    setClassNumber(aulaAtual + 1);
+    setAttendance({});
+    
+    // Recarrega os dados no pai para consistência (atualiza totalClassesGiven)
+    onUpdate();
 
-      if (error) throw error;
-
-      alert(`✅ Aula ${proximaAula} registrada!\n` +
-            `${presentes} presentes, ${ausentes} ausentes\n` +
-            `${ignoredStudents.length} alunos ignorados (matrícula posterior)`);
-      
-      setAttendance({});
-      onUpdate();
-      
-    } catch (error: any) {
-      console.error('Erro:', error);
-      alert(`Erro: ${error.message}`);
-    }
-  };
-
+    alert(`✅ Aula ${aulaAtual} registrada!`);
+  } catch (error: any) {
+    console.error(error);
+    alert(`Erro: ${error.message}`);
+  }
+};
   const handleViewDetails = (student: any) => {
     setSelectedStudent(student);
     setShowDetailsModal(true);
