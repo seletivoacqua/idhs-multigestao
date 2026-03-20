@@ -7,23 +7,30 @@ import logoImg from '../../assets/image.png';
 export function LoginScreen() {
   const [selectedModule, setSelectedModule] = useState<UserModule | null>(null);
   const [isSignUp, setIsSignUp] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, resetPassword } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModule) return;
 
     setError('');
+    setSuccessMessage('');
     setLoading(true);
 
     try {
-      if (isSignUp) {
+      if (isForgotPassword) {
+        await resetPassword(email);
+        setSuccessMessage('Email de recuperação enviado! Verifique sua caixa de entrada.');
+        setEmail('');
+      } else if (isSignUp) {
         await signUp(email, password, fullName, selectedModule);
       } else {
         await signIn(email, password, selectedModule);
@@ -88,7 +95,9 @@ export function LoginScreen() {
           onClick={() => {
             setSelectedModule(null);
             setIsSignUp(false);
+            setIsForgotPassword(false);
             setError('');
+            setSuccessMessage('');
           }}
           className="mb-6 text-slate-600 hover:text-slate-800 flex items-center space-x-2"
         >
@@ -113,11 +122,11 @@ export function LoginScreen() {
             {selectedModule === 'financeiro' ? 'Módulo Financeiro' : 'Módulo Acadêmico'}
           </h2>
           <p className="text-center text-slate-600 mb-6">
-            {isSignUp ? 'Criar nova conta' : 'Entre com suas credenciais'}
+            {isForgotPassword ? 'Recuperar senha' : isSignUp ? 'Criar nova conta' : 'Entre com suas credenciais'}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {isSignUp && (
+            {isSignUp && !isForgotPassword && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Nome Completo
@@ -145,23 +154,31 @@ export function LoginScreen() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Senha
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-              />
-            </div>
+            {!isForgotPassword && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Senha
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                />
+              </div>
+            )}
 
             {error && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
                 {error}
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+                {successMessage}
               </div>
             )}
 
@@ -175,20 +192,45 @@ export function LoginScreen() {
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               {isSignUp ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}
-              <span>{loading ? 'Processando...' : isSignUp ? 'Criar Conta' : 'Entrar'}</span>
+              <span>
+                {loading
+                  ? 'Processando...'
+                  : isForgotPassword
+                    ? 'Enviar Email'
+                    : isSignUp
+                      ? 'Criar Conta'
+                      : 'Entrar'
+                }
+              </span>
             </button>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setError('');
-              }}
-              className="text-slate-600 hover:text-slate-800 text-sm"
-            >
-              {isSignUp ? 'Já tem uma conta? Entrar' : 'Primeiro acesso? Criar conta'}
-            </button>
+          <div className="mt-6 text-center space-y-2">
+            {!isForgotPassword && (
+              <button
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setError('');
+                  setSuccessMessage('');
+                }}
+                className="block w-full text-slate-600 hover:text-slate-800 text-sm"
+              >
+                {isSignUp ? 'Já tem uma conta? Entrar' : 'Primeiro acesso? Criar conta'}
+              </button>
+            )}
+
+            {!isSignUp && (
+              <button
+                onClick={() => {
+                  setIsForgotPassword(!isForgotPassword);
+                  setError('');
+                  setSuccessMessage('');
+                }}
+                className="block w-full text-slate-600 hover:text-slate-800 text-sm"
+              >
+                {isForgotPassword ? 'Voltar para login' : 'Esqueci a senha'}
+              </button>
+            )}
           </div>
         </div>
       </div>
