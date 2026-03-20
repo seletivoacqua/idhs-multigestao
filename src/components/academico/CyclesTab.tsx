@@ -2483,12 +2483,12 @@ const handleSaveEditEnrollment = async () => {
   );
 }
 
-function VideoconferenciaAttendance({ 
-  classData, 
-  students, 
-  onUpdate, 
-  totalClassesGiven, 
-  nextClassNumber 
+function VideoconferenciaAttendance({
+  classData,
+  students,
+  onUpdate,
+  totalClassesGiven,
+  nextClassNumber
 }: any) {
   const [classNumber, setClassNumber] = useState(nextClassNumber);
   const [classDate, setClassDate] = useState(new Date().toISOString().split('T')[0]);
@@ -2501,12 +2501,25 @@ function VideoconferenciaAttendance({
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
   const [eligibleStudents, setEligibleStudents] = useState<any[]>([]);
   const [ignoredStudents, setIgnoredStudents] = useState<any[]>([]);
+  const [localTotalClassesGiven, setLocalTotalClassesGiven] = useState(totalClassesGiven);
+
+  // Função para recarregar o total de aulas
+  const reloadTotalClasses = async () => {
+    const total = await getTotalClassesGiven(classData.id);
+    setLocalTotalClassesGiven(total);
+  };
 
   // Carrega as datas do ciclo e força atualização dos dados
   useEffect(() => {
     loadCycleDates();
+    reloadTotalClasses();
     onUpdate();
   }, []);
+
+  // Atualiza quando a prop totalClassesGiven mudar
+  useEffect(() => {
+    setLocalTotalClassesGiven(totalClassesGiven);
+  }, [totalClassesGiven]);
 
   // Atualiza o número da aula quando o próximo número calculado no pai mudar
   useEffect(() => {
@@ -2623,8 +2636,9 @@ function VideoconferenciaAttendance({
       // Feedback imediato: próximo número = aulaAtual + 1
       setClassNumber(aulaAtual + 1);
       setAttendance({});
-      
+
       // Recarrega os dados no pai para consistência (atualiza totalClassesGiven e nextClassNumber)
+      await reloadTotalClasses();
       onUpdate();
 
       alert(`✅ Aula ${aulaAtual} registrada!`);
@@ -2655,7 +2669,7 @@ function VideoconferenciaAttendance({
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📊 Aulas realizadas:</strong> {totalClassesGiven} de {classData.total_classes}
+          <strong>📊 Aulas realizadas:</strong> {localTotalClassesGiven} de {classData.total_classes}
         </p>
       </div>
 
