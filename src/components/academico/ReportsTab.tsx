@@ -230,7 +230,7 @@ export function ReportsTab() {
     });
   };
 
- const generateReport = async () => {
+const generateReport = async () => {
   if (!user) return;
 
   setLoading(true);
@@ -308,61 +308,65 @@ export function ReportsTab() {
     // 3. Buscar dados EAD
     let eadAccessData: any[] = [];
     if (eadClassIds.length > 0) {
-      const studentIds = [
-        ...new Set(
-          classStudents
-            .filter(cs => eadClassIds.includes(cs.class_id))
-            .map(cs => cs.student_id)
-        )
-      ];
-
-      if (studentIds.length > 0) {
-        for (const classId of eadClassIds) {
-          const { data, error } = await supabase
-            .from('ead_access')
-            .select('*')
-            .eq('class_id', classId);
-          
-          if (!error && data) {
-            eadAccessData.push(...data);
-          }
+      for (const classId of eadClassIds) {
+        const { data, error } = await supabase
+          .from('ead_access')
+          .select('*')
+          .eq('class_id', classId);
+        
+        if (!error && data) {
+          eadAccessData.push(...data);
         }
       }
     }
 
     // ===========================================
-    // SOLUÇÃO DEFINITIVA: Usar a MESMA lógica do controle de frequência
+    // CORREÇÃO DEFINITIVA - Buscar dados de attendance
     // ===========================================
     
-    // Mapa para armazenar o total de aulas por turma
-   const totalClassesGivenByClass: Record<string, number> = {};
-let attendanceData: any[] = [];
+    const totalClassesGivenByClass: Record<string, number> = {};
+    let attendanceData: any[] = [];
 
-if (videoClassIds.length > 0) {
-  const { data: allVideoAttendances, error: attError } = await supabase
-    .from('attendance')
-    .select('*')                          // busca tudo de uma vez
-    .in('class_id', videoClassIds);
+    if (videoClassIds.length > 0) {
+      console.log('🔍 Buscando dados de frequência para turmas:', videoClassIds);
+      
+      // Buscar dados de attendance para CADA turma individualmente
+      for (const classId of videoClassIds) {
+        console.log(`   Buscando turma: ${classId}`);
+        
+        const { data: records, error } = await supabase
+          .from('attendance')
+          .select('*')
+          .eq('class_id', classId);
+        
+        if (error) {
+          console.error(`   ❌ Erro na turma ${classId}:`, error);
+          totalClassesGivenByClass[classId] = 0;
+          continue;
+        }
+        
+        if (records && records.length > 0) {
+          console.log(`   ✅ Encontrados ${records.length} registros`);
+          
+          // Extrair números únicos de aula
+          const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
+          totalClassesGivenByClass[classId] = uniqueNumbers.length;
+          
+          console.log(`   📊 Números de aula: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
+          console.log(`   📈 Total de aulas: ${uniqueNumbers.length}`);
+          
+          // Adicionar ao attendanceData
+          attendanceData.push(...records);
+        } else {
+          console.log(`   ⚠️ Nenhum registro encontrado para turma ${classId}`);
+          totalClassesGivenByClass[classId] = 0;
+        }
+      }
+    }
 
-  if (attError) throw attError;
-
-  if (allVideoAttendances && allVideoAttendances.length > 0) {
-    attendanceData = allVideoAttendances; // usa para o attendanceMap
-
-    // calcula totalClassesGivenByClass dos MESMOS dados
-    videoClassIds.forEach(classId => {
-      const registrosDaTurma = allVideoAttendances.filter(a => a.class_id === classId);
-      const numerosUnicos = new Set(registrosDaTurma.map(a => a.class_number));
-      totalClassesGivenByClass[classId] = numerosUnicos.size;
-    });
-  } else {
-    videoClassIds.forEach(classId => {
-      totalClassesGivenByClass[classId] = 0;
-    });
-  }
-}
-    
-   
+    console.log('\n📊 RESUMO FINAL DOS DADOS:');
+    console.log(`   Total de registros de attendance: ${attendanceData.length}`);
+    console.log(`   Aulas por turma:`, totalClassesGivenByClass);
 
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
@@ -380,12 +384,13 @@ if (videoClassIds.length > 0) {
 
     for (const cls of classes) {
       const students = studentsByClass[cls.id] || [];
-      
-      // USAR O TOTAL CALCULADO PELA MESMA LÓGICA DO CONTROLE DE FREQUÊNCIA
       const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
       
       console.log(`\n📚 Turma: ${cls.name}`);
-      console.log(`   Aulas registradas (pela lógica do controle): ${totalAulasRealizadas}`);
+      console.log(`   ID: ${cls.id}`);
+      console.log(`   Modalidade: ${cls.modality}`);
+      console.log(`   Aulas registradas: ${totalAulasRealizadas}`);
+      console.log(`   Alunos: ${students.length}`);
 
       for (const cs of students) {
         if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -416,7 +421,6 @@ if (videoClassIds.length > 0) {
 
             classesAttended = relevantAttendance.filter(a => a.present).length;
             
-            // CÁLCULO USANDO O TOTAL REAL DE AULAS
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
             situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
@@ -483,7 +487,6 @@ if (videoClassIds.length > 0) {
     }
 
     console.log(`\n✅ Relatório final: ${allReportData.length} registros`);
-    console.log(`📊 Totais por turma:`, totalClassesGivenByClass);
 
     allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
     setReportData(allReportData);
@@ -497,7 +500,6 @@ if (videoClassIds.length > 0) {
     setShouldGenerateReport(false);
   }
 };
-
   // ===========================================
   // FUNÇÕES DE HANDLE - DEFINIDAS AQUI
   // ===========================================
