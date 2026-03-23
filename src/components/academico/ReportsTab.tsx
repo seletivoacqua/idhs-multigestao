@@ -231,14 +231,14 @@ export function ReportsTab() {
     });
   };
 
- const generateReport = async () => {
+const generateReport = async () => {
   if (!user) return;
 
   setLoading(true);
   setInitialLoading(false);
 
   try {
-    console.log('🔄 Gerando relatório - BUSCANDO DADOS FRESCOS DO BANCO...');
+    console.log('🔄 Gerando relatório...');
 
     let classesQuery = supabase
       .from('classes')
@@ -338,88 +338,52 @@ export function ReportsTab() {
     }
 
     // ===========================================
-    // CORREÇÃO DEFINITIVA - BASEADA NO SCHEMA
+    // CORREÇÃO: Buscar TODOS os registros de attendance
+    // usando uma query simples e direta
     // ===========================================
     
     let attendanceData: any[] = [];
     const totalClassesGivenByClass: Record<string, number> = {};
-    
+
     if (videoClassIds.length > 0) {
-      // PASSO 1: Buscar TODOS os números de aula registrados (incluindo ausentes)
-      // IMPORTANTE: Buscar APENAS class_number, sem filtrar por present
+      // Para CADA turma, fazer uma busca DIRETA e COMPLETA
       for (const classId of videoClassIds) {
-        console.log(`🔍 Buscando TODOS os registros de frequência para turma ${classId}...`);
+        console.log(`🔍 Buscando registros para turma: ${classId}`);
         
-        const { data: allRecords, error } = await supabase
+        // Query SIMPLES e DIRETA - sem nenhum filtro adicional
+        const { data: records, error } = await supabase
           .from('attendance')
-          .select('class_number, class_date, student_id, present')
+          .select('*')
           .eq('class_id', classId);
         
         if (error) {
-          console.error(`❌ Erro ao buscar frequência da turma ${classId}:`, error);
+          console.error(`Erro ao buscar attendance:`, error);
           totalClassesGivenByClass[classId] = 0;
           continue;
         }
         
-        console.log(`   📊 Total de registros encontrados: ${allRecords?.length || 0}`);
+        console.log(`   Encontrados ${records?.length || 0} registros`);
         
-        if (allRecords && allRecords.length > 0) {
-          // Extrair números ÚNICOS de aula (independente de presente/ausente)
-          const uniqueClassNumbers = new Set(allRecords.map(record => record.class_number));
-          totalClassesGivenByClass[classId] = uniqueClassNumbers.size;
+        if (records && records.length > 0) {
+          // Extrair números únicos de aula
+          const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
+          totalClassesGivenByClass[classId] = uniqueNumbers.length;
           
-          console.log(`   ✅ Números de aula únicos: ${[...uniqueClassNumbers].sort((a,b)=>a-b).join(', ')}`);
-          console.log(`   📊 Total de aulas registradas: ${uniqueClassNumbers.size}`);
+          console.log(`   Números de aula: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
+          console.log(`   Total de aulas: ${uniqueNumbers.length}`);
           
-          // Verificar especificamente se a aula 6 está presente
-          if (uniqueClassNumbers.has(6)) {
-            console.log(`   🎯 AULA 6 ENCONTRADA na turma!`);
-            // Verificar se tem registro da aula 6
-            const aula6Records = allRecords.filter(r => r.class_number === 6);
-            console.log(`   📝 Registros da aula 6: ${aula6Records.length}`);
-            aula6Records.forEach(r => {
-              console.log(`      - Aluno: ${r.student_id}, Data: ${r.class_date}, Presente: ${r.present}`);
-            });
-          } else {
-            console.log(`   ❌ AULA 6 NÃO ENCONTRADA na turma!`);
-          }
+          // Adicionar ao attendanceData para processamento posterior
+          attendanceData.push(...records);
         } else {
           totalClassesGivenByClass[classId] = 0;
-          console.log(`   ⚠️ Nenhum registro de frequência encontrado`);
-        }
-      }
-      
-      // PASSO 2: Buscar os registros detalhados por aluno
-      for (const classId of videoClassIds) {
-        const studentsInClass = studentsByClass[classId] || [];
-        if (studentsInClass.length === 0) continue;
-
-        const studentIds = studentsInClass.map(cs => cs.student_id);
-        
-        const batchSize = 300;
-        for (let i = 0; i < studentIds.length; i += batchSize) {
-          const studentBatch = studentIds.slice(i, i + batchSize);
-          
-          const { data, error } = await supabase
-            .from('attendance')
-            .select('class_id, student_id, class_number, class_date, present')
-            .eq('class_id', classId)
-            .in('student_id', studentBatch)
-            .order('class_number');
-
-          if (error) {
-            console.error(`Erro attendance turma ${classId}:`, error);
-          } else {
-            attendanceData = [...attendanceData, ...(data || [])];
-          }
+          console.log(`   ⚠️ Nenhum registro encontrado`);
         }
       }
     }
 
-    console.log(`📊 Estatísticas finais:`);
-    console.log(`   - EAD: ${eadAccessData.length} registros`);
-    console.log(`   - Frequência: ${attendanceData.length} registros`);
-    console.log(`   - Total de aulas por turma:`, totalClassesGivenByClass);
+    console.log(`\n📊 RESUMO FINAL:`);
+    console.log(`   Total de registros de frequência: ${attendanceData.length}`);
+    console.log(`   Aulas por turma:`, totalClassesGivenByClass);
 
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
@@ -437,17 +401,12 @@ export function ReportsTab() {
 
     for (const cls of classes) {
       const students = studentsByClass[cls.id] || [];
-      
-      // ===========================================
-      // CORREÇÃO CRÍTICA: Usar o número REAL de aulas registradas
-      // que foi calculado a partir de TODOS os registros (incluindo ausentes)
-      // ===========================================
       const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
       
-      console.log(`\n📚 Processando turma: ${cls.name} (${cls.id})`);
+      console.log(`\n📚 Processando turma: ${cls.name}`);
       console.log(`   - total_classes configurado: ${cls.total_classes}`);
       console.log(`   - aulas REALMENTE registradas: ${totalAulasRealizadas}`);
-      console.log(`   - alunos matriculados: ${students.length}`);
+      console.log(`   - alunos: ${students.length}`);
 
       for (const cs of students) {
         if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -470,7 +429,6 @@ export function ReportsTab() {
           const attendanceList = attendanceMap[key] || [];
 
           if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
-            // Filtrar por data de matrícula se for excepcional
             const relevantAttendance = attendanceList.filter(att => {
               if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
               const attDate = extractDatePart(att.class_date);
@@ -478,8 +436,6 @@ export function ReportsTab() {
             });
 
             classesAttended = relevantAttendance.filter(a => a.present).length;
-            
-            // CORREÇÃO: Usar totalAulasRealizadas (número REAL de aulas únicas)
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
             situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
@@ -489,15 +445,6 @@ export function ReportsTab() {
               const mostRecent = getMostRecentDate(dates);
               ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
-            
-            // Log de diagnóstico para ADAILTON
-            if (cs.students?.full_name === 'ADAILTON PINHEIRO BARROS') {
-              console.log(`   🔍 Aluno ADAILTON:`);
-              console.log(`      - Presenças: ${classesAttended}`);
-              console.log(`      - Total aulas: ${totalAulasRealizadas}`);
-              console.log(`      - Frequência: ${frequencyValue.toFixed(1)}%`);
-              console.log(`      - Registros:`, relevantAttendance.map(a => ({ aula: a.class_number, presente: a.present })));
-            }
           } else {
             classesAttended = 0;
             frequencyValue = 0;
@@ -506,7 +453,6 @@ export function ReportsTab() {
             ultimoAcesso = '-';
           }
         } else {
-          // Modalidade EAD
           const key = `${cls.id}-${cs.student_id}`;
           const accessData = eadMap[key];
           isFrequente = accessData?.is_frequente === true;
@@ -556,17 +502,8 @@ export function ReportsTab() {
       }
     }
 
-    console.log(`\n✅ Relatório gerado com ${allReportData.length} registros`);
-    
-    // Log de diagnóstico final para ADAILTON
-    const adailtonRecord = allReportData.find(r => r.studentName === 'ADAILTON PINHEIRO BARROS');
-    if (adailtonRecord) {
-      console.log(`\n📊 ADAILTON - RESULTADO FINAL:`);
-      console.log(`   - Presenças: ${adailtonRecord.classesAttended}`);
-      console.log(`   - Total aulas: ${adailtonRecord.totalClassesConsidered}`);
-      console.log(`   - Frequência: ${adailtonRecord.frequency}`);
-      console.log(`   - Situação: ${adailtonRecord.situacao}`);
-    }
+    console.log(`✅ Relatório gerado com ${allReportData.length} registros`);
+    console.log(`📊 Aulas por turma (final):`, totalClassesGivenByClass);
 
     allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
     setReportData(allReportData);
@@ -580,19 +517,6 @@ export function ReportsTab() {
     setShouldGenerateReport(false);
   }
 };
-  const handleFilterChange = (key: string, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  };
-
-  const handleRefreshReport = () => {
-    console.log('🔄 Forçando refresh de dados do banco...');
-    setShouldGenerateReport(true);
-  };
-
-  const handleGenerateReport = () => {
-    console.log('📊 Gerando relatório com dados atualizados...');
-    setShouldGenerateReport(true);
-  };
 
   // Exportar para XLSX
   const exportToXLSX = () => {
