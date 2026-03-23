@@ -114,7 +114,7 @@ export function ReportsTab() {
     return mostRecent.toISOString().split('T')[0];
   };
 
-  // Carregar dados auxiliares apenas uma vez
+  // Carregar dados auxiliares apenas uma vez (unidades, ciclos, turmas)
   useEffect(() => {
     if (user) {
       loadUnits();
@@ -123,7 +123,8 @@ export function ReportsTab() {
     }
   }, [user]);
 
-  // Gerar relatório apenas quando shouldGenerateReport for true
+  // Gerar relatório SEMPRE que shouldGenerateReport for true
+  // Isso garante que os dados sejam buscados novamente do banco
   useEffect(() => {
     if (user && shouldGenerateReport) {
       generateReport();
@@ -237,8 +238,13 @@ export function ReportsTab() {
     setInitialLoading(false);
 
     try {
-      console.log('🔄 Gerando relatório...');
+      console.log('🔄 Gerando relatório - BUSCANDO DADOS FRESCOS DO BANCO...');
+      console.log('🕒 Timestamp:', new Date().toISOString());
 
+      // ===========================================
+      // BUSCAR DADOS DO BANCO SEM CACHE
+      // ===========================================
+      
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -267,6 +273,7 @@ export function ReportsTab() {
 
       const classIds = classes.map(c => c.id);
 
+      // Buscar alunos matriculados
       const { data: classStudents, error: studentsError } = await supabase
         .from('class_students')
         .select(`
@@ -307,6 +314,7 @@ export function ReportsTab() {
         studentsByClass[cs.class_id].push(cs);
       });
 
+      // Buscar dados EAD
       let eadAccessData: any[] = [];
       if (eadClassIds.length > 0) {
         const studentIds = [
@@ -336,17 +344,18 @@ export function ReportsTab() {
         }
       }
 
+      // ===========================================
+      // BUSCAR DADOS DE FREQUÊNCIA - SEM CACHE
+      // Contar o número REAL de aulas registradas (números únicos)
+      // ===========================================
       let attendanceData: any[] = [];
-      
-      // ===========================================
-      // SOLUÇÃO GERAL: Buscar o número REAL de aulas registradas
-      // para CADA turma, independente do total_classes configurado
-      // ===========================================
       const totalClassesGivenByClass: Record<string, number> = {};
       
       if (videoClassIds.length > 0) {
-        // Buscar TODOS os números de aula registrados para cada turma
+        // Para cada turma, buscar TODOS os números de aula registrados
         for (const classId of videoClassIds) {
+          console.log(`🔍 Buscando frequências para turma ${classId}...`);
+          
           const { data: classNumbers } = await supabase
             .from('attendance')
             .select('class_number')
@@ -356,9 +365,10 @@ export function ReportsTab() {
             // Contar números ÚNICOS de aula (mesma lógica do controle de frequência)
             const uniqueClassNumbers = new Set(classNumbers.map(cn => cn.class_number));
             totalClassesGivenByClass[classId] = uniqueClassNumbers.size;
-            console.log(`Turma ${classId}: aulas registradas = ${uniqueClassNumbers.size} (números: ${[...uniqueClassNumbers].sort((a,b)=>a-b).join(', ')})`);
+            console.log(`   ✅ Turma ${classId}: ${uniqueClassNumbers.size} aulas registradas (números: ${[...uniqueClassNumbers].sort((a,b)=>a-b).join(', ')})`);
           } else {
             totalClassesGivenByClass[classId] = 0;
+            console.log(`   ⚠️ Turma ${classId}: nenhum registro de frequência`);
           }
         }
         
@@ -389,6 +399,11 @@ export function ReportsTab() {
         }
       }
 
+      console.log(`📊 Estatísticas de dados frescos:`);
+      console.log(`   - EAD: ${eadAccessData.length} registros`);
+      console.log(`   - Frequência: ${attendanceData.length} registros`);
+      console.log(`   - Turmas com aulas:`, totalClassesGivenByClass);
+
       const eadMap: Record<string, any> = {};
       eadAccessData.forEach(item => {
         eadMap[`${item.class_id}-${item.student_id}`] = item;
@@ -407,13 +422,15 @@ export function ReportsTab() {
         const students = studentsByClass[cls.id] || [];
         
         // ===========================================
-        // SOLUÇÃO GERAL: Usar o número REAL de aulas registradas
-        // como denominador, NÃO o total_classes da tabela
+        // USAR O NÚMERO REAL DE AULAS REGISTRADAS
+        // Isso garante que o relatório reflita as alterações no banco
         // ===========================================
         const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
         
-        // Se não há aulas registradas, usar 0 como denominador
-        const denominador = totalAulasRealizadas;
+        console.log(`📚 Processando turma: ${cls.name}`);
+        console.log(`   - total_classes configurado: ${cls.total_classes}`);
+        console.log(`   - aulas realmente registradas: ${totalAulasRealizadas}`);
+        console.log(`   - alunos: ${students.length}`);
 
         for (const cs of students) {
           if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -435,7 +452,7 @@ export function ReportsTab() {
             const key = `${cls.id}-${cs.student_id}`;
             const attendanceList = attendanceMap[key] || [];
 
-            if (attendanceList.length > 0 && denominador > 0) {
+            if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
               // Filtrar por data de matrícula se for excepcional
               const relevantAttendance = attendanceList.filter(att => {
                 if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
@@ -445,8 +462,8 @@ export function ReportsTab() {
 
               classesAttended = relevantAttendance.filter(a => a.present).length;
               
-              // CORREÇÃO GERAL: Usar o número REAL de aulas registradas
-              frequencyValue = (classesAttended / denominador) * 100;
+              // CORREÇÃO: Usar o número REAL de aulas registradas
+              frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
               frequency = `${frequencyValue.toFixed(1)}%`;
               situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
@@ -463,7 +480,7 @@ export function ReportsTab() {
               ultimoAcesso = '-';
             }
           } else {
-            // Modalidade EAD (mantido igual)
+            // Modalidade EAD
             const key = `${cls.id}-${cs.student_id}`;
             const accessData = eadMap[key];
             isFrequente = accessData?.is_frequente === true;
@@ -500,7 +517,7 @@ export function ReportsTab() {
             cycleId: cls.cycles?.id || '',
             modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
             classesAttended,
-            totalClassesConsidered: denominador,
+            totalClassesConsidered: totalAulasRealizadas,
             ultimoAcesso,
             frequency,
             frequencyValue,
@@ -512,6 +529,8 @@ export function ReportsTab() {
           });
         }
       }
+
+      console.log(`✅ Relatório gerado com ${allReportData.length} registros (dados frescos do banco)`);
 
       allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
       setReportData(allReportData);
@@ -531,10 +550,12 @@ export function ReportsTab() {
   };
 
   const handleRefreshReport = () => {
+    console.log('🔄 Forçando refresh de dados do banco...');
     setShouldGenerateReport(true);
   };
 
   const handleGenerateReport = () => {
+    console.log('📊 Gerando relatório com dados atualizados...');
     setShouldGenerateReport(true);
   };
 
@@ -884,9 +905,10 @@ export function ReportsTab() {
             onClick={handleRefreshReport}
             disabled={loading}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+            title="Buscar dados mais recentes do banco"
           >
             <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{loading ? 'Carregando...' : 'Atualizar Dados'}</span>
+            <span>{loading ? 'Atualizando...' : 'Atualizar Dados'}</span>
           </button>
           <button
             onClick={() => setIsSyntheticModalOpen(true)}
