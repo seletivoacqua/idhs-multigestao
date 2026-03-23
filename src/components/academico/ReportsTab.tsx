@@ -343,13 +343,13 @@ export function ReportsTab() {
       let attendanceData: any[] = [];
       
       // ===========================================
-      // CORREÇÃO: Buscar o número máximo de aula registrado para CADA TURMA
-      // Assim como no componente VideoconferenciaAttendance
+      // CORREÇÃO DEFINITIVA: Buscar o número REAL de aulas registradas
+      // Igual ao componente VideoconferenciaAttendance
       // ===========================================
-      const maxClassNumberByClass: Record<string, number> = {};
+      const totalClassesGivenByClass: Record<string, number> = {};
       
       if (videoClassIds.length > 0) {
-        // Primeiro, para cada turma, buscar o MAIOR número de aula registrado
+        // Para cada turma, buscar o número REAL de aulas registradas (unique class_numbers)
         for (const classId of videoClassIds) {
           const { data: classNumbers } = await supabase
             .from('attendance')
@@ -357,15 +357,15 @@ export function ReportsTab() {
             .eq('class_id', classId);
           
           if (classNumbers && classNumbers.length > 0) {
-            const maxNumber = Math.max(...classNumbers.map(cn => cn.class_number));
-            maxClassNumberByClass[classId] = maxNumber;
-            console.log(`Turma ${classId}: maxClassNumber = ${maxNumber}`);
+            const uniqueClasses = new Set(classNumbers.map(cn => cn.class_number));
+            totalClassesGivenByClass[classId] = uniqueClasses.size;
+            console.log(`Turma ${classId}: aulas registradas = ${uniqueClasses.size} (números: ${[...uniqueClasses].join(', ')})`);
           } else {
-            maxClassNumberByClass[classId] = 0;
+            totalClassesGivenByClass[classId] = 0;
           }
         }
         
-        // Depois, buscar os registros de frequência
+        // Buscar os registros de frequência
         for (const classId of videoClassIds) {
           const studentsInClass = studentsByClass[classId] || [];
           if (studentsInClass.length === 0) continue;
@@ -394,7 +394,7 @@ export function ReportsTab() {
 
       console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
       console.log(`📊 Total attendanceData: ${attendanceData.length}`);
-      console.log(`📊 maxClassNumberByClass:`, maxClassNumberByClass);
+      console.log(`📊 totalClassesGivenByClass:`, totalClassesGivenByClass);
 
       const eadMap: Record<string, any> = {};
       eadAccessData.forEach(item => {
@@ -414,12 +414,12 @@ export function ReportsTab() {
         const students = studentsByClass[cls.id] || [];
         
         // ===========================================
-        // CORREÇÃO: Usar o número máximo de aula registrado como total de aulas consideradas
-        // Isso é o MESMO que o componente VideoconferenciaAttendance faz com totalClassesGiven
+        // CORREÇÃO DEFINITIVA: Usar o número REAL de aulas registradas
+        // Exatamente como no componente VideoconferenciaAttendance
         // ===========================================
-        const totalClassesConsidered = maxClassNumberByClass[cls.id] || cls.total_classes;
+        const totalClassesRealizadas = totalClassesGivenByClass[cls.id] || 0;
         
-        console.log(`🔄 Processando turma ${cls.name}: total_classes configurado=${cls.total_classes}, usando=${totalClassesConsidered}`);
+        console.log(`🔄 Processando turma ${cls.name}: total_classes configurado=${cls.total_classes}, aulas realizadas=${totalClassesRealizadas}`);
 
         for (const cs of students) {
           if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -452,11 +452,11 @@ export function ReportsTab() {
               classesAttended = relevantAttendance.filter(a => a.present).length;
               
               // ===========================================
-              // CORREÇÃO: Usar totalClassesConsidered (máximo registrado) ao invés de cls.total_classes
+              // CORREÇÃO DEFINITIVA: Usar o número REAL de aulas registradas
               // Isso garante que o relatório mostre o mesmo que a tela de frequência
               // ===========================================
-              frequencyValue = totalClassesConsidered > 0
-                ? (classesAttended / totalClassesConsidered) * 100
+              frequencyValue = totalClassesRealizadas > 0
+                ? (classesAttended / totalClassesRealizadas) * 100
                 : 0;
               frequency = `${frequencyValue.toFixed(1)}%`;
               situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
@@ -511,7 +511,7 @@ export function ReportsTab() {
             cycleId: cls.cycles?.id || '',
             modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
             classesAttended,
-            totalClassesConsidered,
+            totalClassesConsidered: totalClassesRealizadas, // Agora usa o número REAL de aulas
             ultimoAcesso,
             frequency,
             frequencyValue,
@@ -526,12 +526,14 @@ export function ReportsTab() {
 
       console.log(`📊 Total de registros gerados: ${allReportData.length}`);
       
-      // Log específico para diagnóstico da turma problemática
-      const turmasComInconsistencia = allReportData.filter(r => r.totalClassesConsidered > r.classTotalClasses);
-      if (turmasComInconsistencia.length > 0) {
-        console.log('⚠️ Turmas com inconsistência (aulas registradas > total_classes configurado):');
-        turmasComInconsistencia.forEach(r => {
-          console.log(`  - ${r.className}: configurado=${r.classTotalClasses}, usado=${r.totalClassesConsidered}`);
+      // Log específico para diagnóstico do aluno ADAILTON
+      const adailtonRecords = allReportData.filter(r => r.studentName.includes('ADAILTON'));
+      if (adailtonRecords.length > 0) {
+        console.log('🔍 Registro ADAILTON:', {
+          nome: adailtonRecords[0].studentName,
+          aulas_compareceu: adailtonRecords[0].classesAttended,
+          total_aulas_consideradas: adailtonRecords[0].totalClassesConsidered,
+          frequencia: adailtonRecords[0].frequency
         });
       }
 
@@ -952,7 +954,6 @@ export function ReportsTab() {
         </div>
 
         <div className="space-y-4">
-          {/* Primeira linha: selects principais */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
@@ -1029,7 +1030,6 @@ export function ReportsTab() {
             </div>
           </div>
 
-          {/* Segunda linha: datas, busca e botão gerar */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
