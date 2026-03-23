@@ -335,32 +335,32 @@ export function ReportsTab() {
     // ===========================================
     
     // Mapa para armazenar o total de aulas por turma
-    const totalClassesGivenByClass: Record<string, number> = {};
-    
-    // Para cada turma de videoconferência, buscar TODOS os registros
-    // e contar números únicos de aula (exatamente como no controle de frequência)
-    for (const classId of videoClassIds) {
-      const { data: allAttendances, error } = await supabase
-        .from('attendance')
-        .select('class_number')
-        .eq('class_id', classId);
-      
-      if (error) {
-        console.error(`Erro ao buscar attendance para turma ${classId}:`, error);
-        totalClassesGivenByClass[classId] = 0;
-        continue;
-      }
-      
-      if (allAttendances && allAttendances.length > 0) {
-        // MESMA LÓGICA DO CONTROLE DE FREQUÊNCIA
-        const uniqueClassNumbers = [...new Set(allAttendances.map(a => a.class_number))];
-        totalClassesGivenByClass[classId] = uniqueClassNumbers.length;
-        
-        console.log(`Turma ${classId}: ${uniqueClassNumbers.length} aulas (${uniqueClassNumbers.sort((a,b)=>a-b).join(', ')})`);
-      } else {
-        totalClassesGivenByClass[classId] = 0;
-      }
-    }
+   const totalClassesGivenByClass: Record<string, number> = {};
+let attendanceData: any[] = [];
+
+if (videoClassIds.length > 0) {
+  const { data: allVideoAttendances, error: attError } = await supabase
+    .from('attendance')
+    .select('*')                          // busca tudo de uma vez
+    .in('class_id', videoClassIds);
+
+  if (attError) throw attError;
+
+  if (allVideoAttendances && allVideoAttendances.length > 0) {
+    attendanceData = allVideoAttendances; // usa para o attendanceMap
+
+    // calcula totalClassesGivenByClass dos MESMOS dados
+    videoClassIds.forEach(classId => {
+      const registrosDaTurma = allVideoAttendances.filter(a => a.class_id === classId);
+      const numerosUnicos = new Set(registrosDaTurma.map(a => a.class_number));
+      totalClassesGivenByClass[classId] = numerosUnicos.size;
+    });
+  } else {
+    videoClassIds.forEach(classId => {
+      totalClassesGivenByClass[classId] = 0;
+    });
+  }
+}
     
     // Agora buscar os registros detalhados por aluno
     let attendanceData: any[] = [];
