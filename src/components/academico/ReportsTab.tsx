@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Filter, FileSpreadsheet, FileText, FileBarChart, RefreshCw, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Filter, FileSpreadsheet, FileText, FileBarChart, RefreshCw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
@@ -36,7 +36,6 @@ interface Class {
   class_time: string;
   total_classes: number;
   modality: string;
-  status: string;
 }
 
 interface ReportData {
@@ -60,18 +59,6 @@ interface ReportData {
   accessDates?: string[];
   enrollmentDate?: string;
   enrollmentType?: 'regular' | 'exceptional';
-  classStatus?: string;
-  classTotalClasses?: number;
-  currentStatus?: string;
-  maxClassNumber?: number;
-  allClassNumbers?: number[];
-}
-
-interface Inconsistency {
-  classId: string;
-  className: string;
-  problem: string;
-  details: string;
 }
 
 export function ReportsTab() {
@@ -82,9 +69,6 @@ export function ReportsTab() {
   const [filteredReportData, setFilteredReportData] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(false);
-  const [recalculating, setRecalculating] = useState(false);
-  const [inconsistencies, setInconsistencies] = useState<Inconsistency[]>([]);
-  const [showInconsistencies, setShowInconsistencies] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -127,194 +111,6 @@ export function ReportsTab() {
     const dateObjects = validDates.map(d => new Date(d));
     const mostRecent = new Date(Math.max(...dateObjects.map(d => d.getTime())));
     return mostRecent.toISOString().split('T')[0];
-  };
-
-  // Função para calcular porcentagem de frequência
-  const calculateFrequencyPercentage = (presentCount: number, totalConsidered: number): number => {
-    if (totalConsidered <= 0) return 0;
-    return (presentCount / totalConsidered) * 100;
-  };
-
-  // Função para validar consistência dos dados
-  const validateDataConsistency = async (): Promise<Inconsistency[]> => {
-    console.log('🔍 Validando consistência dos dados...');
-    const foundInconsistencies: Inconsistency[] = [];
-
-    // Buscar todas as turmas de videoconferência
-    const { data: videoClasses } = await supabase
-      .from('classes')
-      .select('id, name, total_classes, status')
-      .eq('modality', 'VIDEOCONFERENCIA');
-
-    for (const cls of videoClasses || []) {
-      // Buscar registros de frequência
-      const { data: attendanceRecords } = await supabase
-        .from('attendance')
-        .select('class_number, class_date, student_id')
-        .eq('class_id', cls.id);
-
-      const uniqueClasses = new Set(attendanceRecords?.map(a => a.class_number) || []);
-      const uniqueClassNumbers = uniqueClasses.size;
-      const maxClassNumber = Math.max(...(attendanceRecords?.map(a => a.class_number) || [0]));
-
-      // Verificar se o total_classes está menor que o número máximo de aula registrado
-      if (maxClassNumber > cls.total_classes) {
-        foundInconsistencies.push({
-          classId: cls.id,
-          className: cls.name,
-          problem: 'Total de aulas configurado menor que aulas registradas',
-          details: `Total configurado: ${cls.total_classes} | Última aula registrada: ${maxClassNumber}`
-        });
-      }
-
-      // Verificar se turma encerrada tem aulas registradas
-      if (cls.status === 'closed' && uniqueClassNumbers === 0) {
-        foundInconsistencies.push({
-          classId: cls.id,
-          className: cls.name,
-          problem: 'Turma encerrada sem registros de frequência',
-          details: `Nenhuma aula registrada para esta turma.`
-        });
-      }
-
-      // Verificar duplicatas de número de aula
-      const classNumbers = attendanceRecords?.map(a => a.class_number) || [];
-      const duplicates = classNumbers.filter((num, idx) => classNumbers.indexOf(num) !== idx);
-      const uniqueDuplicates = [...new Set(duplicates)];
-      
-      if (uniqueDuplicates.length > 0) {
-        foundInconsistencies.push({
-          classId: cls.id,
-          className: cls.name,
-          problem: 'Números de aula duplicados',
-          details: `Números duplicados: ${uniqueDuplicates.join(', ')}`
-        });
-      }
-    }
-
-    setInconsistencies(foundInconsistencies);
-    return foundInconsistencies;
-  };
-
-  // Função para recalcular status de todos os alunos
-  const recalcAllStatuses = async () => {
-    if (!confirm(
-      '⚠️ ATENÇÃO: Esta ação irá recalcular todos os status de alunos baseado nos dados atuais de frequência.\n\n' +
-      'Isso pode levar alguns minutos dependendo da quantidade de dados.\n\n' +
-      'Deseja continuar?'
-    )) return;
-
-    setRecalculating(true);
-    try {
-      console.log('🔄 Iniciando recálculo em massa...');
-      
-      // Buscar todas as turmas de videoconferência encerradas
-      const { data: classes } = await supabase
-        .from('classes')
-        .select('id, name, total_classes')
-        .eq('modality', 'VIDEOCONFERENCIA')
-        .eq('status', 'closed');
-      
-      let updated = 0;
-      let errors = 0;
-      
-      for (const cls of classes || []) {
-        // Buscar todos os registros de frequência para calcular o número máximo de aula
-        const { data: allAttendances } = await supabase
-          .from('attendance')
-          .select('class_number')
-          .eq('class_id', cls.id);
-        
-        const uniqueClassNumbers = new Set(allAttendances?.map(a => a.class_number) || []);
-        const totalClassesRealizadas = uniqueClassNumbers.size;
-        const maxClassNumber = Math.max(...(allAttendances?.map(a => a.class_number) || [0]));
-        
-        // O total de aulas a considerar é o MAIOR entre total_classes e maxClassNumber
-        const totalToConsider = Math.max(cls.total_classes, maxClassNumber);
-        
-        console.log(`Turma ${cls.name}: config=${cls.total_classes}, realizadas=${totalClassesRealizadas}, max=${maxClassNumber}, considerar=${totalToConsider}`);
-        
-        // Buscar alunos da turma
-        const { data: students } = await supabase
-          .from('class_students')
-          .select('student_id, enrollment_date, enrollment_type, current_status')
-          .eq('class_id', cls.id);
-        
-        for (const student of students || []) {
-          try {
-            // Buscar todas as frequências do aluno
-            const { data: attendances } = await supabase
-              .from('attendance')
-              .select('class_date, present, class_number')
-              .eq('class_id', cls.id)
-              .eq('student_id', student.student_id);
-            
-            if (!attendances || attendances.length === 0) {
-              // Aluno sem frequências = reprovado
-              const newStatus = 'reprovado';
-              
-              if (student.current_status !== newStatus) {
-                await supabase
-                  .from('class_students')
-                  .update({
-                    current_status: newStatus,
-                    status_updated_at: new Date().toISOString()
-                  })
-                  .eq('class_id', cls.id)
-                  .eq('student_id', student.student_id);
-                updated++;
-              }
-              continue;
-            }
-            
-            // Filtrar por data de matrícula se for excepcional
-            let relevantAttendances = attendances;
-            if (student.enrollment_type === 'exceptional' && student.enrollment_date) {
-              const enrollmentDate = extractDatePart(student.enrollment_date);
-              if (enrollmentDate) {
-                relevantAttendances = attendances.filter(att => {
-                  const attDate = extractDatePart(att.class_date);
-                  return attDate && attDate >= enrollmentDate;
-                });
-              }
-            }
-            
-            const presentCount = relevantAttendances.filter(a => a.present).length;
-            const percentage = calculateFrequencyPercentage(presentCount, totalToConsider);
-            const newStatus = percentage >= 60 ? 'aprovado' : 'reprovado';
-            
-            if (student.current_status !== newStatus) {
-              await supabase
-                .from('class_students')
-                .update({
-                  current_status: newStatus,
-                  status_updated_at: new Date().toISOString()
-                })
-                .eq('class_id', cls.id)
-                .eq('student_id', student.student_id);
-              updated++;
-            }
-          } catch (error) {
-            console.error(`Erro ao processar aluno ${student.student_id}:`, error);
-            errors++;
-          }
-        }
-      }
-      
-      alert(`✅ Recálculo concluído!\n\n` +
-            `📊 ${updated} registros atualizados\n` +
-            `❌ ${errors} erros encontrados\n\n` +
-            `Clique em "Atualizar Dados" para ver as alterações.`);
-      
-      // Recarregar relatório
-      handleGenerateReport();
-      
-    } catch (error) {
-      console.error('❌ Erro no recálculo:', error);
-      alert('Erro ao recalcular status. Verifique o console para mais detalhes.');
-    } finally {
-      setRecalculating(false);
-    }
   };
 
   // Carregar dados auxiliares apenas uma vez
@@ -362,7 +158,7 @@ export function ReportsTab() {
     if (!user) return;
     const { data } = await supabase
       .from('classes')
-      .select('id, name, day_of_week, class_time, total_classes, modality, status')
+      .select('id, name, day_of_week, class_time, total_classes, modality')
       .order('name');
     setClasses(data || []);
   };
@@ -442,13 +238,6 @@ export function ReportsTab() {
     try {
       console.log('🔄 Gerando relatório...');
 
-      // Validar consistência dos dados antes de gerar
-      const foundInconsistencies = await validateDataConsistency();
-      if (foundInconsistencies.length > 0) {
-        console.warn('⚠️ Inconsistências encontradas:', foundInconsistencies);
-        setShowInconsistencies(true);
-      }
-
       let classesQuery = supabase
         .from('classes')
         .select(`
@@ -456,7 +245,6 @@ export function ReportsTab() {
           name,
           modality,
           total_classes,
-          status,
           cycle_id,
           courses (name, modality),
           cycles (id, name, start_date, end_date, status)
@@ -552,12 +340,13 @@ export function ReportsTab() {
       }
 
       let attendanceData: any[] = [];
-      // Mapa para armazenar o número máximo de aula por turma
+      
+      // CORREÇÃO: Buscar o número máximo de aula para cada turma
       const maxClassNumberByClass: Record<string, number> = {};
       
       if (videoClassIds.length > 0) {
+        // Primeiro, buscar o maior número de aula registrado para cada turma
         for (const classId of videoClassIds) {
-          // Primeiro, buscar o número máximo de aula registrado para esta turma
           const { data: classNumbers } = await supabase
             .from('attendance')
             .select('class_number')
@@ -570,7 +359,10 @@ export function ReportsTab() {
           } else {
             maxClassNumberByClass[classId] = 0;
           }
-          
+        }
+        
+        // Depois, buscar os registros de frequência
+        for (const classId of videoClassIds) {
           const studentsInClass = studentsByClass[classId] || [];
           if (studentsInClass.length === 0) continue;
 
@@ -616,22 +408,12 @@ export function ReportsTab() {
 
       for (const cls of classes) {
         const students = studentsByClass[cls.id] || [];
-        const maxClassNumber = maxClassNumberByClass[cls.id] || 0;
         
-        // CORREÇÃO CRÍTICA: O total de aulas a considerar é o MAIOR entre:
-        // 1. total_classes da turma (configurado)
-        // 2. O número máximo de aula registrado na tabela attendance
-        const totalClassesToUse = Math.max(cls.total_classes || 0, maxClassNumber);
+        // CORREÇÃO: Usar o número máximo de aula registrado como total de aulas consideradas
+        // Isso resolve o problema onde a turma tem mais aulas do que o total_classes configurado
+        const totalClassesConsidered = maxClassNumberByClass[cls.id] || cls.total_classes;
         
-        console.log(`🔄 Processando turma ${cls.name}:`, {
-          config_total: cls.total_classes,
-          max_registrado: maxClassNumber,
-          usando_total: totalClassesToUse,
-          status: cls.status,
-          alunos: students.length
-        });
-
-        const isClassClosed = cls.status === 'closed';
+        console.log(`🔄 Processando turma ${cls.name}: total_classes configurado=${cls.total_classes}, usando=${totalClassesConsidered}`);
 
         for (const cs of students) {
           if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -642,23 +424,18 @@ export function ReportsTab() {
           const enrollmentType = cs.enrollment_type;
 
           let classesAttended = 0;
-          let totalClassesConsidered = 0;
           let ultimoAcesso = '-';
           let frequency = '';
           let frequencyValue = 0;
           let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
           let totalAccesses = 0;
           let isFrequente = false;
-          let allClassNumbers: number[] = [];
 
           if (cls.modality === 'VIDEOCONFERENCIA') {
             const key = `${cls.id}-${cs.student_id}`;
             const attendanceList = attendanceMap[key] || [];
 
             if (attendanceList.length > 0) {
-              // Extrair todos os números de aula para diagnóstico
-              allClassNumbers = attendanceList.map(a => a.class_number);
-              
               // Filtrar por data de matrícula se for excepcional
               const relevantAttendance = attendanceList.filter(att => {
                 if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
@@ -668,12 +445,11 @@ export function ReportsTab() {
 
               classesAttended = relevantAttendance.filter(a => a.present).length;
               
-              // CORREÇÃO CRÍTICA: Usar o máximo entre total_classes e o maior número de aula registrado
-              totalClassesConsidered = totalClassesToUse;
-              frequencyValue = calculateFrequencyPercentage(classesAttended, totalClassesConsidered);
+              // CORREÇÃO: Usar totalClassesConsidered (máximo registrado) ao invés de cls.total_classes
+              frequencyValue = totalClassesConsidered > 0
+                ? (classesAttended / totalClassesConsidered) * 100
+                : 0;
               frequency = `${frequencyValue.toFixed(1)}%`;
-              
-              // Definir situação baseada na frequência
               situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
               if (relevantAttendance.length > 0) {
@@ -683,7 +459,6 @@ export function ReportsTab() {
               }
             } else {
               classesAttended = 0;
-              totalClassesConsidered = totalClassesToUse;
               frequencyValue = 0;
               frequency = '0.0%';
               situacao = 'INCOMPLETO';
@@ -703,9 +478,9 @@ export function ReportsTab() {
             const validAccesses = allAccesses.filter(date => date !== null) as string[];
             totalAccesses = validAccesses.length;
 
-            totalClassesConsidered = 3;
+            const totalClassesConsideredEAD = 3;
             classesAttended = totalAccesses;
-            frequencyValue = calculateFrequencyPercentage(totalAccesses, 3);
+            frequencyValue = (totalAccesses / totalClassesConsideredEAD) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
 
             if (validAccesses.length > 0) {
@@ -727,7 +502,7 @@ export function ReportsTab() {
             cycleId: cls.cycles?.id || '',
             modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
             classesAttended,
-            totalClassesConsidered,
+            totalClassesConsidered: totalClassesConsidered, // Agora usa o máximo registrado
             ultimoAcesso,
             frequency,
             frequencyValue,
@@ -736,21 +511,21 @@ export function ReportsTab() {
             isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
             enrollmentDate: enrollmentDate || undefined,
             enrollmentType,
-            classStatus: cls.status,
-            classTotalClasses: cls.total_classes,
-            currentStatus: cs.current_status,
-            maxClassNumber,
-            allClassNumbers,
           });
         }
       }
 
       console.log(`📊 Total de registros gerados: ${allReportData.length}`);
       
-      // Log de diagnóstico para o caso específico
+      // Log específico para o caso JANIA TORRES
       const janiaRecords = allReportData.filter(r => r.studentName.includes('JANIA'));
       if (janiaRecords.length > 0) {
-        console.log('🔍 Registro JANIA TORRES:', janiaRecords[0]);
+        console.log('🔍 Registro JANIA TORRES:', {
+          nome: janiaRecords[0].studentName,
+          aulas_compareceu: janiaRecords[0].classesAttended,
+          total_aulas_consideradas: janiaRecords[0].totalClassesConsidered,
+          frequencia: janiaRecords[0].frequency
+        });
       }
 
       allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
@@ -778,7 +553,7 @@ export function ReportsTab() {
     setShouldGenerateReport(true);
   };
 
-  // Exportar para XLSX (mantido igual)
+  // Exportar para XLSX
   const exportToXLSX = () => {
     if (filteredReportData.length === 0) return;
 
@@ -789,45 +564,34 @@ export function ReportsTab() {
       'TURMA',
       'CICLO',
       'MODALIDADE',
-      'STATUS TURMA',
       'TIPO MATRÍCULA',
       'DATA MATRÍCULA',
       'AULAS/ACESSOS',
       'ÚLTIMO ACESSO',
       'FREQUÊNCIA',
       'STATUS MANUAL (EAD)',
-      'SITUAÇÃO',
-      'OBSERVAÇÕES'
+      'SITUAÇÃO'
     ];
 
-    const rows = filteredReportData.map((row) => {
-      let observacoes = '';
-      if (row.modality.includes('Videoconferência') && row.maxClassNumber && row.maxClassNumber > (row.classTotalClasses || 0)) {
-        observacoes = `⚠️ Aulas registradas até ${row.maxClassNumber} (configurado: ${row.classTotalClasses})`;
-      }
-      
-      return [
-        row.unitName,
-        row.studentName,
-        row.studentCpf,
-        row.className,
-        row.cycleName,
-        row.modality,
-        row.classStatus === 'closed' ? 'Encerrada' : 'Ativa',
-        row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
-        row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
-        row.modality.includes('EAD')
-          ? `${row.totalAccesses}/3 acessos`
-          : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
-        row.ultimoAcesso,
-        row.frequency,
-        row.modality.includes('EAD')
-          ? (row.isFrequente ? 'FREQUENTE (manual)' : 'AUSENTE (manual)')
-          : 'N/A',
-        row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
-        observacoes,
-      ];
-    });
+    const rows = filteredReportData.map((row) => [
+      row.unitName,
+      row.studentName,
+      row.studentCpf,
+      row.className,
+      row.cycleName,
+      row.modality,
+      row.enrollmentType === 'exceptional' ? 'Excepcional' : 'Regular',
+      row.enrollmentDate ? formatDateBR(row.enrollmentDate) : '-',
+      row.modality.includes('EAD')
+        ? `${row.totalAccesses}/3 acessos`
+        : `${row.classesAttended}/${row.totalClassesConsidered} aulas`,
+      row.ultimoAcesso,
+      row.frequency,
+      row.modality.includes('EAD')
+        ? (row.isFrequente ? 'FREQUENTE (manual)' : 'AUSENTE (manual)')
+        : 'N/A',
+      row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     
@@ -866,9 +630,253 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Exportar para PDF (mantido igual, omitido por brevidade)
+  // Exportar para PDF (versão original, mantida)
   const exportToPDF = async () => {
-    // ... código existente (mantido igual)
+    if (!reportRef.current || filteredReportData.length === 0) return;
+
+    setExporting(true);
+    
+    try {
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const contentWidth = pageWidth - 2 * margin;
+
+      const createTableElement = (startRow: number, endRow: number) => {
+        const tableElement = document.createElement('table');
+        tableElement.style.width = '100%';
+        tableElement.style.borderCollapse = 'collapse';
+        tableElement.style.fontSize = '8px';
+        tableElement.style.fontFamily = 'Arial, sans-serif';
+        tableElement.style.tableLayout = 'fixed';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+
+        const headers = [
+          'ALUNO', 'TURMA', 'CICLO', 'MODALIDADE',
+          'AULAS/ACESSOS', 'ÚLTIMO ACESSO', 'FREQ.', 'STATUS EAD', 'SITUAÇÃO'
+        ];
+        
+        const columnWidths = ['15%', '28%', '12%', '8%', '8%', '10%', '6%', '8%', '5%'];
+
+        headers.forEach((headerText, idx) => {
+          const th = document.createElement('th');
+          th.textContent = headerText;
+          th.style.padding = '4px 2px';
+          th.style.backgroundColor = '#1e293b';
+          th.style.color = 'white';
+          th.style.border = '1px solid #334155';
+          th.style.textAlign = idx === 1 ? 'left' : 'center';
+          th.style.fontWeight = 'bold';
+          th.style.fontSize = '8px';
+          th.style.width = columnWidths[idx];
+          th.style.wordWrap = 'break-word';
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        tableElement.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        for (let i = startRow; i < endRow && i < filteredReportData.length; i++) {
+          const row = filteredReportData[i];
+          const tr = document.createElement('tr');
+
+          const cells = [
+            row.studentName,
+            row.className,
+            row.cycleName,
+            row.modality.includes('EAD') ? 'EAD' : 'VC',
+            row.modality.includes('EAD')
+              ? `${row.totalAccesses}/3`
+              : `${row.classesAttended}/${row.totalClassesConsidered}`,
+            row.ultimoAcesso,
+            row.frequency,
+            row.modality.includes('EAD')
+              ? (row.isFrequente ? 'FREQ' : 'AUSENTE')
+              : '-',
+            row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
+          ];
+
+          cells.forEach((cellText, idx) => {
+            const td = document.createElement('td');
+            td.textContent = cellText;
+            td.style.padding = '3px 2px';
+            td.style.border = '1px solid #cbd5e1';
+            td.style.fontSize = '7px';
+            td.style.backgroundColor = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+            td.style.wordWrap = 'break-word';
+            td.style.whiteSpace = 'normal';
+            
+            if (idx === 1) {
+              td.style.textAlign = 'left';
+              td.style.verticalAlign = 'top';
+            } else if (idx === 4 || idx === 5 || idx === 6) {
+              td.style.textAlign = 'center';
+            } else {
+              td.style.textAlign = 'center';
+            }
+
+            if (idx === 8) {
+              if (row.modality.includes('EAD') && !row.isFrequente) {
+                td.style.backgroundColor = '#fed7aa';
+                td.style.color = '#9b2c1d';
+              } else if (row.situacao === 'FREQUENTE') {
+                td.style.backgroundColor = '#dcfce7';
+                td.style.color = '#166534';
+              } else if (row.situacao === 'INCOMPLETO') {
+                td.style.backgroundColor = '#fee2e2';
+                td.style.color = '#991b1b';
+              }
+              td.style.fontWeight = 'bold';
+              td.style.textAlign = 'center';
+            }
+            tr.appendChild(td);
+          });
+
+          tbody.appendChild(tr);
+        }
+        tableElement.appendChild(tbody);
+
+        return tableElement;
+      };
+
+      const rowsPerPage = 16;
+      const totalPages = Math.ceil(filteredReportData.length / rowsPerPage);
+
+      for (let page = 0; page < totalPages; page++) {
+        if (page > 0) pdf.addPage();
+
+        try {
+          pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
+        } catch (e) {
+          console.warn('Logo não pôde ser carregada');
+        }
+
+        pdf.setFontSize(16);
+        pdf.setTextColor(30, 41, 59);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
+
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
+
+        pdf.setDrawColor(203, 213, 225);
+        pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
+
+        let yPos = margin + 26;
+        pdf.setFontSize(9);
+        pdf.setTextColor(51, 65, 85);
+
+        const filterInfo: string[] = [];
+
+        const selectedCycle = cycles.find(c => c.id === filters.cycleId);
+        if (selectedCycle) filterInfo.push(`Ciclo: ${selectedCycle.name}`);
+
+        const selectedUnit = units.find(u => u.id === filters.unitId);
+        if (selectedUnit) filterInfo.push(`Unidade: ${selectedUnit.name}`);
+
+        const selectedClass = classes.find(c => c.id === filters.classId);
+        if (selectedClass) filterInfo.push(`Turma: ${selectedClass.name}`);
+
+        if (filters.modality !== 'all') {
+          filterInfo.push(`Modalidade: ${filters.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD'}`);
+        }
+
+        if (filters.startDate && filters.endDate) {
+          filterInfo.push(`Período: ${new Date(filters.startDate).toLocaleDateString('pt-BR')} a ${new Date(filters.endDate).toLocaleDateString('pt-BR')}`);
+        }
+
+        if (filters.studentName) filterInfo.push(`Busca: ${filters.studentName}`);
+
+        pdf.text(filterInfo.join(' • ') || 'Todos os filtros', margin, yPos);
+
+        yPos += 8;
+
+        pdf.setFillColor(59, 130, 246);
+        pdf.roundedRect(margin, yPos, 40, 14, 2, 2, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(8);
+        pdf.text('Total', margin + 5, yPos + 5);
+        pdf.setFontSize(10);
+        pdf.text(stats.totalStudents.toString(), margin + 5, yPos + 11);
+
+        pdf.setFillColor(34, 197, 94);
+        pdf.roundedRect(margin + 50, yPos, 40, 14, 2, 2, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(8);
+        pdf.text('FREQUÊNCIA', margin + 60, yPos + 5);
+        pdf.setFontSize(10);
+        pdf.text(stats.frequentes.toString(), margin + 70, yPos + 11);
+
+        pdf.setFillColor(239, 68, 68);
+        pdf.roundedRect(margin + 100, yPos, 40, 14, 2, 2, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(8);
+        pdf.text('INCOMPLETOS/AUSENTES', margin + 105, yPos + 5);
+        pdf.setFontSize(10);
+        pdf.text(stats.incompletos.toString(), margin + 115, yPos + 11);
+
+        pdf.setTextColor(100, 116, 139);
+        pdf.setFontSize(8);
+        pdf.text(`EAD: ${stats.totalEAD} | VC: ${stats.totalVideoconferencia}`, margin + 150, yPos + 8);
+
+        yPos += 20;
+
+        const tableStartY = yPos;
+        const startRow = page * rowsPerPage;
+        const endRow = Math.min(startRow + rowsPerPage, filteredReportData.length);
+
+        if (startRow < filteredReportData.length) {
+          const tableElement = createTableElement(startRow, endRow);
+
+          const tempDiv = document.createElement('div');
+          tempDiv.style.position = 'absolute';
+          tempDiv.style.left = '-9999px';
+          tempDiv.style.top = '0';
+          tempDiv.style.width = `${contentWidth * 3.78}px`;
+          tempDiv.appendChild(tableElement);
+          document.body.appendChild(tempDiv);
+
+          const canvas = await html2canvas(tableElement, {
+            scale: 2,
+            logging: false,
+            backgroundColor: '#ffffff',
+          });
+
+          const imgData = canvas.toDataURL('image/png');
+          const imgHeight = (canvas.height * contentWidth) / canvas.width;
+
+          pdf.addImage(imgData, 'PNG', margin, tableStartY, contentWidth, imgHeight);
+
+          document.body.removeChild(tempDiv);
+        }
+
+        pdf.setFontSize(8);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(
+          `Página ${page + 1} de ${totalPages} • Total de registros: ${filteredReportData.length}`,
+          pageWidth / 2,
+          pageHeight - 5,
+          { align: 'center' }
+        );
+      }
+
+      pdf.save(`relatorio_academico_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('Erro ao gerar PDF. Tente novamente.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const displayData = filteredReportData;
@@ -889,15 +897,6 @@ export function ReportsTab() {
           <h2 className="text-xl font-semibold text-slate-800">Relatório Acadêmico</h2>
         </div>
         <div className="flex gap-3">
-          <button
-            onClick={recalcAllStatuses}
-            disabled={loading || recalculating}
-            className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50"
-            title="Recalcular status de todos os alunos baseado nos dados atuais"
-          >
-            <RotateCcw className={`w-5 h-5 ${recalculating ? 'animate-spin' : ''}`} />
-            <span>{recalculating ? 'Recalculando...' : 'Recalcular Status'}</span>
-          </button>
           <button
             onClick={handleRefreshReport}
             disabled={loading}
@@ -923,11 +922,11 @@ export function ReportsTab() {
           </button>
           <button
             onClick={exportToPDF}
-            disabled={displayData.length === 0 || loading}
+            disabled={displayData.length === 0 || loading || exporting}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
             <FileText className="w-5 h-5" />
-            <span>Gerar PDF</span>
+            <span>{exporting ? 'Gerando PDF...' : 'Gerar PDF'}</span>
           </button>
         </div>
       </div>
@@ -937,45 +936,7 @@ export function ReportsTab() {
         onClose={() => setIsSyntheticModalOpen(false)}
       />
 
-      {/* Alerta de inconsistências */}
-      {inconsistencies.length > 0 && showInconsistencies && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-start space-x-3">
-            <AlertTriangle className="w-5 h-5 text-yellow-600 mt-0.5" />
-            <div className="flex-1">
-              <h4 className="font-semibold text-yellow-800">Inconsistências Encontradas</h4>
-              <p className="text-sm text-yellow-700 mt-1">
-                Foram encontradas {inconsistencies.length} inconsistência(s) nos dados. 
-                Isso pode afetar a precisão do relatório.
-              </p>
-              <div className="mt-2 max-h-48 overflow-y-auto">
-                {inconsistencies.map((inc, idx) => (
-                  <div key={idx} className="text-xs text-yellow-700 mt-1">
-                    <span className="font-medium">• {inc.className}:</span> {inc.problem}
-                    <span className="text-yellow-600 block ml-4">{inc.details}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-3 flex space-x-3">
-                <button
-                  onClick={() => setShowInconsistencies(false)}
-                  className="text-xs px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
-                >
-                  Fechar
-                </button>
-                <button
-                  onClick={recalcAllStatuses}
-                  className="text-xs px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600"
-                >
-                  Recalcular Status
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Filtros (mantido igual) */}
+      {/* Filtros */}
       <div className="bg-white border border-slate-200 rounded-lg p-6">
         <div className="flex items-center space-x-2 mb-4">
           <Filter className="w-5 h-5 text-slate-600" />
@@ -984,6 +945,7 @@ export function ReportsTab() {
         </div>
 
         <div className="space-y-4">
+          {/* Primeira linha: selects principais */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
@@ -1011,7 +973,7 @@ export function ReportsTab() {
                 <option value="">Todas as turmas</option>
                 {classes.map((cls) => (
                   <option key={cls.id} value={cls.id}>
-                    {cls.name} ({cls.modality}) {cls.status === 'closed' ? '[Encerrada]' : ''}
+                    {cls.name} ({cls.modality})
                   </option>
                 ))}
               </select>
@@ -1060,6 +1022,7 @@ export function ReportsTab() {
             </div>
           </div>
 
+          {/* Segunda linha: datas, busca e botão gerar */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Data Início</label>
@@ -1111,7 +1074,7 @@ export function ReportsTab() {
         )}
       </div>
 
-      {/* Cards de Estatísticas (mantido igual) */}
+      {/* Cards de Estatísticas */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm text-blue-600 font-medium">Total de Alunos</p>
@@ -1143,7 +1106,7 @@ export function ReportsTab() {
         </div>
       </div>
 
-      {/* Barra de distribuição (mantido igual) */}
+      {/* Barra de distribuição */}
       {stats.totalStudents > 0 && (
         <div className="bg-white border border-slate-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
@@ -1194,13 +1157,12 @@ export function ReportsTab() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider w-48">TURMA</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">CICLO</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider">MODALIDADE</th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">AULAS/ACESSOS</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">ÚLTIMO ACESSO</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
-              </tr>
+               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {displayData.map((row, index) => (
@@ -1212,24 +1174,10 @@ export function ReportsTab() {
                   <td className="px-4 py-2 text-sm text-slate-700">
                     <div className="whitespace-normal break-words max-w-xs">
                       {row.className}
-                      {row.maxClassNumber && row.maxClassNumber > (row.classTotalClasses || 0) && (
-                        <div className="text-xs text-orange-500 mt-1">
-                          ⚠️ Aulas até {row.maxClassNumber}
-                        </div>
-                      )}
                     </div>
                   </td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.cycleName}</td>
                   <td className="px-4 py-2 text-sm text-slate-700">{row.modality}</td>
-                  <td className="px-4 py-2 text-sm text-center">
-                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-                      row.classStatus === 'closed' 
-                        ? 'bg-slate-100 text-slate-700' 
-                        : 'bg-green-100 text-green-700'
-                    }`}>
-                      {row.classStatus === 'closed' ? 'Encerrada' : 'Ativa'}
-                    </span>
-                  </td>
                   <td className="px-4 py-2 text-sm text-center font-medium">
                     {row.modality.includes('EAD')
                       ? `${row.totalAccesses}/3 acessos`
@@ -1284,11 +1232,6 @@ export function ReportsTab() {
                           {row.frequencyValue.toFixed(1)}% &lt; 60%
                         </div>
                       )}
-                      {row.maxClassNumber && row.maxClassNumber > (row.classTotalClasses || 0) && (
-                        <div className="text-xs text-orange-500 mt-1">
-                          Aulas registradas: {row.maxClassNumber}
-                        </div>
-                      )}
                     </div>
                   </td>
                 </tr>
@@ -1297,7 +1240,7 @@ export function ReportsTab() {
               {/* Linha de "nenhum dado encontrado" */}
               {displayData.length === 0 && !loading && !initialLoading && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <FileBarChart className="w-12 h-12 text-slate-300 mb-3" />
                       <p className="text-lg">Nenhum dado encontrado</p>
@@ -1312,7 +1255,7 @@ export function ReportsTab() {
               {/* Linha de loading */}
               {loading && (
                 <tr>
-                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <RefreshCw className="w-12 h-12 text-slate-300 mb-3 animate-spin" />
                       <p className="text-lg">Carregando dados...</p>
