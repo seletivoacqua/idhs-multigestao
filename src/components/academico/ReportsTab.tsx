@@ -265,8 +265,6 @@ export function ReportsTab() {
         return;
       }
 
-      console.log(`📚 Total de turmas: ${classes.length}`);
-
       const classIds = classes.map(c => c.id);
 
       const { data: classStudents, error: studentsError } = await supabase
@@ -299,8 +297,6 @@ export function ReportsTab() {
         setLoading(false);
         return;
       }
-
-      console.log(`👥 Total de matrículas: ${classStudents.length}`);
 
       const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
       const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
@@ -343,13 +339,13 @@ export function ReportsTab() {
       let attendanceData: any[] = [];
       
       // ===========================================
-      // CORREÇÃO DEFINITIVA: Buscar o número REAL de aulas registradas
-      // Igual ao componente VideoconferenciaAttendance
+      // SOLUÇÃO GERAL: Buscar o número REAL de aulas registradas
+      // para CADA turma, independente do total_classes configurado
       // ===========================================
       const totalClassesGivenByClass: Record<string, number> = {};
       
       if (videoClassIds.length > 0) {
-        // Para cada turma, buscar o número REAL de aulas registradas (unique class_numbers)
+        // Buscar TODOS os números de aula registrados para cada turma
         for (const classId of videoClassIds) {
           const { data: classNumbers } = await supabase
             .from('attendance')
@@ -357,15 +353,16 @@ export function ReportsTab() {
             .eq('class_id', classId);
           
           if (classNumbers && classNumbers.length > 0) {
-            const uniqueClasses = new Set(classNumbers.map(cn => cn.class_number));
-            totalClassesGivenByClass[classId] = uniqueClasses.size;
-            console.log(`Turma ${classId}: aulas registradas = ${uniqueClasses.size} (números: ${[...uniqueClasses].join(', ')})`);
+            // Contar números ÚNICOS de aula (mesma lógica do controle de frequência)
+            const uniqueClassNumbers = new Set(classNumbers.map(cn => cn.class_number));
+            totalClassesGivenByClass[classId] = uniqueClassNumbers.size;
+            console.log(`Turma ${classId}: aulas registradas = ${uniqueClassNumbers.size} (números: ${[...uniqueClassNumbers].sort((a,b)=>a-b).join(', ')})`);
           } else {
             totalClassesGivenByClass[classId] = 0;
           }
         }
         
-        // Buscar os registros de frequência
+        // Buscar os registros de frequência por aluno
         for (const classId of videoClassIds) {
           const studentsInClass = studentsByClass[classId] || [];
           if (studentsInClass.length === 0) continue;
@@ -392,10 +389,6 @@ export function ReportsTab() {
         }
       }
 
-      console.log(`📊 Total eadAccessData: ${eadAccessData.length}`);
-      console.log(`📊 Total attendanceData: ${attendanceData.length}`);
-      console.log(`📊 totalClassesGivenByClass:`, totalClassesGivenByClass);
-
       const eadMap: Record<string, any> = {};
       eadAccessData.forEach(item => {
         eadMap[`${item.class_id}-${item.student_id}`] = item;
@@ -414,12 +407,13 @@ export function ReportsTab() {
         const students = studentsByClass[cls.id] || [];
         
         // ===========================================
-        // CORREÇÃO DEFINITIVA: Usar o número REAL de aulas registradas
-        // Exatamente como no componente VideoconferenciaAttendance
+        // SOLUÇÃO GERAL: Usar o número REAL de aulas registradas
+        // como denominador, NÃO o total_classes da tabela
         // ===========================================
-        const totalClassesRealizadas = totalClassesGivenByClass[cls.id] || 0;
+        const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
         
-        console.log(`🔄 Processando turma ${cls.name}: total_classes configurado=${cls.total_classes}, aulas realizadas=${totalClassesRealizadas}`);
+        // Se não há aulas registradas, usar 0 como denominador
+        const denominador = totalAulasRealizadas;
 
         for (const cs of students) {
           if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -441,7 +435,7 @@ export function ReportsTab() {
             const key = `${cls.id}-${cs.student_id}`;
             const attendanceList = attendanceMap[key] || [];
 
-            if (attendanceList.length > 0) {
+            if (attendanceList.length > 0 && denominador > 0) {
               // Filtrar por data de matrícula se for excepcional
               const relevantAttendance = attendanceList.filter(att => {
                 if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
@@ -451,13 +445,8 @@ export function ReportsTab() {
 
               classesAttended = relevantAttendance.filter(a => a.present).length;
               
-              // ===========================================
-              // CORREÇÃO DEFINITIVA: Usar o número REAL de aulas registradas
-              // Isso garante que o relatório mostre o mesmo que a tela de frequência
-              // ===========================================
-              frequencyValue = totalClassesRealizadas > 0
-                ? (classesAttended / totalClassesRealizadas) * 100
-                : 0;
+              // CORREÇÃO GERAL: Usar o número REAL de aulas registradas
+              frequencyValue = (classesAttended / denominador) * 100;
               frequency = `${frequencyValue.toFixed(1)}%`;
               situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
@@ -511,7 +500,7 @@ export function ReportsTab() {
             cycleId: cls.cycles?.id || '',
             modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
             classesAttended,
-            totalClassesConsidered: totalClassesRealizadas, // Agora usa o número REAL de aulas
+            totalClassesConsidered: denominador,
             ultimoAcesso,
             frequency,
             frequencyValue,
@@ -522,19 +511,6 @@ export function ReportsTab() {
             enrollmentType,
           });
         }
-      }
-
-      console.log(`📊 Total de registros gerados: ${allReportData.length}`);
-      
-      // Log específico para diagnóstico do aluno ADAILTON
-      const adailtonRecords = allReportData.filter(r => r.studentName.includes('ADAILTON'));
-      if (adailtonRecords.length > 0) {
-        console.log('🔍 Registro ADAILTON:', {
-          nome: adailtonRecords[0].studentName,
-          aulas_compareceu: adailtonRecords[0].classesAttended,
-          total_aulas_consideradas: adailtonRecords[0].totalClassesConsidered,
-          frequencia: adailtonRecords[0].frequency
-        });
       }
 
       allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
@@ -726,8 +702,6 @@ export function ReportsTab() {
             if (idx === 1) {
               td.style.textAlign = 'left';
               td.style.verticalAlign = 'top';
-            } else if (idx === 4 || idx === 5 || idx === 6) {
-              td.style.textAlign = 'center';
             } else {
               td.style.textAlign = 'center';
             }
