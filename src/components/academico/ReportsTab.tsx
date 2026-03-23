@@ -6,7 +6,6 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import logoImg from '../../assets/image.png';
-const [exporting, setExporting] = useState(false);
 import SyntheticReportModal from './SyntheticReportModal';
 import {
   formatDateToDisplay,
@@ -82,6 +81,7 @@ export function ReportsTab() {
   });
 
   const [shouldGenerateReport, setShouldGenerateReport] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
