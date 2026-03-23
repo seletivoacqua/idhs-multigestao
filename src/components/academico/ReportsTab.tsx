@@ -69,6 +69,7 @@ export function ReportsTab() {
   const [filteredReportData, setFilteredReportData] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
@@ -81,7 +82,6 @@ export function ReportsTab() {
   });
 
   const [shouldGenerateReport, setShouldGenerateReport] = useState(false);
-  const [exporting, setExporting] = useState(false);
 
   const { user } = useAuth();
   const reportRef = useRef<HTMLDivElement>(null);
@@ -342,11 +342,14 @@ export function ReportsTab() {
 
       let attendanceData: any[] = [];
       
-      // CORREÇÃO: Buscar o número máximo de aula para cada turma
+      // ===========================================
+      // CORREÇÃO: Buscar o número máximo de aula registrado para CADA TURMA
+      // Assim como no componente VideoconferenciaAttendance
+      // ===========================================
       const maxClassNumberByClass: Record<string, number> = {};
       
       if (videoClassIds.length > 0) {
-        // Primeiro, buscar o maior número de aula registrado para cada turma
+        // Primeiro, para cada turma, buscar o MAIOR número de aula registrado
         for (const classId of videoClassIds) {
           const { data: classNumbers } = await supabase
             .from('attendance')
@@ -410,8 +413,10 @@ export function ReportsTab() {
       for (const cls of classes) {
         const students = studentsByClass[cls.id] || [];
         
+        // ===========================================
         // CORREÇÃO: Usar o número máximo de aula registrado como total de aulas consideradas
-        // Isso resolve o problema onde a turma tem mais aulas do que o total_classes configurado
+        // Isso é o MESMO que o componente VideoconferenciaAttendance faz com totalClassesGiven
+        // ===========================================
         const totalClassesConsidered = maxClassNumberByClass[cls.id] || cls.total_classes;
         
         console.log(`🔄 Processando turma ${cls.name}: total_classes configurado=${cls.total_classes}, usando=${totalClassesConsidered}`);
@@ -446,7 +451,10 @@ export function ReportsTab() {
 
               classesAttended = relevantAttendance.filter(a => a.present).length;
               
+              // ===========================================
               // CORREÇÃO: Usar totalClassesConsidered (máximo registrado) ao invés de cls.total_classes
+              // Isso garante que o relatório mostre o mesmo que a tela de frequência
+              // ===========================================
               frequencyValue = totalClassesConsidered > 0
                 ? (classesAttended / totalClassesConsidered) * 100
                 : 0;
@@ -503,7 +511,7 @@ export function ReportsTab() {
             cycleId: cls.cycles?.id || '',
             modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
             classesAttended,
-            totalClassesConsidered: totalClassesConsidered, // Agora usa o máximo registrado
+            totalClassesConsidered,
             ultimoAcesso,
             frequency,
             frequencyValue,
@@ -518,14 +526,12 @@ export function ReportsTab() {
 
       console.log(`📊 Total de registros gerados: ${allReportData.length}`);
       
-      // Log específico para o caso JANIA TORRES
-      const janiaRecords = allReportData.filter(r => r.studentName.includes('JANIA'));
-      if (janiaRecords.length > 0) {
-        console.log('🔍 Registro JANIA TORRES:', {
-          nome: janiaRecords[0].studentName,
-          aulas_compareceu: janiaRecords[0].classesAttended,
-          total_aulas_consideradas: janiaRecords[0].totalClassesConsidered,
-          frequencia: janiaRecords[0].frequency
+      // Log específico para diagnóstico da turma problemática
+      const turmasComInconsistencia = allReportData.filter(r => r.totalClassesConsidered > r.classTotalClasses);
+      if (turmasComInconsistencia.length > 0) {
+        console.log('⚠️ Turmas com inconsistência (aulas registradas > total_classes configurado):');
+        turmasComInconsistencia.forEach(r => {
+          console.log(`  - ${r.className}: configurado=${r.classTotalClasses}, usado=${r.totalClassesConsidered}`);
         });
       }
 
@@ -631,7 +637,7 @@ export function ReportsTab() {
     XLSX.writeFile(workbook, `relatorio_academico_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Exportar para PDF (versão original, mantida)
+  // Exportar para PDF
   const exportToPDF = async () => {
     if (!reportRef.current || filteredReportData.length === 0) return;
 
@@ -1163,7 +1169,7 @@ export function ReportsTab() {
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
-               </tr>
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
               {displayData.map((row, index) => (
