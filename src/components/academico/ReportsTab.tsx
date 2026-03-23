@@ -362,18 +362,7 @@ if (videoClassIds.length > 0) {
   }
 }
     
-    // Agora buscar os registros detalhados por aluno
-    let attendanceData: any[] = [];
-    for (const classId of videoClassIds) {
-      const { data: records, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('class_id', classId);
-      
-      if (!error && records) {
-        attendanceData.push(...records);
-      }
-    }
+   
 
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
