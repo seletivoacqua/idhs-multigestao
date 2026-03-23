@@ -236,52 +236,7 @@ const generateReport = async () => {
   setLoading(true);
 
   try {
-    // ===========================================
-    // SOLUÇÃO: Buscar dados DIRETAMENTE da turma problemática
-    // independente de filtros
-    // ===========================================
-    
-    const TURMA_PROBLEMATICA_ID = '971e1c83-9956-4084-b0e3-bfd93b0ced78';
-    
-    // Buscar dados da turma problemática DIRETAMENTE
-    const { data: turmaDireta, error: turmaError } = await supabase
-      .from('classes')
-      .select(`
-        id,
-        name,
-        modality,
-        total_classes,
-        cycle_id,
-        courses (name, modality),
-        cycles (id, name, start_date, end_date, status)
-      `)
-      .eq('id', TURMA_PROBLEMATICA_ID)
-      .single();
-    
-    if (!turmaError && turmaDireta) {
-      console.log('✅ Turma problemática encontrada diretamente:', turmaDireta.name);
-      
-      // Buscar TODOS os registros de attendance desta turma
-      const { data: attendanceDireto, error: attError } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('class_id', TURMA_PROBLEMATICA_ID);
-      
-      if (!attError && attendanceDireto) {
-        const uniqueNumbers = [...new Set(attendanceDireto.map(a => a.class_number))];
-        console.log(`📊 Aulas da turma problemática: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
-        console.log(`📈 Total de aulas: ${uniqueNumbers.length}`);
-        
-        if (uniqueNumbers.length === 6) {
-          console.log('🎉 SUCESSO! A turma tem 6 aulas!');
-        }
-      }
-    }
-    
-    // ===========================================
-    // CONTINUAR COM O RELATÓRIO NORMAL
-    // ===========================================
-    
+    // 1. Buscar turmas
     let classesQuery = supabase
       .from('classes')
       .select(`
@@ -300,26 +255,16 @@ const generateReport = async () => {
 
     const { data: classes, error: classesError } = await classesQuery;
     if (classesError) throw classesError;
-    
-    // GARANTIR que a turma problemática esteja na lista
-    let todasClasses = [...(classes || [])];
-    const turmaJaExiste = todasClasses.some(c => c.id === TURMA_PROBLEMATICA_ID);
-    
-    if (!turmaJaExiste && turmaDireta) {
-      console.log('⚠️ Turma problemática não estava nos filtros, adicionando manualmente');
-      todasClasses.push(turmaDireta);
-    }
-    
-    if (todasClasses.length === 0) {
+    if (!classes || classes.length === 0) {
       setReportData([]);
       setFilteredReportData([]);
       setLoading(false);
       return;
     }
 
-    const classIds = todasClasses.map(c => c.id);
+    const classIds = classes.map(c => c.id);
 
-    // Buscar alunos matriculados
+    // 2. Buscar alunos matriculados
     const { data: classStudents, error: studentsError } = await supabase
       .from('class_students')
       .select(`
@@ -351,8 +296,8 @@ const generateReport = async () => {
       return;
     }
 
-    const eadClassIds = todasClasses.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
-    const videoClassIds = todasClasses.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
+    const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
+    const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
 
     const studentsByClass: Record<string, typeof classStudents> = {};
     classStudents.forEach(cs => {
@@ -360,7 +305,7 @@ const generateReport = async () => {
       studentsByClass[cs.class_id].push(cs);
     });
 
-    // Buscar dados EAD
+    // 3. Buscar dados EAD
     let eadAccessData: any[] = [];
     if (eadClassIds.length > 0) {
       for (const classId of eadClassIds) {
@@ -368,35 +313,84 @@ const generateReport = async () => {
           .from('ead_access')
           .select('*')
           .eq('class_id', classId);
-        if (!error && data) eadAccessData.push(...data);
+        
+        if (!error && data) {
+          eadAccessData.push(...data);
+        }
       }
     }
 
-    // Buscar dados de attendance para TODAS as turmas de videoconferência
+    // ===========================================
+    // SOLUÇÃO DEFINITIVA: Buscar TODOS os registros de attendance
+    // usando paginação para não perder registros
+    // ===========================================
+    
     const totalClassesGivenByClass: Record<string, number> = {};
     let attendanceData: any[] = [];
 
-    for (const classId of videoClassIds) {
-      const { data: records, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('class_id', classId);
-      
-      if (!error && records && records.length > 0) {
-        const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
-        totalClassesGivenByClass[classId] = uniqueNumbers.length;
-        attendanceData.push(...records);
+    if (videoClassIds.length > 0) {
+      for (const classId of videoClassIds) {
+        console.log(`🔍 Buscando registros para turma: ${classId}`);
         
-        if (classId === TURMA_PROBLEMATICA_ID) {
-          console.log(`\n🔍 TURMA PROBLEMÁTICA:`);
-          console.log(`   Registros: ${records.length}`);
-          console.log(`   Números de aula: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
-          console.log(`   Total: ${uniqueNumbers.length}`);
+        // Buscar com paginação para garantir todos os registros
+        let allRecords: any[] = [];
+        let page = 0;
+        let hasMore = true;
+        const pageSize = 1000;
+        
+        while (hasMore) {
+          const from = page * pageSize;
+          const to = from + pageSize - 1;
+          
+          const { data: records, error, count } = await supabase
+            .from('attendance')
+            .select('*', { count: 'exact' })
+            .eq('class_id', classId)
+            .range(from, to);
+          
+          if (error) {
+            console.error(`❌ Erro na turma ${classId}:`, error);
+            hasMore = false;
+            break;
+          }
+          
+          if (records && records.length > 0) {
+            allRecords.push(...records);
+            console.log(`   Página ${page + 1}: ${records.length} registros (total até agora: ${allRecords.length})`);
+            
+            // Se recebemos menos registros que o pageSize, é a última página
+            if (records.length < pageSize) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+          } else {
+            hasMore = false;
+          }
         }
-      } else {
-        totalClassesGivenByClass[classId] = 0;
+        
+        console.log(`   Total de registros encontrados: ${allRecords.length}`);
+        
+        if (allRecords.length > 0) {
+          // Calcular números únicos de aula
+          const uniqueNumbers = [...new Set(allRecords.map(r => r.class_number))];
+          totalClassesGivenByClass[classId] = uniqueNumbers.length;
+          
+          console.log(`   Números de aula: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
+          console.log(`   Total de aulas únicas: ${uniqueNumbers.length}`);
+          
+          // Adicionar todos os registros
+          attendanceData.push(...allRecords);
+        } else {
+          totalClassesGivenByClass[classId] = 0;
+          console.log(`   ⚠️ Nenhum registro encontrado`);
+        }
       }
     }
+
+    console.log(`\n📊 RESUMO FINAL:`);
+    console.log(`   Total de registros de attendance: ${attendanceData.length}`);
+    console.log(`   Aulas por turma:`, totalClassesGivenByClass);
 
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
@@ -412,9 +406,13 @@ const generateReport = async () => {
 
     const allReportData: ReportData[] = [];
 
-    for (const cls of todasClasses) {
+    for (const cls of classes) {
       const students = studentsByClass[cls.id] || [];
       const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
+      
+      console.log(`\n📚 Turma: ${cls.name} (${cls.modality})`);
+      console.log(`   Aulas registradas: ${totalAulasRealizadas}`);
+      console.log(`   Alunos: ${students.length}`);
 
       for (const cs of students) {
         if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
@@ -437,11 +435,14 @@ const generateReport = async () => {
           const attendanceList = attendanceMap[key] || [];
 
           if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
-            const relevantAttendance = attendanceList.filter(att => {
-              if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
-              const attDate = extractDatePart(att.class_date);
-              return attDate && attDate >= enrollmentDate;
-            });
+            // Filtrar por data de matrícula se for excepcional
+            let relevantAttendance = attendanceList;
+            if (enrollmentType === 'exceptional' && enrollmentDate) {
+              relevantAttendance = attendanceList.filter(att => {
+                const attDate = extractDatePart(att.class_date);
+                return attDate && attDate >= enrollmentDate;
+              });
+            }
 
             classesAttended = relevantAttendance.filter(a => a.present).length;
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
@@ -475,14 +476,13 @@ const generateReport = async () => {
 
           frequencyValue = (totalAccesses / 3) * 100;
           frequency = `${frequencyValue.toFixed(1)}%`;
+          situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
+          classesAttended = totalAccesses;
 
           if (validAccesses.length > 0) {
             const mostRecent = getMostRecentDate(validAccesses);
             ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
           }
-
-          situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
-          classesAttended = totalAccesses;
         }
 
         allReportData.push({
@@ -510,7 +510,6 @@ const generateReport = async () => {
     }
 
     console.log(`\n✅ Relatório final: ${allReportData.length} registros`);
-    console.log(`📊 Aulas por turma:`, totalClassesGivenByClass);
 
     allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
     setReportData(allReportData);
