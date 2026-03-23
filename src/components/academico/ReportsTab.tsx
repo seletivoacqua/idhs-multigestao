@@ -230,265 +230,284 @@ export function ReportsTab() {
     });
   };
 
-  const generateReport = async () => {
-    if (!user) return;
+ const generateReport = async () => {
+  if (!user) return;
 
-    setLoading(true);
-    setInitialLoading(false);
+  setLoading(true);
 
-    try {
-      console.log('🔄 Gerando relatório...');
+  try {
+    // 1. Buscar turmas
+    let classesQuery = supabase
+      .from('classes')
+      .select(`
+        id,
+        name,
+        modality,
+        total_classes,
+        cycle_id,
+        courses (name, modality),
+        cycles (id, name, start_date, end_date, status)
+      `);
 
-      let classesQuery = supabase
-        .from('classes')
-        .select(`
+    if (filters.cycleId) {
+      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+    }
+
+    const { data: classes, error: classesError } = await classesQuery;
+    if (classesError) throw classesError;
+    if (!classes || classes.length === 0) {
+      setReportData([]);
+      setFilteredReportData([]);
+      setLoading(false);
+      return;
+    }
+
+    const classIds = classes.map(c => c.id);
+
+    // 2. Buscar alunos matriculados
+    const { data: classStudents, error: studentsError } = await supabase
+      .from('class_students')
+      .select(`
+        id,
+        student_id,
+        class_id,
+        enrollment_date,
+        enrollment_type,
+        current_status,
+        students (
           id,
-          name,
-          modality,
-          total_classes,
-          cycle_id,
-          courses (name, modality),
-          cycles (id, name, start_date, end_date, status)
-        `);
-
-      if (filters.cycleId) {
-        classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-      }
-
-      const { data: classes, error: classesError } = await classesQuery;
-
-      if (classesError) throw classesError;
-      if (!classes || classes.length === 0) {
-        setReportData([]);
-        setFilteredReportData([]);
-        setLoading(false);
-        return;
-      }
-
-      const classIds = classes.map(c => c.id);
-
-      const { data: classStudents, error: studentsError } = await supabase
-        .from('class_students')
-        .select(`
-          id,
-          student_id,
-          class_id,
-          enrollment_date,
-          enrollment_type,
-          current_status,
-          students (
+          full_name,
+          cpf,
+          unit_id,
+          units (
             id,
-            full_name,
-            cpf,
-            unit_id,
-            units (
-              id,
-              name,
-              municipality
-            )
+            name,
+            municipality
           )
-        `)
-        .in('class_id', classIds);
+        )
+      `)
+      .in('class_id', classIds);
 
-      if (studentsError) throw studentsError;
-      if (!classStudents || classStudents.length === 0) {
-        setReportData([]);
-        setFilteredReportData([]);
-        setLoading(false);
-        return;
-      }
+    if (studentsError) throw studentsError;
+    if (!classStudents || classStudents.length === 0) {
+      setReportData([]);
+      setFilteredReportData([]);
+      setLoading(false);
+      return;
+    }
 
-      const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
-      const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
+    const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
+    const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
 
-      const studentsByClass: Record<string, typeof classStudents> = {};
-      classStudents.forEach(cs => {
-        if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
-        studentsByClass[cs.class_id].push(cs);
-      });
+    const studentsByClass: Record<string, typeof classStudents> = {};
+    classStudents.forEach(cs => {
+      if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
+      studentsByClass[cs.class_id].push(cs);
+    });
 
-      let eadAccessData: any[] = [];
-      if (eadClassIds.length > 0) {
-        const studentIds = [
-          ...new Set(
-            classStudents
-              .filter(cs => eadClassIds.includes(cs.class_id))
-              .map(cs => cs.student_id)
-          )
-        ];
+    // 3. Buscar dados EAD
+    let eadAccessData: any[] = [];
+    if (eadClassIds.length > 0) {
+      const studentIds = [
+        ...new Set(
+          classStudents
+            .filter(cs => eadClassIds.includes(cs.class_id))
+            .map(cs => cs.student_id)
+        )
+      ];
 
-        if (studentIds.length > 0) {
-          const batchSize = 900;
-          for (let i = 0; i < eadClassIds.length; i += batchSize) {
-            const classBatch = eadClassIds.slice(i, i + batchSize);
-            for (let j = 0; j < studentIds.length; j += batchSize) {
-              const studentBatch = studentIds.slice(j, j + batchSize);
-              const { data, error } = await supabase
-                .from('ead_access')
-                .select('*')
-                .in('class_id', classBatch)
-                .in('student_id', studentBatch);
-
-              if (error) console.error('Erro EAD:', error);
-              else eadAccessData = [...eadAccessData, ...(data || [])];
-            }
-          }
-        }
-      }
-
-      // ===========================================
-      // CORREÇÃO: Buscar TODOS os registros de attendance
-      // ===========================================
-      let attendanceData: any[] = [];
-      const totalClassesGivenByClass: Record<string, number> = {};
-
-      if (videoClassIds.length > 0) {
-        for (const classId of videoClassIds) {
-          const { data: records, error } = await supabase
-            .from('attendance')
+      if (studentIds.length > 0) {
+        for (const classId of eadClassIds) {
+          const { data, error } = await supabase
+            .from('ead_access')
             .select('*')
             .eq('class_id', classId);
           
-          if (error) {
-            console.error(`Erro ao buscar attendance:`, error);
-            totalClassesGivenByClass[classId] = 0;
-            continue;
-          }
-          
-          if (records && records.length > 0) {
-            const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
-            totalClassesGivenByClass[classId] = uniqueNumbers.length;
-            attendanceData.push(...records);
-          } else {
-            totalClassesGivenByClass[classId] = 0;
+          if (!error && data) {
+            eadAccessData.push(...data);
           }
         }
       }
+    }
 
-      const eadMap: Record<string, any> = {};
-      eadAccessData.forEach(item => {
-        eadMap[`${item.class_id}-${item.student_id}`] = item;
-      });
+    // ===========================================
+    // SOLUÇÃO DEFINITIVA: Usar a MESMA lógica do controle de frequência
+    // ===========================================
+    
+    // Mapa para armazenar o total de aulas por turma
+    const totalClassesGivenByClass: Record<string, number> = {};
+    
+    // Para cada turma de videoconferência, buscar TODOS os registros
+    // e contar números únicos de aula (exatamente como no controle de frequência)
+    for (const classId of videoClassIds) {
+      const { data: allAttendances, error } = await supabase
+        .from('attendance')
+        .select('class_number')
+        .eq('class_id', classId);
+      
+      if (error) {
+        console.error(`Erro ao buscar attendance para turma ${classId}:`, error);
+        totalClassesGivenByClass[classId] = 0;
+        continue;
+      }
+      
+      if (allAttendances && allAttendances.length > 0) {
+        // MESMA LÓGICA DO CONTROLE DE FREQUÊNCIA
+        const uniqueClassNumbers = [...new Set(allAttendances.map(a => a.class_number))];
+        totalClassesGivenByClass[classId] = uniqueClassNumbers.length;
+        
+        console.log(`Turma ${classId}: ${uniqueClassNumbers.length} aulas (${uniqueClassNumbers.sort((a,b)=>a-b).join(', ')})`);
+      } else {
+        totalClassesGivenByClass[classId] = 0;
+      }
+    }
+    
+    // Agora buscar os registros detalhados por aluno
+    let attendanceData: any[] = [];
+    for (const classId of videoClassIds) {
+      const { data: records, error } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('class_id', classId);
+      
+      if (!error && records) {
+        attendanceData.push(...records);
+      }
+    }
 
-      const attendanceMap: Record<string, any[]> = {};
-      attendanceData.forEach(item => {
-        const key = `${item.class_id}-${item.student_id}`;
-        if (!attendanceMap[key]) attendanceMap[key] = [];
-        attendanceMap[key].push(item);
-      });
+    const eadMap: Record<string, any> = {};
+    eadAccessData.forEach(item => {
+      eadMap[`${item.class_id}-${item.student_id}`] = item;
+    });
 
-      const allReportData: ReportData[] = [];
+    const attendanceMap: Record<string, any[]> = {};
+    attendanceData.forEach(item => {
+      const key = `${item.class_id}-${item.student_id}`;
+      if (!attendanceMap[key]) attendanceMap[key] = [];
+      attendanceMap[key].push(item);
+    });
 
-      for (const cls of classes) {
-        const students = studentsByClass[cls.id] || [];
-        const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
+    const allReportData: ReportData[] = [];
 
-        for (const cs of students) {
-          if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
+    for (const cls of classes) {
+      const students = studentsByClass[cls.id] || [];
+      
+      // USAR O TOTAL CALCULADO PELA MESMA LÓGICA DO CONTROLE DE FREQUÊNCIA
+      const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
+      
+      console.log(`\n📚 Turma: ${cls.name}`);
+      console.log(`   Aulas registradas (pela lógica do controle): ${totalAulasRealizadas}`);
 
-          const unitId = cs.students?.unit_id || '';
-          const unitName = cs.students?.units?.name || 'Não informado';
-          const enrollmentDate = extractDatePart(cs.enrollment_date);
-          const enrollmentType = cs.enrollment_type;
+      for (const cs of students) {
+        if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
 
-          let classesAttended = 0;
-          let ultimoAcesso = '-';
-          let frequency = '';
-          let frequencyValue = 0;
-          let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
-          let totalAccesses = 0;
-          let isFrequente = false;
+        const unitId = cs.students?.unit_id || '';
+        const unitName = cs.students?.units?.name || 'Não informado';
+        const enrollmentDate = extractDatePart(cs.enrollment_date);
+        const enrollmentType = cs.enrollment_type;
 
-          if (cls.modality === 'VIDEOCONFERENCIA') {
-            const key = `${cls.id}-${cs.student_id}`;
-            const attendanceList = attendanceMap[key] || [];
+        let classesAttended = 0;
+        let ultimoAcesso = '-';
+        let frequency = '';
+        let frequencyValue = 0;
+        let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
+        let totalAccesses = 0;
+        let isFrequente = false;
 
-            if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
-              const relevantAttendance = attendanceList.filter(att => {
-                if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
-                const attDate = extractDatePart(att.class_date);
-                return attDate && attDate >= enrollmentDate;
-              });
+        if (cls.modality === 'VIDEOCONFERENCIA') {
+          const key = `${cls.id}-${cs.student_id}`;
+          const attendanceList = attendanceMap[key] || [];
 
-              classesAttended = relevantAttendance.filter(a => a.present).length;
-              frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
-              frequency = `${frequencyValue.toFixed(1)}%`;
-              situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
+          if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
+            const relevantAttendance = attendanceList.filter(att => {
+              if (enrollmentType !== 'exceptional' || !enrollmentDate) return true;
+              const attDate = extractDatePart(att.class_date);
+              return attDate && attDate >= enrollmentDate;
+            });
 
-              if (relevantAttendance.length > 0) {
-                const dates = relevantAttendance.map(a => a.class_date);
-                const mostRecent = getMostRecentDate(dates);
-                ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
-              }
-            } else {
-              classesAttended = 0;
-              frequencyValue = 0;
-              frequency = '0.0%';
-              situacao = 'INCOMPLETO';
-              ultimoAcesso = '-';
-            }
-          } else {
-            const key = `${cls.id}-${cs.student_id}`;
-            const accessData = eadMap[key];
-            isFrequente = accessData?.is_frequente === true;
-
-            const allAccesses = [
-              accessData?.access_date_1,
-              accessData?.access_date_2,
-              accessData?.access_date_3,
-            ];
-            const validAccesses = allAccesses.filter(date => date !== null) as string[];
-            totalAccesses = validAccesses.length;
-
-            const totalClassesConsideredEAD = 3;
-            classesAttended = totalAccesses;
-            frequencyValue = (totalAccesses / totalClassesConsideredEAD) * 100;
+            classesAttended = relevantAttendance.filter(a => a.present).length;
+            
+            // CÁLCULO USANDO O TOTAL REAL DE AULAS
+            frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
+            situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
 
-            if (validAccesses.length > 0) {
-              const mostRecent = getMostRecentDate(validAccesses);
+            if (relevantAttendance.length > 0) {
+              const dates = relevantAttendance.map(a => a.class_date);
+              const mostRecent = getMostRecentDate(dates);
               ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
+          } else {
+            classesAttended = 0;
+            frequencyValue = 0;
+            frequency = '0.0%';
+            situacao = 'INCOMPLETO';
+            ultimoAcesso = '-';
+          }
+        } else {
+          const key = `${cls.id}-${cs.student_id}`;
+          const accessData = eadMap[key];
+          isFrequente = accessData?.is_frequente === true;
 
-            situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
+          const allAccesses = [
+            accessData?.access_date_1,
+            accessData?.access_date_2,
+            accessData?.access_date_3,
+          ];
+          const validAccesses = allAccesses.filter(date => date !== null) as string[];
+          totalAccesses = validAccesses.length;
+
+          frequencyValue = (totalAccesses / 3) * 100;
+          frequency = `${frequencyValue.toFixed(1)}%`;
+
+          if (validAccesses.length > 0) {
+            const mostRecent = getMostRecentDate(validAccesses);
+            ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
           }
 
-          allReportData.push({
-            unitId,
-            unitName,
-            studentName: cs.students?.full_name || 'Nome não informado',
-            studentCpf: cs.students?.cpf || '',
-            className: cls.name,
-            classId: cls.id,
-            cycleName: cls.cycles?.name || 'Sem ciclo',
-            cycleId: cls.cycles?.id || '',
-            modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
-            classesAttended,
-            totalClassesConsidered: totalAulasRealizadas,
-            ultimoAcesso,
-            frequency,
-            frequencyValue,
-            situacao,
-            totalAccesses,
-            isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
-            enrollmentDate: enrollmentDate || undefined,
-            enrollmentType,
-          });
+          situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
+          classesAttended = totalAccesses;
         }
+
+        allReportData.push({
+          unitId,
+          unitName,
+          studentName: cs.students?.full_name || 'Nome não informado',
+          studentCpf: cs.students?.cpf || '',
+          className: cls.name,
+          classId: cls.id,
+          cycleName: cls.cycles?.name || 'Sem ciclo',
+          cycleId: cls.cycles?.id || '',
+          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+          classesAttended,
+          totalClassesConsidered: totalAulasRealizadas,
+          ultimoAcesso,
+          frequency,
+          frequencyValue,
+          situacao,
+          totalAccesses,
+          isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
+          enrollmentDate: enrollmentDate || undefined,
+          enrollmentType,
+        });
       }
-
-      allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-      setReportData(allReportData);
-      applyFilters();
-
-    } catch (error) {
-      console.error('❌ Erro ao gerar relatório:', error);
-      alert('Erro ao carregar dados. Tente novamente.');
-    } finally {
-      setLoading(false);
-      setShouldGenerateReport(false);
     }
-  };
+
+    console.log(`\n✅ Relatório final: ${allReportData.length} registros`);
+    console.log(`📊 Totais por turma:`, totalClassesGivenByClass);
+
+    allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setReportData(allReportData);
+    applyFilters();
+
+  } catch (error) {
+    console.error('❌ Erro ao gerar relatório:', error);
+    alert('Erro ao carregar dados. Tente novamente.');
+  } finally {
+    setLoading(false);
+    setShouldGenerateReport(false);
+  }
+};
 
   // ===========================================
   // FUNÇÕES DE HANDLE - DEFINIDAS AQUI
