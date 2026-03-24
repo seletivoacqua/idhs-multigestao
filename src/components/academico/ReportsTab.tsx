@@ -447,7 +447,7 @@ const generateReport = async () => {
             classesAttended = relevantAttendance.filter(a => a.present).length;
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
-            situacao = frequencyValue >= 60 ? 'FREQUENTE' : 'INCOMPLETO';
+            situacao = frequencyValue >= 50 ? 'FREQUENTE' : 'INCOMPLETO';
 
             if (relevantAttendance.length > 0) {
               const dates = relevantAttendance.map(a => a.class_date);
