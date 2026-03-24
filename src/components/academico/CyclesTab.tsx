@@ -2549,7 +2549,7 @@ function VideoconferenciaAttendance({
     setClassNumber(nextClassNumber);
   }, [nextClassNumber]);
 
-  // 🔥 FILTRO PRINCIPAL - Quando a data da aula mudar
+  // Filtro quando a data da aula mudar
   useEffect(() => {
     if (classDate && students.length > 0) {
       const eligible: any[] = [];
@@ -2558,13 +2558,11 @@ function VideoconferenciaAttendance({
       students.forEach((student: any) => {
         const enrollmentDate = extractDatePart(student.enrollment_date);
         
-        // Se não tem data de matrícula, considera elegível
         if (!enrollmentDate) {
           eligible.push(student);
           return;
         }
         
-        // Comparar datas usando a função utilitária
         if (isDateGreaterOrEqual(classDate, enrollmentDate)) {
           eligible.push(student);
         } else {
@@ -2575,7 +2573,6 @@ function VideoconferenciaAttendance({
       setEligibleStudents(eligible);
       setIgnoredStudents(ignored);
       
-      // Limpar seleções de alunos ignorados
       const newAttendance = { ...attendance };
       ignored.forEach(student => {
         delete newAttendance[student.student_id];
@@ -2610,8 +2607,10 @@ function VideoconferenciaAttendance({
   const validateAttendance = (): boolean => {
     setValidationError(null);
 
-    if (classNumber < 1 || classNumber > classData.total_classes) {
-      setValidationError(`Número da aula deve estar entre 1 e ${classData.total_classes}`);
+    // REMOVIDO: limite do número da aula
+    // Agora aceita qualquer número positivo
+    if (classNumber < 1) {
+      setValidationError('Número da aula deve ser maior que 0');
       return false;
     }
 
@@ -2689,7 +2688,7 @@ function VideoconferenciaAttendance({
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
         <p className="text-sm text-blue-800">
-          <strong>📊 Aulas realizadas:</strong> {totalClassesGiven} de {classData.total_classes}
+          <strong>📊 Aulas realizadas:</strong> {totalClassesGiven}
         </p>
       </div>
 
@@ -2730,13 +2729,13 @@ function VideoconferenciaAttendance({
           <input
             type="number"
             min="1"
-            max={classData.total_classes}
+            // REMOVIDO: max={classData.total_classes}
             value={classNumber}
             onChange={(e) => setClassNumber(parseInt(e.target.value))}
             className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
           <p className="text-xs text-slate-500 mt-1">
-            Próxima aula: {totalClassesGiven + 1}
+            Próxima aula sugerida: {totalClassesGiven + 1}
           </p>
         </div>
         <div>
@@ -3104,7 +3103,6 @@ function AttendanceDetailsModal({ classData, student, onClose }: AttendanceDetai
                           <input
                             type="number"
                             min="1"
-                            max={classData.total_classes}
                             value={editData?.classNumber || 1}
                             onChange={(e) => setEditData({ ...editData!, classNumber: parseInt(e.target.value) })}
                             className="w-20 px-2 py-1 border border-slate-300 rounded focus:ring-2 focus:ring-green-500 text-sm"
