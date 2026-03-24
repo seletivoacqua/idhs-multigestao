@@ -447,6 +447,7 @@ const generateReport = async () => {
             classesAttended = relevantAttendance.filter(a => a.present).length;
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
+            // ALTERAÇÃO: Mudado de 60% para 50%
             situacao = frequencyValue >= 50 ? 'FREQUENTE' : 'INCOMPLETO';
 
             if (relevantAttendance.length > 0) {
@@ -1065,13 +1066,13 @@ const generateReport = async () => {
         </div>
 
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <p className="text-sm text-green-600 font-medium">Frequentes (≥60%)</p>
+          <p className="text-sm text-green-600 font-medium">Frequentes (≥50%)</p>
           <p className="text-2xl font-bold text-green-700">{stats.frequentes}</p>
           <p className="text-xs text-green-600 mt-1">{frequentesPercentage.toFixed(1)}% do total</p>
         </div>
 
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-sm text-red-600 font-medium">Incompletos/Ausentes (&lt;60%)</p>
+          <p className="text-sm text-red-600 font-medium">Incompletos/Ausentes (&lt;50%)</p>
           <p className="text-2xl font-bold text-red-700">{stats.incompletos}</p>
           <p className="text-xs text-red-600 mt-1">{incompletosPercentage.toFixed(1)}% do total</p>
         </div>
@@ -1085,7 +1086,7 @@ const generateReport = async () => {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
           <p className="text-sm text-amber-600 font-medium">Videoconferência</p>
           <p className="text-2xl font-bold text-amber-700">{stats.totalVideoconferencia}</p>
-          <p className="text-xs text-amber-600 mt-1">Mínimo 60% de presença</p>
+          <p className="text-xs text-amber-600 mt-1">Mínimo 50% de presença</p>
         </div>
       </div>
 
@@ -1171,7 +1172,7 @@ const generateReport = async () => {
                     <span className={
                       row.modality.includes('EAD')
                         ? 'text-slate-600'
-                        : row.frequencyValue >= 60
+                        : row.frequencyValue >= 50
                           ? 'text-green-600'
                           : 'text-red-600'
                     }>
@@ -1212,7 +1213,7 @@ const generateReport = async () => {
                       </span>
                       {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
                         <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
-                          {row.frequencyValue.toFixed(1)}% &lt; 60%
+                          {row.frequencyValue.toFixed(1)}% &lt; 50%
                         </div>
                       )}
                     </div>
