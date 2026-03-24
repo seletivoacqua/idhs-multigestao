@@ -113,78 +113,90 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return new Date(year, month - 1, day, 12, 0, 0).toISOString();
   }, []);
 
-  const createCashFlowTransaction = useCallback(async (
-    invoiceId: string,
-    invoiceNumber: string,
-    unitName: string,
-    amount: number,
-    paymentDate: string
-  ): Promise<boolean> => {
-    if (!user) return false;
+ const createCashFlowTransaction = useCallback(async (
+  invoiceId: string,
+  invoiceNumber: string,
+  unitName: string,
+  amount: number,
+  paymentDate: string
+): Promise<boolean> => {
+  if (!user) return false;
 
-    try {
-      const transactionDate = paymentDate.split('T')[0];
+  try {
+    const transactionDate = paymentDate.split('T')[0];
 
-      const { data: existing, error: checkError } = await supabase
-        .from('cash_flow_transactions')
-        .select('id, amount, transaction_date')
-        .eq('invoice_id', invoiceId)
-        .maybeSingle();
+    const { data: existing, error: checkError } = await supabase
+      .from('cash_flow_transactions')
+      .select('id, amount, transaction_date')
+      .eq('invoice_id', invoiceId)
+      .maybeSingle();
 
-      if (checkError) {
-        console.error('Erro ao verificar transação existente:', checkError);
-        return false;
-      }
-
-      if (existing) {
-        if (Math.abs(existing.amount - amount) > 0.01 || existing.transaction_date !== transactionDate) {
-          const { error: updateError } = await supabase
-            .from('cash_flow_transactions')
-            .update({
-              amount: amount,
-              transaction_date: transactionDate,
-              description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-              fonte_pagadora: unitName,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', existing.id);
-
-          if (updateError) {
-            console.error('Erro ao atualizar transação:', updateError);
-            return false;
-          }
-        }
-      } else {
-        const transactionData = {
-          user_id: user.id,
-          type: 'income',
-          amount: amount,
-          method: 'transferencia',
-          description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-          transaction_date: transactionDate,
-          fonte_pagadora: unitName,
-          com_nota: true,
-          invoice_id: invoiceId,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-
-        const { error: insertError } = await supabase
-          .from('cash_flow_transactions')
-          .insert([transactionData]);
-
-        if (insertError) {
-          console.error('Erro ao criar transação:', insertError);
-          return false;
-        }
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Erro ao criar/atualizar transação:', error);
+    if (checkError) {
+      console.error('Erro ao verificar transação existente:', checkError);
       return false;
     }
-  }, [user]);
+
+    if (existing) {
+      // ✅ Verifica se realmente precisa atualizar (evita updates desnecessários)
+      const needsUpdate = 
+        Math.abs(existing.amount - amount) > 0.01 || 
+        existing.transaction_date !== transactionDate;
+
+      if (needsUpdate) {
+        const { error: updateError } = await supabase
+          .from('cash_flow_transactions')
+          .update({
+            amount: amount,
+            transaction_date: transactionDate,
+            description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+            fonte_pagadora: unitName,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+
+        if (updateError) {
+          console.error('Erro ao atualizar transação:', updateError);
+          return false;
+        }
+        
+        console.log(`Transação atualizada: NF ${invoiceNumber} - valor R$ ${amount}`);
+      } else {
+        console.log(`Transação já está correta: NF ${invoiceNumber}`);
+      }
+    } else {
+      // Insere nova transação
+      const transactionData = {
+        user_id: user.id,
+        type: 'income',
+        amount: amount,
+        method: 'transferencia',
+        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+        transaction_date: transactionDate,
+        fonte_pagadora: unitName,
+        com_nota: true,
+        invoice_id: invoiceId,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: insertError } = await supabase
+        .from('cash_flow_transactions')
+        .insert([transactionData]);
+
+      if (insertError) {
+        console.error('Erro ao criar transação:', insertError);
+        return false;
+      }
+      
+      console.log(`Transação criada: NF ${invoiceNumber} - valor R$ ${amount}`);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Erro ao criar/atualizar transação:', error);
+    return false;
+  }
+}, [user]);
 
   const syncPaidInvoicesWithCashFlow = useCallback(async () => {
     if (!user) return;
@@ -522,152 +534,178 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   }, [selectedFile, user]);
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
+const handleSubmit = useCallback(async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!user) return;
 
-    let invoiceId = editingInvoice?.id;
-    let shouldUpdateCashFlow = false;
-    let cashFlowAmount: number | null = null;
-    let cashFlowDate: string | null = null;
+  let invoiceId = editingInvoice?.id;
+  let shouldUpdateCashFlow = false;
+  let cashFlowAmount: number | null = null;
+  let cashFlowDate: string | null = null;
 
-    const selectedUnit = units.find(u => u.id === formData.unit_id);
+  const selectedUnit = units.find(u => u.id === formData.unit_id);
 
-    const unitId = selectedUnit?.id || null;
-    const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
+  const unitId = selectedUnit?.id || null;
+  const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
 
-    const issueDateISO = createISODate(formData.issue_date);
-    const dueDateISO = createISODate(formData.due_date);
-    const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
-    const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
+  const issueDateISO = createISODate(formData.issue_date);
+  const dueDateISO = createISODate(formData.due_date);
+  const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
+  const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
-    if (formData.payment_status === 'PAGO') {
-      cashFlowAmount = formData.paid_value ? parseFloat(formData.paid_value) : parseFloat(formData.net_value);
+  // ✅ CORREÇÃO: Calcula o valor a ser usado no fluxo de caixa
+  const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
+  const finalCashFlowAmount = formData.payment_status === 'PAGO' 
+    ? (newPaidValue || parseFloat(formData.net_value))
+    : null;
+
+  if (editingInvoice) {
+    const previousStatus = editingInvoice.payment_status;
+    const newStatus = formData.payment_status;
+    const previousPaidValue = editingInvoice.paid_value;
+    const previousPaymentDate = editingInvoice.payment_date;
+
+    // ✅ CORREÇÃO: Verifica se precisa atualizar o fluxo de caixa
+    // Caso 1: Nota mudou de NÃO PAGO para PAGO
+    // Caso 2: Nota já estava PAGO mas o valor pago foi alterado
+    // Caso 3: Nota já estava PAGO mas a data de pagamento foi alterada
+    if (
+      (previousStatus !== 'PAGO' && newStatus === 'PAGO') ||
+      (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) ||
+      (newStatus === 'PAGO' && previousPaymentDate !== paymentDateISO)
+    ) {
+      shouldUpdateCashFlow = true;
+      cashFlowAmount = finalCashFlowAmount;
       cashFlowDate = paymentDateISO;
     }
 
-    if (editingInvoice) {
-      const previousStatus = editingInvoice.payment_status;
-      const newStatus = formData.payment_status;
-      const previousPaidValue = editingInvoice.paid_value;
-      const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
+    // ✅ CORREÇÃO: Se a nota foi desmarcada como PAGO, precisa remover do fluxo de caixa
+    if (previousStatus === 'PAGO' && newStatus !== 'PAGO') {
+      // Remove a transação do fluxo de caixa
+      const { error: deleteError } = await supabase
+        .from('cash_flow_transactions')
+        .delete()
+        .eq('invoice_id', editingInvoice.id);
 
-      if (
-        (previousStatus !== 'PAGO' && newStatus === 'PAGO') ||
-        (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) ||
-        (newStatus === 'PAGO' && editingInvoice.payment_date !== paymentDateISO)
-      ) {
-        shouldUpdateCashFlow = true;
+      if (deleteError) {
+        console.error('Erro ao remover transação do fluxo de caixa:', deleteError);
       }
+    }
 
-      const { error } = await supabase
+    // Atualiza a nota fiscal
+    const { error } = await supabase
+      .from('invoices')
+      .update({
+        unit_id: unitId,
+        unit_name: unitName,
+        cnpj_cpf: formData.cnpj_cpf,
+        exercise_month: formData.exercise_month,
+        exercise_year: formData.exercise_year,
+        document_type: formData.document_type,
+        invoice_number: formData.invoice_number,
+        issue_date: issueDateISO,
+        due_date: dueDateISO,
+        net_value: parseFloat(formData.net_value),
+        payment_status: formData.payment_status,
+        payment_date: paymentDateISO,
+        paid_value: newPaidValue,
+        data_prevista: dataPrevistaISO,
+        estado: formData.estado,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', editingInvoice.id);
+
+    if (error) {
+      console.error('Error updating invoice:', error);
+      alert('Erro ao atualizar nota fiscal');
+      return;
+    }
+  } else {
+    // Código para nova nota (mantido igual)
+    const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
+      p_user_id: user.id,
+    });
+
+    if (rpcError) {
+      console.error('Error getting next item number:', rpcError);
+      alert('Erro ao gerar número do item');
+      return;
+    }
+
+    const { data: newInvoice, error } = await supabase.from('invoices').insert([
+      {
+        user_id: user.id,
+        item_number: itemNumberData || 1,
+        unit_id: unitId,
+        unit_name: unitName,
+        cnpj_cpf: formData.cnpj_cpf,
+        exercise_month: formData.exercise_month,
+        exercise_year: formData.exercise_year,
+        document_type: formData.document_type,
+        invoice_number: formData.invoice_number,
+        issue_date: issueDateISO,
+        due_date: dueDateISO,
+        net_value: parseFloat(formData.net_value),
+        payment_status: formData.payment_status,
+        payment_date: paymentDateISO,
+        paid_value: newPaidValue,
+        data_prevista: dataPrevistaISO,
+        estado: formData.estado,
+      },
+    ]).select();
+
+    if (error) {
+      console.error('Error adding invoice:', error);
+      alert('Erro ao adicionar nota fiscal');
+      return;
+    }
+
+    if (newInvoice && newInvoice.length > 0) {
+      invoiceId = newInvoice[0].id;
+      if (formData.payment_status === 'PAGO') {
+        shouldUpdateCashFlow = true;
+        cashFlowAmount = finalCashFlowAmount;
+        cashFlowDate = paymentDateISO;
+      }
+    }
+  }
+
+  // Upload de documento (mantido igual)
+  if (selectedFile && invoiceId) {
+    const documentUrl = await uploadDocument(invoiceId);
+
+    if (documentUrl) {
+      await supabase
         .from('invoices')
         .update({
-          unit_id: unitId,
-          unit_name: unitName,
-          cnpj_cpf: formData.cnpj_cpf,
-          exercise_month: formData.exercise_month,
-          exercise_year: formData.exercise_year,
-          document_type: formData.document_type,
-          invoice_number: formData.invoice_number,
-          issue_date: issueDateISO,
-          due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
-          payment_status: formData.payment_status,
-          payment_date: paymentDateISO,
-          paid_value: newPaidValue,
-          data_prevista: dataPrevistaISO,
-          estado: formData.estado,
-          updated_at: new Date().toISOString(),
+          document_url: documentUrl,
+          document_name: selectedFile.name,
+          document_type: selectedFile.type,
         })
-        .eq('id', editingInvoice.id);
-
-      if (error) {
-        console.error('Error updating invoice:', error);
-        alert('Erro ao atualizar nota fiscal');
-        return;
-      }
-    } else {
-      const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
-        p_user_id: user.id,
-      });
-
-      if (rpcError) {
-        console.error('Error getting next item number:', rpcError);
-        alert('Erro ao gerar número do item');
-        return;
-      }
-
-      const { data: newInvoice, error } = await supabase.from('invoices').insert([
-        {
-          user_id: user.id,
-          item_number: itemNumberData || 1,
-          unit_id: unitId,
-          unit_name: unitName,
-          cnpj_cpf: formData.cnpj_cpf,
-          exercise_month: formData.exercise_month,
-          exercise_year: formData.exercise_year,
-          document_type: formData.document_type,
-          invoice_number: formData.invoice_number,
-          issue_date: issueDateISO,
-          due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
-          payment_status: formData.payment_status,
-          payment_date: paymentDateISO,
-          paid_value: formData.paid_value ? parseFloat(formData.paid_value) : null,
-          data_prevista: dataPrevistaISO,
-          estado: formData.estado,
-        },
-      ]).select();
-
-      if (error) {
-        console.error('Error adding invoice:', error);
-        alert('Erro ao adicionar nota fiscal');
-        return;
-      }
-
-      if (newInvoice && newInvoice.length > 0) {
-        invoiceId = newInvoice[0].id;
-        if (formData.payment_status === 'PAGO') {
-          shouldUpdateCashFlow = true;
-        }
-      }
+        .eq('id', invoiceId);
     }
+  }
 
-    if (selectedFile && invoiceId) {
-      const documentUrl = await uploadDocument(invoiceId);
+  // ✅ CORREÇÃO: Atualiza/Cria a transação no fluxo de caixa
+  if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
+    const success = await createCashFlowTransaction(
+      invoiceId,
+      formData.invoice_number,
+      unitName,
+      cashFlowAmount,
+      cashFlowDate
+    );
 
-      if (documentUrl) {
-        await supabase
-          .from('invoices')
-          .update({
-            document_url: documentUrl,
-            document_name: selectedFile.name,
-            document_type: selectedFile.type,
-          })
-          .eq('id', invoiceId);
-      }
+    if (success && onInvoicePaid) {
+      setTimeout(() => {
+        onInvoicePaid(Date.now());
+      }, 100);
     }
+  }
 
-    if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
-      const success = await createCashFlowTransaction(
-        invoiceId,
-        formData.invoice_number,
-        unitName,
-        cashFlowAmount,
-        cashFlowDate
-      );
-
-      if (success && onInvoicePaid) {
-        setTimeout(() => {
-          onInvoicePaid(Date.now());
-        }, 100);
-      }
-    }
-
-    resetForm();
-    await loadInvoices();
-  }, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, loadInvoices]);
+  resetForm();
+  await loadInvoices();
+}, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, loadInvoices]);
 
   const resetForm = useCallback(() => {
     setShowAddModal(false);
