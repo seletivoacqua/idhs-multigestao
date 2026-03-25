@@ -25,22 +25,33 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
 
   const { signIn, signUp, resetPassword, updatePassword } = useAuth();
 
-  useEffect(() => {
-    if (isResetPasswordRoute) {
-      setIsResetPassword(true);
-    } else {
-      const checkResetToken = async () => {
-        const hashParams = new URLSearchParams(window.location.hash.substring(1));
-        const type = hashParams.get('type');
+ useEffect(() => {
+  // Se a rota já for de reset, ativa direto
+  if (isResetPasswordRoute) {
+    setIsResetPassword(true);
+  }
 
-        if (type === 'recovery') {
-          setIsResetPassword(true);
-        }
-      };
+  // Fallback: verifica o hash da URL
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  const type = hashParams.get('type');
 
-      checkResetToken();
+  if (type === 'recovery') {
+    setIsResetPassword(true);
+  }
+
+  // 🔥 ESSENCIAL: escuta o Supabase confirmar recuperação de senha
+  const { data: listener } = supabase.auth.onAuthStateChange(
+    (event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsResetPassword(true);
+      }
     }
-  }, [isResetPasswordRoute]);
+  );
+
+  return () => {
+    listener.subscription.unsubscribe();
+  };
+}, [isResetPasswordRoute]);
 
   const handleResetPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
