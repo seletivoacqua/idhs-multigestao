@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, Search, Loader2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -20,13 +20,20 @@ interface Student {
   };
 }
 
+const PAGE_SIZE = 20;
+
 export function StudentsTab() {
   const [students, setStudents] = useState<Student[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const { user } = useAuth();
+  const searchTimeout = useRef<NodeJS.Timeout>();
 
   const [formData, setFormData] = useState({
     full_name: '',
@@ -36,10 +43,17 @@ export function StudentsTab() {
     unit_id: '',
   });
 
+  // Carregar unidades ao montar
   useEffect(() => {
     loadUnits();
-    loadStudents();
-  }, []);
+  }, [user]);
+
+  // Recarregar alunos quando o termo de busca mudar (reset)
+  useEffect(() => {
+    if (user) {
+      loadStudents(true);
+    }
+  }, [searchTerm]);
 
   const loadUnits = async () => {
     if (!user) return;
@@ -47,74 +61,116 @@ export function StudentsTab() {
     const { data, error } = await supabase
       .from('units')
       .select('id, name')
+      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
-      console.error('Error loading units:', error);
+      console.error('Erro ao carregar unidades:', error);
       return;
     }
 
     setUnits(data || []);
   };
 
-  const loadStudents = async () => {
+  const loadStudents = async (reset = false) => {
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from('students')
-      .select('*, units(name)')
-      .order('full_name');
-
-    if (error) {
-      console.error('Error loading students:', error);
-      return;
+    const currentPage = reset ? 0 : page;
+    if (reset) {
+      setStudents([]);
+      setPage(0);
+      setHasMore(true);
     }
 
-    setStudents(data || []);
+    setLoading(true);
+
+    try {
+      let query = supabase
+        .from('students')
+        .select('*, units(name)', { count: 'exact' })
+        .eq('user_id', user.id)
+        .order('full_name')
+        .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+
+      if (searchTerm.trim()) {
+        query = query.or(
+          `full_name.ilike.%${searchTerm}%,cpf.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`
+        );
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) throw error;
+
+      setTotalCount(count || 0);
+
+      if (reset) {
+        setStudents(data || []);
+      } else {
+        setStudents((prev) => [...prev, ...(data || [])]);
+      }
+
+      const loadedCount = (reset ? data?.length : students.length + (data?.length || 0)) || 0;
+      setHasMore(loadedCount < (count || 0));
+      setPage(currentPage + 1);
+    } catch (error: any) {
+      console.error('Erro ao carregar alunos:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    searchTimeout.current = setTimeout(() => {
+      setSearchTerm(value);
+    }, 300);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
 
-    if (editingStudent) {
-      const { error } = await supabase
-        .from('students')
-        .update({
-          full_name: formData.full_name,
-          cpf: formData.cpf,
-          email: formData.email,
-          phone: formData.phone,
-          unit_id: formData.unit_id || null,
-        })
-        .eq('id', editingStudent.id);
+    try {
+      if (editingStudent) {
+        const { error } = await supabase
+          .from('students')
+          .update({
+            full_name: formData.full_name,
+            cpf: formData.cpf,
+            email: formData.email,
+            phone: formData.phone,
+            unit_id: formData.unit_id || null,
+          })
+          .eq('id', editingStudent.id);
 
-      if (error) {
-        console.error('Error updating student:', error);
-        alert('Erro ao atualizar aluno');
-        return;
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('students').insert([
+          {
+            user_id: user.id,
+            full_name: formData.full_name,
+            cpf: formData.cpf,
+            email: formData.email,
+            phone: formData.phone,
+            unit_id: formData.unit_id || null,
+          },
+        ]);
+
+        if (error) throw error;
       }
-    } else {
-      const { error } = await supabase.from('students').insert([
-        {
-          user_id: user.id,
-          full_name: formData.full_name,
-          cpf: formData.cpf,
-          email: formData.email,
-          phone: formData.phone,
-          unit_id: formData.unit_id || null,
-        },
-      ]);
 
-      if (error) {
-        console.error('Error adding student:', error);
-        alert('Erro ao adicionar aluno');
-        return;
+      resetForm();
+      loadStudents(true);
+    } catch (error: any) {
+      console.error('Erro ao salvar aluno:', error);
+      if (error.code === '23505') {
+        alert('Já existe um aluno com este CPF para sua conta.');
+      } else {
+        alert('Erro ao salvar aluno. Verifique os dados e tente novamente.');
       }
     }
-
-    resetForm();
-    loadStudents();
   };
 
   const resetForm = () => {
@@ -141,12 +197,11 @@ export function StudentsTab() {
     setShowModal(true);
   };
 
-  const filteredStudents = students.filter(
-    (student) =>
-      student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      student.cpf.includes(searchTerm) ||
-      student.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleLoadMore = () => {
+    if (!loading && hasMore) {
+      loadStudents(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -157,10 +212,9 @@ export function StudentsTab() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
             <input
               type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar aluno..."
-              className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent w-full sm:w-64"
+              onChange={handleSearchChange}
+              placeholder="Buscar por nome, CPF ou e-mail..."
+              className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent w-full sm:w-80"
             />
           </div>
           <button
@@ -187,7 +241,7 @@ export function StudentsTab() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {filteredStudents.map((student) => (
+              {students.map((student) => (
                 <tr key={student.id} className="hover:bg-slate-50">
                   <td className="px-6 py-4 text-sm text-slate-800 font-medium">{student.full_name}</td>
                   <td className="px-6 py-4 text-sm text-slate-700">{student.cpf}</td>
@@ -206,7 +260,7 @@ export function StudentsTab() {
                   </td>
                 </tr>
               ))}
-              {filteredStudents.length === 0 && (
+              {students.length === 0 && !loading && (
                 <tr>
                   <td colSpan={6} className="px-6 py-8 text-center text-slate-500">
                     {searchTerm ? 'Nenhum aluno encontrado' : 'Nenhum aluno cadastrado'}
@@ -216,6 +270,30 @@ export function StudentsTab() {
             </tbody>
           </table>
         </div>
+
+        {hasMore && students.length > 0 && !loading && (
+          <div className="px-6 py-4 border-t border-slate-200 text-center">
+            <button
+              onClick={handleLoadMore}
+              className="px-4 py-2 text-sm text-green-600 hover:text-green-700 font-medium"
+            >
+              Carregar mais alunos
+            </button>
+          </div>
+        )}
+
+        {loading && students.length === 0 && (
+          <div className="px-6 py-8 text-center text-slate-500">
+            <Loader2 className="w-6 h-6 animate-spin inline mr-2" />
+            Carregando...
+          </div>
+        )}
+
+        {!loading && students.length > 0 && totalCount > 0 && (
+          <div className="px-6 py-3 border-t border-slate-200 text-sm text-slate-500 bg-slate-50">
+            Mostrando {students.length} de {totalCount} aluno{totalCount !== 1 ? 's' : ''}
+          </div>
+        )}
       </div>
 
       {showModal && (
@@ -226,7 +304,7 @@ export function StudentsTab() {
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Nome Completo</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Nome Completo *</label>
                 <input
                   type="text"
                   value={formData.full_name}
@@ -237,7 +315,7 @@ export function StudentsTab() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">CPF</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">CPF *</label>
                 <input
                   type="text"
                   value={formData.cpf}
@@ -253,7 +331,6 @@ export function StudentsTab() {
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  required
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
@@ -264,13 +341,12 @@ export function StudentsTab() {
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  required
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Unidade *</label>
                 <select
                   value={formData.unit_id}
                   onChange={(e) => setFormData({ ...formData, unit_id: e.target.value })}
