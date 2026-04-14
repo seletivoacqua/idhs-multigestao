@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Search, Loader2 } from 'lucide-react';
+import { Plus, Search, Loader2, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -32,6 +32,9 @@ export function StudentsTab() {
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const { user } = useAuth();
   const searchTimeout = useRef<NodeJS.Timeout>();
 
@@ -197,6 +200,42 @@ export function StudentsTab() {
     setShowModal(true);
   };
 
+  const handleDeleteClick = (student: Student) => {
+    setStudentToDelete(student);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!studentToDelete) return;
+    
+    setDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', studentToDelete.id);
+
+      if (error) throw error;
+
+      // Fechar modal e limpar estado
+      setShowDeleteConfirm(false);
+      setStudentToDelete(null);
+      
+      // Recarregar lista de alunos
+      loadStudents(true);
+    } catch (error: any) {
+      console.error('Erro ao excluir aluno:', error);
+      alert('Erro ao excluir aluno. Tente novamente.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteConfirm(false);
+    setStudentToDelete(null);
+  };
+
   const handleLoadMore = () => {
     if (!loading && hasMore) {
       loadStudents(false);
@@ -251,12 +290,21 @@ export function StudentsTab() {
                     {student.units?.name || '-'}
                   </td>
                   <td className="px-6 py-4">
-                    <button
-                      onClick={() => handleEdit(student)}
-                      className="text-green-600 hover:text-green-700 text-sm font-medium"
-                    >
-                      Editar
-                    </button>
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={() => handleEdit(student)}
+                        className="text-green-600 hover:text-green-700 text-sm font-medium"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(student)}
+                        className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center space-x-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Excluir</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -296,6 +344,7 @@ export function StudentsTab() {
         )}
       </div>
 
+      {/* Modal de Cadastro/Edição */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-[95vw] sm:w-[85vw] md:w-[60vw] lg:w-[50vw] xl:w-[40vw] max-w-lg p-6 max-h-[90vh] overflow-y-auto">
@@ -378,6 +427,37 @@ export function StudentsTab() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Confirmação de Exclusão */}
+      {showDeleteConfirm && studentToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-[95vw] sm:w-[85vw] md:w-[60vw] lg:w-[50vw] xl:w-[40vw] max-w-md p-6">
+            <h3 className="text-xl font-bold text-slate-800 mb-4">Confirmar Exclusão</h3>
+            <p className="text-slate-600 mb-6">
+              Tem certeza que deseja excluir o aluno <strong>{studentToDelete.full_name}</strong>?
+              <br />
+              Esta ação não pode ser desfeita.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={handleDeleteCancel}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                <span>{deleting ? 'Excluindo...' : 'Excluir'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
