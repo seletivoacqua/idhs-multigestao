@@ -64,7 +64,6 @@ export function StudentsTab() {
     const { data, error } = await supabase
       .from('units')
       .select('id, name')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
@@ -91,7 +90,6 @@ export function StudentsTab() {
       let query = supabase
         .from('students')
         .select('*, units(name)', { count: 'exact' })
-        .eq('user_id', user.id)
         .order('full_name')
         .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
 
