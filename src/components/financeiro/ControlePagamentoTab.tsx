@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X, Building2 } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X, Building2, Copy } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -63,6 +63,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [syncingInvoices, setSyncingInvoices] = useState(false);
+  const [isReplicating, setIsReplicating] = useState(false); // ✅ NOVO ESTADO
 
   const [filters, setFilters] = useState<FilterState>(() => {
     const savedFilters = localStorage.getItem('controlePagamento_filters');
@@ -88,6 +89,33 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
+  // ✅ NOVA FUNÇÃO: Replicar notas do mês atual para o próximo
+  const handleReplicateMonth = async () => {
+    if (!user) return;
+
+    const confirmed = window.confirm(
+      'Todas as notas fiscais do mês atual serão copiadas para o mês seguinte. Deseja continuar?'
+    );
+    if (!confirmed) return;
+
+    setIsReplicating(true);
+    try {
+      const { data, error } = await supabase.rpc('replicate_invoices_to_next_month', {
+        p_user_id: user.id,
+      });
+
+      if (error) throw error;
+
+      alert(`✅ ${data} nota(s) fiscal(is) replicada(s) com sucesso!`);
+      await loadInvoices(); // recarrega a lista
+    } catch (error: any) {
+      console.error('Erro ao replicar:', error);
+      alert(`❌ Erro ao replicar: ${error.message}`);
+    } finally {
+      setIsReplicating(false);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem('controlePagamento_filters', JSON.stringify(filters));
   }, [filters]);
@@ -106,7 +134,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }).format(value);
   }, []);
 
-  // ✅ CORRIGIDO: retorna null em vez de string vazia
   const createISODate = useCallback((dateString: string): string | null => {
     if (!dateString) return null;
     const [year, month, day] = dateString.split('-').map(Number);
@@ -137,7 +164,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
 
     if (existing) {
-      // ✅ Verifica se realmente precisa atualizar (evita updates desnecessários)
       const needsUpdate = 
         Math.abs(existing.amount - amount) > 0.01 || 
         existing.transaction_date !== transactionDate;
@@ -164,7 +190,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         console.log(`Transação já está correta: NF ${invoiceNumber}`);
       }
     } else {
-      // Insere nova transação
       const transactionData = {
         user_id: user.id,
         type: 'income',
@@ -553,7 +578,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
   const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
   const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
-  // ✅ CORREÇÃO: Calcula o valor a ser usado no fluxo de caixa
   const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
   const finalCashFlowAmount = formData.payment_status === 'PAGO' 
     ? (newPaidValue || parseFloat(formData.net_value))
@@ -565,10 +589,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
     const previousPaidValue = editingInvoice.paid_value;
     const previousPaymentDate = editingInvoice.payment_date;
 
-    // ✅ CORREÇÃO: Verifica se precisa atualizar o fluxo de caixa
-    // Caso 1: Nota mudou de NÃO PAGO para PAGO
-    // Caso 2: Nota já estava PAGO mas o valor pago foi alterado
-    // Caso 3: Nota já estava PAGO mas a data de pagamento foi alterada
     if (
       (previousStatus !== 'PAGO' && newStatus === 'PAGO') ||
       (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) ||
@@ -579,9 +599,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       cashFlowDate = paymentDateISO;
     }
 
-    // ✅ CORREÇÃO: Se a nota foi desmarcada como PAGO, precisa remover do fluxo de caixa
     if (previousStatus === 'PAGO' && newStatus !== 'PAGO') {
-      // Remove a transação do fluxo de caixa
       const { error: deleteError } = await supabase
         .from('cash_flow_transactions')
         .delete()
@@ -592,7 +610,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       }
     }
 
-    // Atualiza a nota fiscal
     const { error } = await supabase
       .from('invoices')
       .update({
@@ -621,7 +638,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       return;
     }
   } else {
-    // Código para nova nota (mantido igual)
     const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
       p_user_id: user.id,
     });
@@ -670,7 +686,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
     }
   }
 
-  // Upload de documento (mantido igual)
   if (selectedFile && invoiceId) {
     const documentUrl = await uploadDocument(invoiceId);
 
@@ -686,7 +701,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
     }
   }
 
-  // ✅ CORREÇÃO: Atualiza/Cria a transação no fluxo de caixa
   if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
     const success = await createCashFlowTransaction(
       invoiceId,
@@ -926,6 +940,15 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
             <FileText className="w-5 h-5" />
             <span>Relatório</span>
           </button>
+          {/* ✅ NOVO BOTÃO DE REPLICAÇÃO */}
+          <button
+            onClick={handleReplicateMonth}
+            disabled={isReplicating}
+            className="flex items-center space-x-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Copy className="w-5 h-5" />
+            <span>{isReplicating ? 'Replicando...' : 'Replicar Mês'}</span>
+          </button>
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -950,7 +973,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Filtro por Status */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Status</label>
               <select
@@ -966,7 +988,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
               </select>
             </div>
 
-            {/* Filtro por Unidade */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Unidade</label>
               <div className="relative">
@@ -986,7 +1007,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
               </div>
             </div>
 
-            {/* Tipo de Data para Filtro */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Filtrar por</label>
               <select
@@ -1000,7 +1020,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
               </select>
             </div>
 
-            {/* Filtro por Mês/Ano */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Mês</label>
@@ -1033,7 +1052,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
             </div>
           </div>
 
-          {/* Filtro por Período Personalizado */}
           <div className="mt-4">
             <label className="block text-sm font-medium text-slate-700 mb-2">Período Personalizado</label>
             <div className="flex items-center space-x-2">
@@ -1055,7 +1073,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
             </div>
           </div>
 
-          {/* Ações dos Filtros */}
           <div className="flex justify-end space-x-3 mt-4 pt-4 border-t border-slate-200">
             {hasActiveFilters && (
               <button
