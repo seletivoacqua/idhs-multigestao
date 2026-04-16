@@ -63,7 +63,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [tempPaymentDate, setTempPaymentDate] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [syncingInvoices, setSyncingInvoices] = useState(false);
-  const [isReplicating, setIsReplicating] = useState(false); // ✅ NOVO ESTADO
+  const [isReplicating, setIsReplicating] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false); // estado para o botão atualizar
 
   const [filters, setFilters] = useState<FilterState>(() => {
     const savedFilters = localStorage.getItem('controlePagamento_filters');
@@ -89,7 +90,15 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
-  // ✅ NOVA FUNÇÃO: Replicar notas do mês atual para o próximo
+  // ✅ Função de recarga manual (usada pelo botão e após ações)
+  const refreshInvoices = useCallback(async () => {
+    if (!user) return;
+    setIsRefreshing(true);
+    await loadInvoices();
+    setIsRefreshing(false);
+  }, [user]);
+
+  // ✅ Função de replicação (adicionada anteriormente)
   const handleReplicateMonth = async () => {
     if (!user) return;
 
@@ -107,7 +116,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       if (error) throw error;
 
       alert(`✅ ${data} nota(s) fiscal(is) replicada(s) com sucesso!`);
-      await loadInvoices(); // recarrega a lista
+      await refreshInvoices();
     } catch (error: any) {
       console.error('Erro ao replicar:', error);
       alert(`❌ Erro ao replicar: ${error.message}`);
@@ -295,18 +304,18 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     estado: 'MA',
   });
 
+  // ✅ CARREGAMENTO INICIAL ÚNICO (não reage a mudanças de units)
   useEffect(() => {
     if (user) {
-      loadUnits();
-      updateOverdueInvoices();
+      const init = async () => {
+        await loadUnits();
+        await loadInvoices();
+        await updateOverdueInvoices();
+        setLoading(false);
+      };
+      init();
     }
   }, [user]);
-
-  useEffect(() => {
-    if (user && units.length > 0) {
-      loadInvoices();
-    }
-  }, [units, user]);
 
   const updateOverdueInvoices = useCallback(async () => {
     if (!user) return;
@@ -336,7 +345,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             .eq('id', invoice.id);
         }
       }
-      loadInvoices();
+      await loadInvoices(); // recarrega após atualizar status
     }
   }, [user]);
 
@@ -359,8 +368,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const loadInvoices = useCallback(async () => {
     if (!user) return;
 
-    setLoading(true);
-    
     const { data, error } = await supabase
       .from('invoices')
       .select('*')
@@ -370,7 +377,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     if (error) {
       console.error('Error loading invoices:', error);
-      setLoading(false);
       return;
     }
 
@@ -394,7 +400,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     });
 
     setInvoices(processedInvoices);
-    setLoading(false);
   }, [user, units]);
 
   const filteredInvoices = useMemo(() => {
@@ -718,8 +723,8 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
   }
 
   resetForm();
-  await loadInvoices();
-}, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, loadInvoices]);
+  await refreshInvoices(); // usa a função de refresh
+}, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
 
   const resetForm = useCallback(() => {
     setShowAddModal(false);
@@ -780,8 +785,8 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       return;
     }
 
-    await loadInvoices();
-  }, [loadInvoices]);
+    await refreshInvoices();
+  }, [refreshInvoices]);
 
   const viewDocument = useCallback((documentUrl: string) => {
     window.open(documentUrl, '_blank');
@@ -844,7 +849,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       if (success) {
         setEditingPaymentDate(null);
         setTempPaymentDate('');
-        await loadInvoices();
+        await refreshInvoices();
         
         if (onInvoicePaid) {
           onInvoicePaid(Date.now());
@@ -858,7 +863,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
       console.error('Erro ao salvar data de pagamento:', error);
       alert(`Erro: ${error?.message || 'Erro desconhecido'}. Verifique o console.`);
     }
-  }, [tempPaymentDate, invoices, createISODate, createCashFlowTransaction, onInvoicePaid, loadInvoices]);
+  }, [tempPaymentDate, invoices, createISODate, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
 
   const handleCancelEditPaymentDate = useCallback(() => {
     setEditingPaymentDate(null);
@@ -940,11 +945,20 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
             <FileText className="w-5 h-5" />
             <span>Relatório</span>
           </button>
-          {/* ✅ NOVO BOTÃO DE REPLICAÇÃO */}
+          {/* Botão de atualizar manual (Refresh) */}
+          <button
+            onClick={refreshInvoices}
+            disabled={isRefreshing}
+            className="flex items-center space-x-2 px-4 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50"
+            title="Atualizar lista manualmente"
+          >
+            <RefreshCw className={`w-5 h-5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
+          </button>
           <button
             onClick={handleReplicateMonth}
             disabled={isReplicating}
-            className="flex items-center space-x-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center space-x-2 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
           >
             <Copy className="w-5 h-5" />
             <span>{isReplicating ? 'Replicando...' : 'Replicar Mês'}</span>
@@ -959,7 +973,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Painel de Filtros */}
+      {/* Painel de Filtros (idêntico ao original) */}
       {showFilterPanel && (
         <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-lg">
           <div className="flex justify-between items-center mb-4">
@@ -1145,7 +1159,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Cards de Totais */}
+      {/* Cards de Totais (idêntico ao original) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
@@ -1193,7 +1207,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Tabela de Notas Fiscais */}
+      {/* Tabela de Notas Fiscais (idêntica ao original) */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1347,7 +1361,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Modal de Nova/Editar Nota Fiscal - VERSÃO ANTERIOR COM TODOS OS CAMPOS */}
+      {/* Modal de Nova/Editar Nota Fiscal (idêntico ao original) */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 my-8">
