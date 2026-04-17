@@ -168,13 +168,13 @@ export function ReportsTab() {
   const applyFilters = () => {
     let filtered = [...reportData];
 
-    if (filters.cycleId) {
+    if (filters.cycleId && filters.cycleId !== '') {
       filtered = filtered.filter(item => item.cycleId === filters.cycleId);
     }
-    if (filters.classId) {
+    if (filters.classId && filters.classId !== '') {
       filtered = filtered.filter(item => item.classId === filters.classId);
     }
-    if (filters.unitId) {
+    if (filters.unitId && filters.unitId !== '') {
       filtered = filtered.filter(item => item.unitId === filters.unitId);
     }
     if (filters.modality !== 'all') {
@@ -184,7 +184,7 @@ export function ReportsTab() {
           : item.modality.includes('Videoconferência')
       );
     }
-    if (filters.studentName) {
+    if (filters.studentName && filters.studentName !== '') {
       const search = filters.studentName.toLowerCase();
       filtered = filtered.filter(item =>
         item.studentName.toLowerCase().includes(search)
@@ -249,7 +249,8 @@ const generateReport = async () => {
         cycles (id, name, start_date, end_date, status)
       `);
 
-    if (filters.cycleId) {
+    // CORREÇÃO 1: Verificar se cycleId não é string vazia
+    if (filters.cycleId && filters.cycleId !== '') {
       classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
     }
 
@@ -264,7 +265,7 @@ const generateReport = async () => {
 
     const classIds = classes.map(c => c.id);
 
-    // 2. Buscar alunos matriculados
+    // CORREÇÃO 2: Usar inner join para garantir dados completos dos alunos
     const { data: classStudents, error: studentsError } = await supabase
       .from('class_students')
       .select(`
@@ -274,7 +275,7 @@ const generateReport = async () => {
         enrollment_date,
         enrollment_type,
         current_status,
-        students (
+        students!inner (
           id,
           full_name,
           cpf,
@@ -321,8 +322,7 @@ const generateReport = async () => {
     }
 
     // ===========================================
-    // SOLUÇÃO DEFINITIVA: Buscar TODOS os registros de attendance
-    // usando paginação para não perder registros
+    // BUSCAR REGISTROS DE ATTENDANCE
     // ===========================================
     
     const totalClassesGivenByClass: Record<string, number> = {};
@@ -330,67 +330,24 @@ const generateReport = async () => {
 
     if (videoClassIds.length > 0) {
       for (const classId of videoClassIds) {
-        console.log(`🔍 Buscando registros para turma: ${classId}`);
+        // CORREÇÃO 3: Remover paginação problemática, buscar todos de uma vez
+        const { data: records, error } = await supabase
+          .from('attendance')
+          .select('*')
+          .eq('class_id', classId);
         
-        // Buscar com paginação para garantir todos os registros
-        let allRecords: any[] = [];
-        let page = 0;
-        let hasMore = true;
-        const pageSize = 1000;
-        
-        while (hasMore) {
-          const from = page * pageSize;
-          const to = from + pageSize - 1;
-          
-          const { data: records, error, count } = await supabase
-            .from('attendance')
-            .select('*', { count: 'exact' })
-            .eq('class_id', classId)
-            .range(from, to);
-          
-          if (error) {
-            console.error(`❌ Erro na turma ${classId}:`, error);
-            hasMore = false;
-            break;
-          }
-          
-          if (records && records.length > 0) {
-            allRecords.push(...records);
-            console.log(`   Página ${page + 1}: ${records.length} registros (total até agora: ${allRecords.length})`);
-            
-            // Se recebemos menos registros que o pageSize, é a última página
-            if (records.length < pageSize) {
-              hasMore = false;
-            } else {
-              page++;
-            }
-          } else {
-            hasMore = false;
-          }
-        }
-        
-        console.log(`   Total de registros encontrados: ${allRecords.length}`);
-        
-        if (allRecords.length > 0) {
+        if (!error && records && records.length > 0) {
           // Calcular números únicos de aula
-          const uniqueNumbers = [...new Set(allRecords.map(r => r.class_number))];
+          const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
           totalClassesGivenByClass[classId] = uniqueNumbers.length;
           
-          console.log(`   Números de aula: ${uniqueNumbers.sort((a,b)=>a-b).join(', ')}`);
-          console.log(`   Total de aulas únicas: ${uniqueNumbers.length}`);
-          
           // Adicionar todos os registros
-          attendanceData.push(...allRecords);
+          attendanceData.push(...records);
         } else {
           totalClassesGivenByClass[classId] = 0;
-          console.log(`   ⚠️ Nenhum registro encontrado`);
         }
       }
     }
-
-    console.log(`\n📊 RESUMO FINAL:`);
-    console.log(`   Total de registros de attendance: ${attendanceData.length}`);
-    console.log(`   Aulas por turma:`, totalClassesGivenByClass);
 
     const eadMap: Record<string, any> = {};
     eadAccessData.forEach(item => {
@@ -409,13 +366,13 @@ const generateReport = async () => {
     for (const cls of classes) {
       const students = studentsByClass[cls.id] || [];
       const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
-      
-      console.log(`\n📚 Turma: ${cls.name} (${cls.modality})`);
-      console.log(`   Aulas registradas: ${totalAulasRealizadas}`);
-      console.log(`   Alunos: ${students.length}`);
 
       for (const cs of students) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) continue;
+        // CORREÇÃO 4: Verificar se o aluno tem dados completos
+        if (!cs.students) continue;
+
+        // CORREÇÃO 5: Verificar se unitId não é string vazia
+        if (filters.unitId && filters.unitId !== '' && cs.students?.unit_id !== filters.unitId) continue;
 
         const unitId = cs.students?.unit_id || '';
         const unitName = cs.students?.units?.name || 'Não informado';
@@ -447,7 +404,6 @@ const generateReport = async () => {
             classesAttended = relevantAttendance.filter(a => a.present).length;
             frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
-            // ALTERAÇÃO: Mudado de 60% para 50%
             situacao = frequencyValue >= 50 ? 'FREQUENTE' : 'INCOMPLETO';
 
             if (relevantAttendance.length > 0) {
@@ -509,8 +465,6 @@ const generateReport = async () => {
         });
       }
     }
-
-    console.log(`\n✅ Relatório final: ${allReportData.length} registros`);
 
     allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
     setReportData(allReportData);
