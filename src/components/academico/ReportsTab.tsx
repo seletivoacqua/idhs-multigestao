@@ -233,256 +233,318 @@ export function ReportsTab() {
     });
   };
 
-  const generateReport = async () => {
-    if (!user) return;
+ const generateReport = async () => {
+  if (!user) return;
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
-      console.log('🚀 Iniciando geração do relatório...');
-      
-      // 1. Buscar TODAS as turmas (sem limite)
-      let classesQuery = supabase
-        .from('classes')
-        .select(`
+  try {
+    console.log('🚀 Iniciando geração do relatório...');
+    
+    // 1. Buscar TODAS as turmas
+    let classesQuery = supabase
+      .from('classes')
+      .select(`
+        id,
+        name,
+        modality,
+        total_classes,
+        cycle_id,
+        courses (
+          name,
+          modality
+        ),
+        cycles (
           id,
           name,
-          modality,
-          total_classes,
-          cycle_id,
-          courses (name, modality),
-          cycles (id, name, start_date, end_date, status)
-        `);
+          start_date,
+          end_date,
+          status
+        )
+      `);
 
-      // Aplicar filtro de ciclo se selecionado
-      if (filters.cycleId && filters.cycleId !== '') {
-        classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
-      }
+    // CORREÇÃO 1: Verificar se cycleId não é string vazia
+    if (filters.cycleId && filters.cycleId !== '') {
+      classesQuery = classesQuery.eq('cycle_id', filters.cycleId);
+    }
 
-      const { data: classes, error: classesError } = await classesQuery;
-      if (classesError) throw classesError;
-      if (!classes || classes.length === 0) {
-        setReportData([]);
-        setFilteredReportData([]);
-        setLoading(false);
-        return;
-      }
+    const { data: classes, error: classesError } = await classesQuery;
+    if (classesError) {
+      console.error('Erro ao buscar turmas:', classesError);
+      throw classesError;
+    }
+    
+    if (!classes || classes.length === 0) {
+      console.log('⚠️ Nenhuma turma encontrada');
+      setReportData([]);
+      setFilteredReportData([]);
+      setLoading(false);
+      return;
+    }
 
-      console.log(`✅ Encontradas ${classes.length} turmas`);
-      const classIds = classes.map(c => c.id);
+    console.log(`✅ Encontradas ${classes.length} turmas`);
+    
+    const classIds = classes.map(c => c.id);
 
-      // 2. Buscar TODOS os alunos matriculados (sem limite)
-      const { data: classStudents, error: studentsError } = await supabase
-        .from('class_students')
-        .select(`
+    // 2. Buscar TODOS os alunos matriculados
+    // CORREÇÃO 2: Garantir join inner com students
+    let studentsQuery = supabase
+      .from('class_students')
+      .select(`
+        id,
+        student_id,
+        class_id,
+        enrollment_date,
+        enrollment_type,
+        current_status,
+        students!inner (
           id,
-          student_id,
-          class_id,
-          enrollment_date,
-          enrollment_type,
-          current_status,
-          students!inner (
+          full_name,
+          cpf,
+          unit_id,
+          units (
             id,
-            full_name,
-            cpf,
-            unit_id,
-            units (
-              id,
-              name,
-              municipality
-            )
+            name,
+            municipality
           )
-        `)
-        .in('class_id', classIds);
+        )
+      `)
+      .in('class_id', classIds);
 
-      if (studentsError) throw studentsError;
-      if (!classStudents || classStudents.length === 0) {
-        setReportData([]);
-        setFilteredReportData([]);
-        setLoading(false);
-        return;
+    // CORREÇÃO 3: Aplicar filtro de unidade na query se necessário
+    if (filters.unitId && filters.unitId !== '') {
+      studentsQuery = studentsQuery.eq('students.unit_id', filters.unitId);
+    }
+
+    const { data: classStudents, error: studentsError } = await studentsQuery;
+    
+    if (studentsError) {
+      console.error('Erro ao buscar alunos:', studentsError);
+      throw studentsError;
+    }
+
+    if (!classStudents || classStudents.length === 0) {
+      console.log('⚠️ Nenhum aluno matriculado encontrado');
+      setReportData([]);
+      setFilteredReportData([]);
+      setLoading(false);
+      return;
+    }
+
+    console.log(`✅ Encontradas ${classStudents.length} matrículas`);
+
+    // Log para debug - mostrar primeiros alunos
+    console.log('📋 Primeiros alunos encontrados:');
+    classStudents.slice(0, 5).forEach(cs => {
+      console.log(`   - ${cs.students?.full_name} (Turma: ${cs.class_id})`);
+    });
+
+    // Verificar se a Fernanda está nos resultados
+    const fernanda = classStudents.find(cs => 
+      cs.students?.full_name?.includes('FERNANDA MARYHELLER')
+    );
+    if (fernanda) {
+      console.log('🎯 FERNANDA ENCONTRADA na query!', fernanda.students.full_name);
+    } else {
+      console.log('❌ FERNANDA NÃO encontrada na query de class_students');
+    }
+
+    const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
+    const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
+
+    const studentsByClass: Record<string, typeof classStudents> = {};
+    classStudents.forEach(cs => {
+      if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
+      studentsByClass[cs.class_id].push(cs);
+    });
+
+    // 3. Buscar dados EAD
+    let eadAccessData: any[] = [];
+    if (eadClassIds.length > 0) {
+      const { data, error } = await supabase
+        .from('ead_access')
+        .select('*')
+        .in('class_id', eadClassIds);
+      
+      if (!error && data) {
+        eadAccessData = data;
+        console.log(`✅ Encontrados ${eadAccessData.length} registros EAD`);
       }
+    }
 
-      console.log(`✅ Encontradas ${classStudents.length} matrículas`);
+    // 4. Buscar dados de attendance
+    const totalClassesGivenByClass: Record<string, number> = {};
+    let attendanceData: any[] = [];
 
-      const eadClassIds = classes.filter(c => c.modality !== 'VIDEOCONFERENCIA').map(c => c.id);
-      const videoClassIds = classes.filter(c => c.modality === 'VIDEOCONFERENCIA').map(c => c.id);
-
-      const studentsByClass: Record<string, typeof classStudents> = {};
-      classStudents.forEach(cs => {
-        if (!studentsByClass[cs.class_id]) studentsByClass[cs.class_id] = [];
-        studentsByClass[cs.class_id].push(cs);
-      });
-
-      // 3. Buscar dados EAD (sem limite)
-      let eadAccessData: any[] = [];
-      if (eadClassIds.length > 0) {
-        console.log(`🔍 Buscando acessos EAD para ${eadClassIds.length} turmas...`);
-        const { data, error } = await supabase
-          .from('ead_access')
+    if (videoClassIds.length > 0) {
+      console.log(`🔍 Buscando attendance para ${videoClassIds.length} turmas...`);
+      
+      for (const classId of videoClassIds) {
+        const { data: records, error } = await supabase
+          .from('attendance')
           .select('*')
-          .in('class_id', eadClassIds);
+          .eq('class_id', classId);
         
-        if (!error && data) {
-          eadAccessData = data;
-          console.log(`✅ Encontrados ${eadAccessData.length} registros EAD`);
+        if (!error && records && records.length > 0) {
+          const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
+          totalClassesGivenByClass[classId] = uniqueNumbers.length;
+          attendanceData.push(...records);
+          console.log(`   Turma ${classId}: ${records.length} registros, ${uniqueNumbers.length} aulas únicas`);
+        } else {
+          totalClassesGivenByClass[classId] = 0;
         }
       }
+      
+      console.log(`✅ Total de registros de attendance: ${attendanceData.length}`);
+    }
 
-      // 4. Buscar dados de attendance (sem limite)
-      const totalClassesGivenByClass: Record<string, number> = {};
-      let attendanceData: any[] = [];
+    // Criar mapeamentos
+    const eadMap: Record<string, any> = {};
+    eadAccessData.forEach(item => {
+      eadMap[`${item.class_id}-${item.student_id}`] = item;
+    });
 
-      if (videoClassIds.length > 0) {
-        console.log(`🔍 Buscando registros de attendance para ${videoClassIds.length} turmas...`);
-        
-        for (const classId of videoClassIds) {
-          const { data: records, error } = await supabase
-            .from('attendance')
-            .select('*')
-            .eq('class_id', classId);
-          
-          if (!error && records && records.length > 0) {
-            const uniqueNumbers = [...new Set(records.map(r => r.class_number))];
-            totalClassesGivenByClass[classId] = uniqueNumbers.length;
-            attendanceData.push(...records);
-          } else {
-            totalClassesGivenByClass[classId] = 0;
-          }
+    const attendanceMap: Record<string, any[]> = {};
+    attendanceData.forEach(item => {
+      const key = `${item.class_id}-${item.student_id}`;
+      if (!attendanceMap[key]) attendanceMap[key] = [];
+      attendanceMap[key].push(item);
+    });
+
+    // 5. Processar todos os dados
+    const allReportData: ReportData[] = [];
+
+    for (const cls of classes) {
+      const students = studentsByClass[cls.id] || [];
+      const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
+      
+      console.log(`\n📚 Processando turma: ${cls.name}`);
+      console.log(`   Alunos: ${students.length}, Aulas: ${totalAulasRealizadas}`);
+
+      for (const cs of students) {
+        // Garantir que o aluno tem dados
+        if (!cs.students) {
+          console.warn(`   ⚠️ Aluno sem dados: ${cs.student_id}`);
+          continue;
         }
-        
-        console.log(`✅ Encontrados ${attendanceData.length} registros de attendance`);
-      }
 
-      // Criar mapeamentos
-      const eadMap: Record<string, any> = {};
-      eadAccessData.forEach(item => {
-        eadMap[`${item.class_id}-${item.student_id}`] = item;
-      });
+        const unitId = cs.students?.unit_id || '';
+        const unitName = cs.students?.units?.name || 'Não informado';
+        const enrollmentDate = extractDatePart(cs.enrollment_date);
+        const enrollmentType = cs.enrollment_type;
 
-      const attendanceMap: Record<string, any[]> = {};
-      attendanceData.forEach(item => {
-        const key = `${item.class_id}-${item.student_id}`;
-        if (!attendanceMap[key]) attendanceMap[key] = [];
-        attendanceMap[key].push(item);
-      });
+        let classesAttended = 0;
+        let ultimoAcesso = '-';
+        let frequency = '';
+        let frequencyValue = 0;
+        let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
+        let totalAccesses = 0;
+        let isFrequente = false;
 
-      // 5. Processar todos os dados
-      const allReportData: ReportData[] = [];
+        if (cls.modality === 'VIDEOCONFERENCIA') {
+          const key = `${cls.id}-${cs.student_id}`;
+          const attendanceList = attendanceMap[key] || [];
 
-      for (const cls of classes) {
-        const students = studentsByClass[cls.id] || [];
-        const totalAulasRealizadas = totalClassesGivenByClass[cls.id] || 0;
-
-        for (const cs of students) {
-          // Verificar se o aluno tem dados completos
-          if (!cs.students) continue;
-
-          const unitId = cs.students?.unit_id || '';
-          const unitName = cs.students?.units?.name || 'Não informado';
-          const enrollmentDate = extractDatePart(cs.enrollment_date);
-          const enrollmentType = cs.enrollment_type;
-
-          let classesAttended = 0;
-          let ultimoAcesso = '-';
-          let frequency = '';
-          let frequencyValue = 0;
-          let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
-          let totalAccesses = 0;
-          let isFrequente = false;
-
-          if (cls.modality === 'VIDEOCONFERENCIA') {
-            const key = `${cls.id}-${cs.student_id}`;
-            const attendanceList = attendanceMap[key] || [];
-
-            if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
-              let relevantAttendance = attendanceList;
-              if (enrollmentType === 'exceptional' && enrollmentDate) {
-                relevantAttendance = attendanceList.filter(att => {
-                  const attDate = extractDatePart(att.class_date);
-                  return attDate && attDate >= enrollmentDate;
-                });
-              }
-
-              classesAttended = relevantAttendance.filter(a => a.present).length;
-              frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
-              frequency = `${frequencyValue.toFixed(1)}%`;
-              situacao = frequencyValue >= 50 ? 'FREQUENTE' : 'INCOMPLETO';
-
-              if (relevantAttendance.length > 0) {
-                const dates = relevantAttendance.map(a => a.class_date);
-                const mostRecent = getMostRecentDate(dates);
-                ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
-              }
-            } else {
-              classesAttended = 0;
-              frequencyValue = 0;
-              frequency = '0.0%';
-              situacao = 'INCOMPLETO';
-              ultimoAcesso = '-';
+          if (attendanceList.length > 0 && totalAulasRealizadas > 0) {
+            let relevantAttendance = attendanceList;
+            if (enrollmentType === 'exceptional' && enrollmentDate) {
+              relevantAttendance = attendanceList.filter(att => {
+                const attDate = extractDatePart(att.class_date);
+                return attDate && attDate >= enrollmentDate;
+              });
             }
-          } else {
-            const key = `${cls.id}-${cs.student_id}`;
-            const accessData = eadMap[key];
-            isFrequente = accessData?.is_frequente === true;
 
-            const allAccesses = [
-              accessData?.access_date_1,
-              accessData?.access_date_2,
-              accessData?.access_date_3,
-            ];
-            const validAccesses = allAccesses.filter(date => date !== null) as string[];
-            totalAccesses = validAccesses.length;
-
-            frequencyValue = (totalAccesses / 3) * 100;
+            classesAttended = relevantAttendance.filter(a => a.present).length;
+            frequencyValue = (classesAttended / totalAulasRealizadas) * 100;
             frequency = `${frequencyValue.toFixed(1)}%`;
-            situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
-            classesAttended = totalAccesses;
+            situacao = frequencyValue >= 50 ? 'FREQUENTE' : 'INCOMPLETO';
 
-            if (validAccesses.length > 0) {
-              const mostRecent = getMostRecentDate(validAccesses);
+            if (relevantAttendance.length > 0) {
+              const dates = relevantAttendance.map(a => a.class_date);
+              const mostRecent = getMostRecentDate(dates);
               ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
             }
           }
+        } else {
+          const key = `${cls.id}-${cs.student_id}`;
+          const accessData = eadMap[key];
+          isFrequente = accessData?.is_frequente === true;
 
-          allReportData.push({
-            unitId,
-            unitName,
-            studentName: cs.students?.full_name || 'Nome não informado',
-            studentCpf: cs.students?.cpf || '',
-            className: cls.name,
-            classId: cls.id,
-            cycleName: cls.cycles?.name || 'Sem ciclo',
-            cycleId: cls.cycles?.id || '',
-            modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
-            classesAttended,
-            totalClassesConsidered: totalAulasRealizadas,
-            ultimoAcesso,
-            frequency,
-            frequencyValue,
-            situacao,
-            totalAccesses,
-            isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
-            enrollmentDate: enrollmentDate || undefined,
-            enrollmentType,
-          });
+          const allAccesses = [
+            accessData?.access_date_1,
+            accessData?.access_date_2,
+            accessData?.access_date_3,
+          ];
+          const validAccesses = allAccesses.filter(date => date !== null) as string[];
+          totalAccesses = validAccesses.length;
+
+          frequencyValue = (totalAccesses / 3) * 100;
+          frequency = `${frequencyValue.toFixed(1)}%`;
+          situacao = isFrequente ? 'FREQUENTE' : 'AUSENTE';
+          classesAttended = totalAccesses;
+
+          if (validAccesses.length > 0) {
+            const mostRecent = getMostRecentDate(validAccesses);
+            ultimoAcesso = mostRecent ? formatDateToDisplay(mostRecent) : '-';
+          }
         }
+
+        const reportItem = {
+          unitId,
+          unitName,
+          studentName: cs.students?.full_name || 'Nome não informado',
+          studentCpf: cs.students?.cpf || '',
+          className: cls.name,
+          classId: cls.id,
+          cycleName: cls.cycles?.name || 'Sem ciclo',
+          cycleId: cls.cycles?.id || '',
+          modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
+          classesAttended,
+          totalClassesConsidered: totalAulasRealizadas,
+          ultimoAcesso,
+          frequency,
+          frequencyValue,
+          situacao,
+          totalAccesses,
+          isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
+          enrollmentDate: enrollmentDate || undefined,
+          enrollmentType,
+        };
+
+        // Log específico para a Fernanda
+        if (cs.students?.full_name?.includes('FERNANDA MARYHELLER')) {
+          console.log('🎯 FERNANDA PROCESSADA:', reportItem);
+        }
+
+        allReportData.push(reportItem);
       }
-
-      console.log(`✅ Total de registros processados: ${allReportData.length}`);
-      
-      allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-      setReportData(allReportData);
-      applyFilters();
-
-    } catch (error) {
-      console.error('❌ Erro ao gerar relatório:', error);
-      alert('Erro ao carregar dados. Tente novamente.');
-    } finally {
-      setLoading(false);
-      setShouldGenerateReport(false);
     }
-  };
+
+    console.log(`\n✅ TOTAL DE REGISTROS PROCESSADOS: ${allReportData.length}`);
+    
+    // Verificar se a Fernanda está no array final
+    const fernandaFinal = allReportData.find(r => 
+      r.studentName.includes('FERNANDA MARYHELLER')
+    );
+    if (fernandaFinal) {
+      console.log('🎯 FERNANDA está no relatório final!', fernandaFinal);
+    } else {
+      console.log('❌ FERNANDA NÃO está no relatório final!');
+      console.log('Primeiros 10 nomes no relatório:', allReportData.slice(0, 10).map(r => r.studentName));
+    }
+    
+    allReportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+    setReportData(allReportData);
+    applyFilters();
+
+  } catch (error) {
+    console.error('❌ Erro ao gerar relatório:', error);
+    alert('Erro ao carregar dados. Tente novamente.');
+  } finally {
+    setLoading(false);
+    setShouldGenerateReport(false);
+  }
+};
 
   // ===========================================
   // FUNÇÕES DE HANDLE
