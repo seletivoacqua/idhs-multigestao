@@ -241,7 +241,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       const { data: paidInvoices, error } = await supabase
         .from('invoices')
         .select('*')
-        .eq('user_id', user.id)
         .eq('payment_status', 'PAGO')
         .is('deleted_at', null);
 
@@ -326,7 +325,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const { data: overdueInvoices } = await supabase
       .from('invoices')
       .select('*')
-      .eq('user_id', user.id)
       .eq('payment_status', 'EM ABERTO')
       .is('deleted_at', null);
 
@@ -371,7 +369,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const { data, error } = await supabase
       .from('invoices')
       .select('*')
-      .eq('user_id', user.id)
       .is('deleted_at', null)
       .order('item_number', { ascending: true });
 
