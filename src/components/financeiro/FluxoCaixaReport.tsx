@@ -113,7 +113,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       let query = supabase
         .from('cash_flow_transactions')
         .select('*')
-        .eq('user_id', user.id)
         .gte('transaction_date', startDateTime) // Agora considera horário
         .lte('transaction_date', endDateTime);   // Agora considera horário
 
