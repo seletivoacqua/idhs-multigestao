@@ -133,7 +133,6 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       let query = supabase
         .from('invoices')
         .select('*')
-        .eq('user_id', user.id)
         .is('deleted_at', null);
 
       // Aplicar filtro de data baseado no tipo selecionado
