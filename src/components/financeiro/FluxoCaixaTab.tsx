@@ -163,7 +163,6 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     const { data, error } = await supabase
       .from('initial_balances')
       .select('balance')
-      .eq('user_id', user.id)
       .eq('year', year)
       .eq('month', month)
       .maybeSingle();
@@ -219,7 +218,6 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     const { data, error } = await supabase
       .from('cash_flow_transactions')
       .select('*')
-      .eq('user_id', user.id)
       .gte('transaction_date', startDate)
       .lte('transaction_date', endDate)
       .order('transaction_date', { ascending: false });
@@ -244,7 +242,6 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     const { data, error } = await supabase
       .from('fixed_expenses')
       .select('*')
-      .eq('user_id', user.id)
       .order('name');
 
     if (error) {
