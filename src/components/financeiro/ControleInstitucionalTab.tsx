@@ -39,7 +39,6 @@ export function ControleInstitucionalTab() {
     const { data, error } = await supabase
       .from('meeting_minutes')
       .select('*')
-      .eq('user_id', user.id)
       .order('meeting_date', { ascending: false });
 
     if (error) {
