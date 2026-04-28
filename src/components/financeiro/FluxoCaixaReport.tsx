@@ -291,202 +291,202 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   }, [formatDisplayDate]);
 
   // Exportação para PDF (com coluna Fornecedor)
-  const exportToPDF = useCallback(async () => {
-    if (!validateExportData()) return;
+const exportToPDF = useCallback(async () => {
+  if (!validateExportData()) return;
+  
+  setExporting('pdf');
+  
+  try {
+    const doc = new jsPDF({ 
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    });
     
-    setExporting('pdf');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
     
+    // ✅ NOVAS LARGURAS – melhor espaçamento
+    const colWidths = {
+      data: 22,
+      tipo: 16,
+      descricao: 38,
+      fornecedor: 40,    // aumentado
+      categoria: 30,     // aumentado
+      origem: 25,        // aumentado
+      documento: 25,     // aumentado
+      valor: 35
+    };
+    
+    // Calcular posições das colunas
+    let xPos = margin;
+    const colPositions = {
+      data: xPos,
+      tipo: xPos + colWidths.data,
+      descricao: xPos + colWidths.data + colWidths.tipo,
+      fornecedor: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
+      categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor,
+      origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria,
+      documento: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria + colWidths.origem,
+      valor: pageWidth - margin - colWidths.valor
+    };
+    
+    // Logo
     try {
-      const doc = new jsPDF({ 
-        orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 14;
-      
-      // 🔥 NOVAS LARGURAS DE COLUNA (incluindo Fornecedor)
-      const colWidths = {
-        data: 20,
-        tipo: 15,
-        descricao: 40,
-        fornecedor: 30,   // <--- coluna adicionada
-        categoria: 25,
-        origem: 20,
-        documento: 20,
-        valor: 30
-      };
-      
-      // Calcular posições das colunas
-      let xPos = margin;
-      const colPositions = {
-        data: xPos,
-        tipo: xPos + colWidths.data,
-        descricao: xPos + colWidths.data + colWidths.tipo,
-        fornecedor: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
-        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor,
-        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria,
-        documento: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria + colWidths.origem,
-        valor: pageWidth - margin - colWidths.valor
-      };
-      
-      // Logo
-      try {
-        const logoWidth = 30;
-        const logoHeight = 15;
-        const logoX = (pageWidth - logoWidth) / 2;
-        doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-      } catch (imgError) {
-        console.warn('Error adding logo to PDF:', imgError);
-      }
-
-      // Título
-      doc.setFontSize(18);
-      doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
-
-      // Período
-      doc.setFontSize(11);
-      doc.text(
-        `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
-        pageWidth / 2,
-        32,
-        { align: 'center' }
-      );
-
-      // Filtros aplicados
-      const filtrosAplicados = [];
-      if (filters.type !== 'all') filtrosAplicados.push(`Tipo: ${filters.type === 'income' ? 'Receitas' : 'Despesas'}`);
-      if (filters.category !== 'all') filtrosAplicados.push(`Categoria: ${filters.category.replace('_', ' ')}`);
-      if (filters.origem !== 'all') filtrosAplicados.push(`Origem: ${filters.origem === 'idhs' ? 'IDHS' : filters.origem === 'geral' ? 'Geral' : 'Sem origem'}`);
-      if (filters.documentType !== 'all') filtrosAplicados.push(`Documento: ${filters.documentType === 'com_nota' ? 'Com Nota' : 'Só Recibo'}`);
-
-      if (filtrosAplicados.length > 0) {
-        doc.setFontSize(9);
-        doc.text(`Filtros: ${filtrosAplicados.join(' | ')}`, pageWidth / 2, 38, { align: 'center' });
-      }
-
-      // Cabeçalho da tabela
-      let yPos = 45;
-      doc.setFontSize(8);
-      doc.setFont(undefined, 'bold');
-      
-      doc.text('Data', colPositions.data, yPos);
-      doc.text('Tipo', colPositions.tipo, yPos);
-      doc.text('Descrição', colPositions.descricao, yPos);
-      doc.text('Fornecedor', colPositions.fornecedor, yPos);   // <--- cabeçalho novo
-      doc.text('Categoria', colPositions.categoria, yPos);
-      doc.text('Origem', colPositions.origem, yPos);
-      doc.text('Doc', colPositions.documento, yPos);
-      doc.text('Valor', colPositions.valor, yPos);
-
-      yPos += 3;
-      doc.line(margin, yPos, pageWidth - margin, yPos);
-      yPos += 4;
-      
-      doc.setFont(undefined, 'normal');
-
-      // Dados da tabela
-      transactions.forEach((transaction) => {
-        if (yPos > pageHeight - 25) {
-          doc.addPage('landscape');
-          yPos = 25;
-          
-          // Recriar cabeçalho na nova página
-          doc.setFontSize(8);
-          doc.setFont(undefined, 'bold');
-          doc.text('Data', colPositions.data, yPos);
-          doc.text('Tipo', colPositions.tipo, yPos);
-          doc.text('Descrição', colPositions.descricao, yPos);
-          doc.text('Fornecedor', colPositions.fornecedor, yPos);
-          doc.text('Categoria', colPositions.categoria, yPos);
-          doc.text('Origem', colPositions.origem, yPos);
-          doc.text('Doc', colPositions.documento, yPos);
-          doc.text('Valor', colPositions.valor, yPos);
-          yPos += 3;
-          doc.line(margin, yPos, pageWidth - margin, yPos);
-          yPos += 4;
-          doc.setFont(undefined, 'normal');
-        }
-
-        const origemTexto = transaction.type === 'expense'
-          ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
-          : '-';
-
-        const documentoTipo = transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-';
-        const fornecedorTexto = transaction.type === 'income' 
-          ? transaction.fonte_pagadora || '-' 
-          : transaction.fornecedor || '-';
-
-        // Quebrar descrição longa
-        const descricaoLinhas = doc.splitTextToSize(
-          transaction.description, 
-          colWidths.descricao - 2
-        );
-        
-        // Data formatada
-        doc.text(formatDisplayDate(transaction.transaction_date), colPositions.data, yPos);
-        
-        // Tipo (abreviado)
-        doc.text(transaction.type === 'income' ? 'REC' : 'DESP', colPositions.tipo, yPos);
-        
-        // Descrição (primeira linha)
-        doc.text(descricaoLinhas[0] || '', colPositions.descricao, yPos);
-        
-        // Se descrição tiver mais linhas, ajustar Y para próximas linhas
-        let currentYPos = yPos;
-        if (descricaoLinhas.length > 1) {
-          for (let i = 1; i < descricaoLinhas.length; i++) {
-            currentYPos += 4;
-            doc.text(descricaoLinhas[i], colPositions.descricao, currentYPos);
-          }
-        }
-        
-        // Fornecedor
-        doc.text(fornecedorTexto, colPositions.fornecedor, yPos);
-        
-        // Categoria
-        doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', colPositions.categoria, yPos);
-        
-        // Origem
-        doc.text(origemTexto, colPositions.origem, yPos);
-        
-        // Documento
-        doc.text(documentoTipo, colPositions.documento, yPos);
-        
-        // Valor
-        doc.text(formatCurrencyBR(transaction.amount), colPositions.valor, yPos);
-
-        yPos = currentYPos + 6;
-      });
-
-      // Linha de total
-      yPos += 2;
-      doc.line(margin, yPos, pageWidth - margin, yPos);
-      yPos += 5;
-
-      doc.setFontSize(10);
-      doc.setFont(undefined, 'bold');
-      doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos);
-      yPos += 5;
-      doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin, yPos);
-      yPos += 5;
-      
-      const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [255, 0, 0];
-      doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
-      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin, yPos);
-      
-      doc.setTextColor(0, 0, 0);
-
-      doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
-    } catch (error) {
-      console.error('Error exporting to PDF:', error);
-      alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
-    } finally {
-      setExporting('none');
+      const logoWidth = 30;
+      const logoHeight = 15;
+      const logoX = (pageWidth - logoWidth) / 2;
+      doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+    } catch (imgError) {
+      console.warn('Error adding logo to PDF:', imgError);
     }
-  }, [transactions, totals, filters, validateExportData, formatDisplayDate]);
+
+    // Título
+    doc.setFontSize(18);
+    doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
+
+    // Período
+    doc.setFontSize(11);
+    doc.text(
+      `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
+      pageWidth / 2,
+      32,
+      { align: 'center' }
+    );
+
+    // Filtros aplicados (opcional)
+    const filtrosAplicados = [];
+    if (filters.type !== 'all') filtrosAplicados.push(`Tipo: ${filters.type === 'income' ? 'Receitas' : 'Despesas'}`);
+    if (filters.category !== 'all') filtrosAplicados.push(`Categoria: ${filters.category.replace('_', ' ')}`);
+    if (filters.origem !== 'all') filtrosAplicados.push(`Origem: ${filters.origem === 'idhs' ? 'IDHS' : filters.origem === 'geral' ? 'Geral' : 'Sem origem'}`);
+    if (filters.documentType !== 'all') filtrosAplicados.push(`Documento: ${filters.documentType === 'com_nota' ? 'Com Nota' : 'Só Recibo'}`);
+
+    if (filtrosAplicados.length > 0) {
+      doc.setFontSize(9);
+      doc.text(`Filtros: ${filtrosAplicados.join(' | ')}`, pageWidth / 2, 38, { align: 'center' });
+    }
+
+    // Cabeçalho da tabela
+    let yPos = 45;
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'bold');
+    
+    doc.text('Data', colPositions.data, yPos);
+    doc.text('Tipo', colPositions.tipo, yPos);
+    doc.text('Descrição', colPositions.descricao, yPos);
+    doc.text('Fornecedor', colPositions.fornecedor, yPos);
+    doc.text('Categoria', colPositions.categoria, yPos);
+    doc.text('Origem', colPositions.origem, yPos);
+    doc.text('Doc', colPositions.documento, yPos);
+    doc.text('Valor', colPositions.valor, yPos);
+
+    yPos += 3;
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 4;
+    
+    doc.setFont(undefined, 'normal');
+
+    // Dados da tabela
+    transactions.forEach((transaction) => {
+      if (yPos > pageHeight - 25) {
+        doc.addPage('landscape');
+        yPos = 25;
+        
+        // Recriar cabeçalho na nova página
+        doc.setFontSize(8);
+        doc.setFont(undefined, 'bold');
+        doc.text('Data', colPositions.data, yPos);
+        doc.text('Tipo', colPositions.tipo, yPos);
+        doc.text('Descrição', colPositions.descricao, yPos);
+        doc.text('Fornecedor', colPositions.fornecedor, yPos);
+        doc.text('Categoria', colPositions.categoria, yPos);
+        doc.text('Origem', colPositions.origem, yPos);
+        doc.text('Doc', colPositions.documento, yPos);
+        doc.text('Valor', colPositions.valor, yPos);
+        yPos += 3;
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 4;
+        doc.setFont(undefined, 'normal');
+      }
+
+      const origemTexto = transaction.type === 'expense'
+        ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
+        : '-';
+
+      const documentoTipo = transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-';
+      const fornecedorTexto = transaction.type === 'income' 
+        ? transaction.fonte_pagadora || '-' 
+        : transaction.fornecedor || '-';
+
+      // Quebrar descrição longa (largura ajustada)
+      const descricaoLinhas = doc.splitTextToSize(
+        transaction.description, 
+        colWidths.descricao - 2
+      );
+      
+      // Data formatada
+      doc.text(formatDisplayDate(transaction.transaction_date), colPositions.data, yPos);
+      
+      // Tipo (abreviado)
+      doc.text(transaction.type === 'income' ? 'REC' : 'DESP', colPositions.tipo, yPos);
+      
+      // Descrição (primeira linha)
+      doc.text(descricaoLinhas[0] || '', colPositions.descricao, yPos);
+      
+      // Se descrição tiver mais linhas, ajustar Y
+      let currentYPos = yPos;
+      if (descricaoLinhas.length > 1) {
+        for (let i = 1; i < descricaoLinhas.length; i++) {
+          currentYPos += 4;
+          doc.text(descricaoLinhas[i], colPositions.descricao, currentYPos);
+        }
+      }
+      
+      // Fornecedor
+      doc.text(fornecedorTexto, colPositions.fornecedor, yPos);
+      
+      // Categoria
+      doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', colPositions.categoria, yPos);
+      
+      // Origem
+      doc.text(origemTexto, colPositions.origem, yPos);
+      
+      // Documento
+      doc.text(documentoTipo, colPositions.documento, yPos);
+      
+      // Valor
+      doc.text(formatCurrencyBR(transaction.amount), colPositions.valor, yPos);
+
+      yPos = currentYPos + 6;
+    });
+
+    // Linha de total
+    yPos += 2;
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 5;
+
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'bold');
+    doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos);
+    yPos += 5;
+    doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin, yPos);
+    yPos += 5;
+    
+    const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [255, 0, 0];
+    doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
+    doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin, yPos);
+    
+    doc.setTextColor(0, 0, 0);
+
+    doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
+  } catch (error) {
+    console.error('Error exporting to PDF:', error);
+    alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
+  } finally {
+    setExporting('none');
+  }
+}, [transactions, totals, filters, validateExportData, formatDisplayDate]);
 
   // Exportação para Excel (já possui a coluna "Fonte/Fornecedor")
   const exportToExcel = useCallback(() => {
