@@ -105,7 +105,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
 
     try {
-      // 🔥 CORREÇÃO: Obter datas com horário para consulta precisa
       const { startDateTime, endDateTime } = getDateRangeForQuery();
       
       console.log('Consultando transações de:', startDateTime, 'até', endDateTime);
@@ -113,8 +112,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       let query = supabase
         .from('cash_flow_transactions')
         .select('*')
-        .gte('transaction_date', startDateTime) // Agora considera horário
-        .lte('transaction_date', endDateTime);   // Agora considera horário
+        .gte('transaction_date', startDateTime)
+        .lte('transaction_date', endDateTime);
 
       if (filters.type !== 'all') {
         query = query.eq('type', filters.type);
@@ -168,7 +167,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         return;
       }
 
-      // 🔥 CORREÇÃO: Verificar datas retornadas para debug
       console.log('Transações encontradas:', data?.length);
       if (data && data.length > 0) {
         console.log('Primeira transação:', {
@@ -196,10 +194,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     }
   }, [user, filters, validateDates, getDateRangeForQuery]);
 
-  // 🔥 CORREÇÃO: Função para formatar data de exibição com segurança
+  // Formatação de data
   const formatDisplayDate = useCallback((dateString: string): string => {
     try {
-      // Extrair apenas a parte da data (YYYY-MM-DD)
       const datePart = dateString.split('T')[0];
       const [year, month, day] = datePart.split('-');
       return `${day}/${month}/${year}`;
@@ -293,7 +290,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     };
   }, [formatDisplayDate]);
 
-  // Exportação para PDF
+  // Exportação para PDF (com coluna Fornecedor)
   const exportToPDF = useCallback(async () => {
     if (!validateExportData()) return;
     
@@ -310,12 +307,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 14;
       
-      // Configurar colunas
+      // 🔥 NOVAS LARGURAS DE COLUNA (incluindo Fornecedor)
       const colWidths = {
         data: 20,
         tipo: 15,
-        descricao: 55,
-        categoria: 30,
+        descricao: 40,
+        fornecedor: 30,   // <--- coluna adicionada
+        categoria: 25,
         origem: 20,
         documento: 20,
         valor: 30
@@ -327,9 +325,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         data: xPos,
         tipo: xPos + colWidths.data,
         descricao: xPos + colWidths.data + colWidths.tipo,
-        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
-        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria,
-        documento: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.origem,
+        fornecedor: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
+        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor,
+        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria,
+        documento: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria + colWidths.origem,
         valor: pageWidth - margin - colWidths.valor
       };
       
@@ -347,7 +346,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setFontSize(18);
       doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
 
-      // Período (usando formato de exibição)
+      // Período
       doc.setFontSize(11);
       doc.text(
         `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
@@ -376,6 +375,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.text('Data', colPositions.data, yPos);
       doc.text('Tipo', colPositions.tipo, yPos);
       doc.text('Descrição', colPositions.descricao, yPos);
+      doc.text('Fornecedor', colPositions.fornecedor, yPos);   // <--- cabeçalho novo
       doc.text('Categoria', colPositions.categoria, yPos);
       doc.text('Origem', colPositions.origem, yPos);
       doc.text('Doc', colPositions.documento, yPos);
@@ -399,6 +399,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           doc.text('Data', colPositions.data, yPos);
           doc.text('Tipo', colPositions.tipo, yPos);
           doc.text('Descrição', colPositions.descricao, yPos);
+          doc.text('Fornecedor', colPositions.fornecedor, yPos);
           doc.text('Categoria', colPositions.categoria, yPos);
           doc.text('Origem', colPositions.origem, yPos);
           doc.text('Doc', colPositions.documento, yPos);
@@ -414,6 +415,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           : '-';
 
         const documentoTipo = transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-';
+        const fornecedorTexto = transaction.type === 'income' 
+          ? transaction.fonte_pagadora || '-' 
+          : transaction.fornecedor || '-';
 
         // Quebrar descrição longa
         const descricaoLinhas = doc.splitTextToSize(
@@ -438,6 +442,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             doc.text(descricaoLinhas[i], colPositions.descricao, currentYPos);
           }
         }
+        
+        // Fornecedor
+        doc.text(fornecedorTexto, colPositions.fornecedor, yPos);
         
         // Categoria
         doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', colPositions.categoria, yPos);
@@ -481,14 +488,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     }
   }, [transactions, totals, filters, validateExportData, formatDisplayDate]);
 
-  // Exportação para Excel
+  // Exportação para Excel (já possui a coluna "Fonte/Fornecedor")
   const exportToExcel = useCallback(() => {
     if (!validateExportData()) return;
     
     setExporting('excel');
     
     try {
-      // Separar dados por tipo
       const incomeData = transactions
         .filter(t => t.type === 'income')
         .map(transaction => formatTransactionForExcel(transaction));
@@ -583,17 +589,17 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       if (allData.length > 0) {
         const allSheet = XLSX.utils.json_to_sheet(allData);
         allSheet['!cols'] = [
-          { wch: 12 }, // Data
-          { wch: 10 }, // Tipo
-          { wch: 40 }, // Descrição
-          { wch: 20 }, // Categoria
-          { wch: 20 }, // Subcategoria
-          { wch: 25 }, // Fonte/Fornecedor
-          { wch: 10 }, // Origem
-          { wch: 10 }, // Com Nota
-          { wch: 10 }, // Só Recibo
-          { wch: 15 }, // Método
-          { wch: 15 }, // Valor
+          { wch: 12 },
+          { wch: 10 },
+          { wch: 40 },
+          { wch: 20 },
+          { wch: 20 },
+          { wch: 25 },
+          { wch: 10 },
+          { wch: 10 },
+          { wch: 10 },
+          { wch: 15 },
+          { wch: 15 },
         ];
         XLSX.utils.book_append_sheet(workbook, allSheet, 'Todas Transações');
       }
@@ -647,9 +653,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Data Inicial
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Data Inicial</label>
               <input
                 type="date"
                 value={filters.startDate}
@@ -663,9 +667,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Data Final
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Data Final</label>
               <input
                 type="date"
                 value={filters.endDate}
@@ -679,9 +681,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Tipo
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
               <select
                 value={filters.type}
                 onChange={(e) => {
@@ -705,9 +705,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Categoria
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
               <select
                 value={filters.category}
                 onChange={(e) => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
@@ -726,9 +724,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Documento
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Documento</label>
               <select
                 value={filters.documentType}
                 onChange={(e) => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
@@ -747,9 +743,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Origem (IDHS/Geral)
-              </label>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Origem (IDHS/Geral)</label>
               <select
                 value={filters.origem}
                 onChange={(e) => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
@@ -769,7 +763,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </div>
           </div>
 
-          {/* Mensagem de erro */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center space-x-2">
               <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
@@ -838,26 +831,18 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-sm text-green-600 font-medium">Total Entradas</p>
                 <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totals.income)}</p>
-                <p className="text-xs text-green-600 mt-1">
-                  {transactions.filter(t => t.type === 'income').length} transações
-                </p>
+                <p className="text-xs text-green-600 mt-1">{transactions.filter(t => t.type === 'income').length} transações</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-sm text-red-600 font-medium">Total Saídas</p>
                 <p className="text-2xl font-bold text-red-700">{formatCurrencyBR(totals.expense)}</p>
-                <p className="text-xs text-red-600 mt-1">
-                  {transactions.filter(t => t.type === 'expense').length} transações
-                </p>
+                <p className="text-xs text-red-600 mt-1">{transactions.filter(t => t.type === 'expense').length} transações</p>
               </div>
               <div className={`${
                 totals.balance >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'
               } border rounded-lg p-4`}>
-                <p className={`text-sm ${
-                  totals.balance >= 0 ? 'text-blue-600' : 'text-orange-600'
-                } font-medium`}>Saldo</p>
-                <p className={`text-2xl font-bold ${
-                  totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'
-                }`}>
+                <p className={`text-sm ${totals.balance >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo</p>
+                <p className={`text-2xl font-bold ${totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
                   {formatCurrencyBR(totals.balance)}
                 </p>
               </div>
@@ -933,13 +918,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                             {formatDisplayDate(transaction.transaction_date)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                transaction.type === 'income'
-                                  ? 'bg-green-100 text-green-700'
-                                  : 'bg-red-100 text-red-700'
-                              }`}
-                            >
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              transaction.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}>
                               {transaction.type === 'income' ? 'Entrada' : 'Saída'}
                             </span>
                           </td>
@@ -974,8 +955,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                   </tbody>
                 </table>
               </div>
-              
-              {/* Rodapé da tabela com contador */}
               <div className="bg-slate-50 px-4 py-2 border-t border-slate-200 text-xs text-slate-500">
                 Total de {transactions.length} transação(ões) encontrada(s) no período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
               </div>
