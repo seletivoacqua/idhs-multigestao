@@ -87,7 +87,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   }, [filters.startDate, filters.endDate]);
 
   // Buscar transações com paginação e sem limites
-  const fetchAllTransactions = useCallback(async (startDateTime: string, endDateTime: string) => {
+  const fetchAllTransactions = useCallback(async (startDate: string, endDate: string) => {
     let allData: Transaction[] = [];
     let page = 0;
     const pageSize = 1000;
@@ -100,8 +100,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       let query = supabase
         .from('cash_flow_transactions')
         .select('*')
-        .gte('transaction_date', startDateTime)
-        .lte('transaction_date', endDateTime)
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
         .range(from, to)
         .order('transaction_date', { ascending: false });
 
@@ -154,14 +154,14 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   }, [filters]);
 
   // Buscar notas fiscais relacionadas
-  const fetchInvoices = useCallback(async (startDateTime: string, endDateTime: string) => {
+  const fetchInvoices = useCallback(async (startDate: string, endDate: string) => {
     if (!filters.includeInvoices) return [];
 
     const { data, error: invoiceError } = await supabase
       .from('invoices')
       .select('id, net_value, issue_date, due_date, payment_status, payment_date, paid_value, invoice_number, unit_name')
-      .gte('issue_date', startDateTime.split('T')[0])
-      .lte('issue_date', endDateTime.split('T')[0])
+      .gte('issue_date', startDate)
+      .lte('issue_date', endDate)
       .order('issue_date', { ascending: false });
 
     if (invoiceError) {
@@ -185,17 +185,17 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
 
     try {
-      const startDateTime = `${filters.startDate}T00:00:00`;
-      const endDateTime = `${filters.endDate}T23:59:59`;
+      const startDate = filters.startDate;
+      const endDate = filters.endDate;
       
-      console.log('📊 Buscando transações de:', startDateTime, 'até', endDateTime);
+      console.log('📊 Buscando transações de:', startDate, 'até', endDate);
       console.log('📋 Filtros aplicados:', filters);
 
-      const transactionsData = await fetchAllTransactions(startDateTime, endDateTime);
+      const transactionsData = await fetchAllTransactions(startDate, endDate);
       
       console.log(`✅ Encontradas ${transactionsData.length} transações`);
 
-      const invoicesData = await fetchInvoices(startDateTime, endDateTime);
+      const invoicesData = await fetchInvoices(startDate, endDate);
       
       if (invoicesData.length > 0) {
         console.log(`📄 Encontradas ${invoicesData.length} notas fiscais`);
@@ -427,35 +427,27 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setFont(undefined, 'bold');
       doc.setFontSize(7);
       
-      // Coluna 1: Data
       doc.rect(colPositions.data, yPos, colWidths.data, 9, 'F');
       doc.text('Data', colPositions.data + 2, yPos + 6);
       
-      // Coluna 2: Tipo
       doc.rect(colPositions.tipo, yPos, colWidths.tipo, 9, 'F');
       doc.text('Tipo', colPositions.tipo + 2, yPos + 6);
       
-      // Coluna 3: Descrição
       doc.rect(colPositions.descricao, yPos, colWidths.descricao, 9, 'F');
       doc.text('Descrição', colPositions.descricao + 2, yPos + 6);
       
-      // Coluna 4: Categoria
       doc.rect(colPositions.categoria, yPos, colWidths.categoria, 9, 'F');
       doc.text('Categoria', colPositions.categoria + 2, yPos + 6);
       
-      // Coluna 5: Fonte/Fornecedor
       doc.rect(colPositions.fonte, yPos, colWidths.fonte, 9, 'F');
       doc.text('Fonte/Fornecedor', colPositions.fonte + 2, yPos + 6);
       
-      // Coluna 6: Origem
       doc.rect(colPositions.origem, yPos, colWidths.origem, 9, 'F');
       doc.text('Origem', colPositions.origem + 2, yPos + 6);
       
-      // Coluna 7: Método
       doc.rect(colPositions.metodo, yPos, colWidths.metodo, 9, 'F');
       doc.text('Método', colPositions.metodo + 2, yPos + 6);
       
-      // Coluna 8: Valor
       doc.rect(colPositions.valor, yPos, colWidths.valor, 9, 'F');
       doc.text('Valor (R$)', colPositions.valor + 2, yPos + 6);
       
@@ -528,7 +520,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         doc.text(tipoTexto, colPositions.tipo + 2, yPos);
         doc.setTextColor(0, 0, 0);
         
-        // Descrição (quebrar linha se necessário)
+        // Descrição
         const descricaoLines = doc.splitTextToSize(transaction.description, colWidths.descricao - 4);
         doc.text(descricaoLines[0], colPositions.descricao + 2, yPos);
         
@@ -561,7 +553,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         // Método
         doc.text(transaction.method, colPositions.metodo + 2, yPos);
         
-        // Valor (com cor vermelha se for despesa)
+        // Valor com cor
         if (transaction.type === 'expense') {
           doc.setTextColor(200, 0, 0);
         } else {
@@ -574,7 +566,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         rowCount++;
       }
       
-      // Linha de total
+      // Rodapé com totais
       yPos += 4;
       doc.setDrawColor(100, 100, 100);
       doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
@@ -645,7 +637,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
       
-      // Aba de Transações com 8 colunas
+      // Aba de Transações
       const transactionsData = transactions.map(transaction => ({
         Data: formatDisplayDate(transaction.transaction_date),
         Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
@@ -670,7 +662,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       ];
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
       
-      // Aba de Notas Fiscais (se houver)
+      // Aba de Notas Fiscais
       if (invoices.length > 0 && filters.includeInvoices) {
         const invoicesData = invoices.map(invoice => ({
           'Número NF': invoice.invoice_number,
@@ -1040,7 +1032,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                   </div>
                 )}
 
-                {/* Tabela de transações com 8 colunas */}
+                {/* Tabela de transações */}
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                   <div className="overflow-x-auto max-h-[400px]">
                     <table className="w-full min-w-[1000px]">
