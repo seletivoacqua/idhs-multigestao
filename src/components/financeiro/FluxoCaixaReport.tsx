@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { X, FileDown, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import logoImg from '../../assets/image.png';
 import { formatCurrencyBR } from '../../utils/currencyUtils';
@@ -25,6 +26,19 @@ interface Transaction {
   geral?: boolean | null;
   invoice_id?: string | null;
   created_at?: string;
+  updated_at?: string;
+}
+
+interface Invoice {
+  id: string;
+  net_value: number;
+  issue_date: string;
+  due_date: string;
+  payment_status: string;
+  payment_date: string | null;
+  paid_value: number | null;
+  invoice_number: string;
+  unit_name: string;
 }
 
 interface Filters {
@@ -34,6 +48,7 @@ interface Filters {
   documentType: 'all' | 'com_nota' | 'so_recibo';
   category: 'all' | 'despesas_fixas' | 'despesas_variaveis';
   origem: 'all' | 'idhs' | 'geral' | 'nenhuma';
+  includeInvoices: boolean;
 }
 
 interface FluxoCaixaReportProps {
@@ -48,7 +63,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [exporting, setExporting] = useState<ExportType>('none');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showFilters, setShowFilters] = useState(true);
+  const [lastQueryTime, setLastQueryTime] = useState<Date | null>(null);
   
   const [filters, setFilters] = useState<Filters>({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
@@ -57,9 +75,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     documentType: 'all',
     category: 'all',
     origem: 'all',
+    includeInvoices: false,
   });
 
-  // 🔥 CORREÇÃO: Validar e ajustar datas
+  // Validar e ajustar datas
   const validateDates = useCallback((): boolean => {
     if (filters.startDate > filters.endDate) {
       setError('Data inicial não pode ser maior que data final');
@@ -68,31 +87,93 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     return true;
   }, [filters.startDate, filters.endDate]);
 
-  // 🔥 CORREÇÃO: Função para ajustar datas para consulta no Supabase
-  const getDateRangeForQuery = useCallback(() => {
-    // Data inicial: início do dia (00:00:00)
-    const startDateTime = `${filters.startDate}T00:00:00`;
-    
-    // Data final: fim do dia (23:59:59)
-    const endDateTime = `${filters.endDate}T23:59:59`;
-    
-    return { startDateTime, endDateTime };
-  }, [filters.startDate, filters.endDate]);
+  // Buscar transações com paginação e sem limites
+  const fetchAllTransactions = useCallback(async (startDateTime: string, endDateTime: string) => {
+    let allData: Transaction[] = [];
+    let page = 0;
+    const pageSize = 1000; // Aumentado para 1000 por página
+    let hasMore = true;
 
-  // Reset de filtros
-  const resetFilters = useCallback(() => {
-    setFilters({
-      startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-      endDate: new Date().toISOString().split('T')[0],
-      type: 'all',
-      documentType: 'all',
-      category: 'all',
-      origem: 'all',
-    });
-    setError(null);
-  }, []);
+    while (hasMore) {
+      const from = page * pageSize;
+      const to = (page + 1) * pageSize - 1;
 
-  // Geração do relatório com datas corrigidas
+      let query = supabase
+        .from('cash_flow_transactions')
+        .select('*')
+        .gte('transaction_date', startDateTime)
+        .lte('transaction_date', endDateTime)
+        .range(from, to)
+        .order('transaction_date', { ascending: false });
+
+      if (filters.type !== 'all') {
+        query = query.eq('type', filters.type);
+      }
+
+      if (filters.category !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
+        query = query.eq('category', filters.category);
+      }
+
+      if (filters.documentType !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
+        if (filters.documentType === 'com_nota') {
+          query = query.eq('com_nota', true);
+        } else if (filters.documentType === 'so_recibo') {
+          query = query.eq('so_recibo', true);
+        }
+      }
+
+      if (filters.origem !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
+        if (filters.origem === 'idhs') {
+          query = query.eq('idhs', true);
+        } else if (filters.origem === 'geral') {
+          query = query.eq('geral', true);
+        } else if (filters.origem === 'nenhuma') {
+          query = query.or('idhs.is.null,idhs.eq.false,and(geral.is.null,geral.eq.false)');
+        }
+      }
+
+      const { data, error: queryError } = await query;
+
+      if (queryError) {
+        console.error('Error fetching transactions:', queryError);
+        throw new Error(`Erro ao buscar transações: ${queryError.message}`);
+      }
+
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allData = [...allData, ...data];
+        page++;
+        
+        if (data.length < pageSize) {
+          hasMore = false;
+        }
+      }
+    }
+
+    return allData;
+  }, [filters]);
+
+  // Buscar notas fiscais relacionadas
+  const fetchInvoices = useCallback(async (startDateTime: string, endDateTime: string) => {
+    if (!filters.includeInvoices) return [];
+
+    const { data, error: invoiceError } = await supabase
+      .from('invoices')
+      .select('id, net_value, issue_date, due_date, payment_status, payment_date, paid_value, invoice_number, unit_name')
+      .gte('issue_date', startDateTime.split('T')[0])
+      .lte('issue_date', endDateTime.split('T')[0])
+      .order('issue_date', { ascending: false });
+
+    if (invoiceError) {
+      console.error('Error fetching invoices:', invoiceError);
+      return [];
+    }
+
+    return data || [];
+  }, [filters.includeInvoices]);
+
+  // Geração do relatório com busca completa
   const handleGenerateReport = useCallback(async () => {
     if (!user) {
       setError('Usuário não autenticado');
@@ -105,94 +186,48 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
 
     try {
-      const { startDateTime, endDateTime } = getDateRangeForQuery();
+      const startDateTime = `${filters.startDate}T00:00:00`;
+      const endDateTime = `${filters.endDate}T23:59:59`;
       
-      console.log('Consultando transações de:', startDateTime, 'até', endDateTime);
+      console.log('📊 Buscando transações de:', startDateTime, 'até', endDateTime);
+      console.log('📋 Filtros aplicados:', filters);
 
-      let query = supabase
-        .from('cash_flow_transactions')
-        .select('*')
-        .gte('transaction_date', startDateTime)
-        .lte('transaction_date', endDateTime);
+      // Buscar transações com paginação
+      const transactionsData = await fetchAllTransactions(startDateTime, endDateTime);
+      
+      console.log(`✅ Encontradas ${transactionsData.length} transações`);
 
-      if (filters.type !== 'all') {
-        query = query.eq('type', filters.type);
+      // Buscar notas fiscais se necessário
+      const invoicesData = await fetchInvoices(startDateTime, endDateTime);
+      
+      if (invoicesData.length > 0) {
+        console.log(`📄 Encontradas ${invoicesData.length} notas fiscais`);
       }
 
-      if (filters.category !== 'all') {
-        if (filters.type === 'all' || filters.type === 'expense') {
-          query = query.eq('category', filters.category);
-        } else {
-          setError('Categoria só pode ser aplicada a despesas');
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (filters.documentType !== 'all') {
-        if (filters.type === 'all' || filters.type === 'expense') {
-          query = query.eq(filters.documentType, true);
-        } else {
-          setError('Tipo de documento só pode ser aplicado a despesas');
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (filters.origem !== 'all') {
-        if (filters.type === 'all' || filters.type === 'expense') {
-          if (filters.origem === 'idhs') {
-            query = query.eq('idhs', true);
-          } else if (filters.origem === 'geral') {
-            query = query.eq('geral', true);
-          } else if (filters.origem === 'nenhuma') {
-            query = query
-              .or('idhs.is.null,idhs.eq.false')
-              .or('geral.is.null,geral.eq.false');
-          }
-        } else {
-          setError('Origem só pode ser aplicada a despesas');
-          setLoading(false);
-          return;
-        }
-      }
-
-      query = query.order('transaction_date', { ascending: false });
-
-      const { data, error: queryError } = await query;
-
-      if (queryError) {
-        console.error('Error loading transactions:', queryError);
-        setError('Erro ao carregar transações');
-        return;
-      }
-
-      console.log('Transações encontradas:', data?.length);
-      if (data && data.length > 0) {
-        console.log('Primeira transação:', {
-          data: data[0].transaction_date,
-          esperado_inicio: startDateTime,
-          esperado_fim: endDateTime
-        });
-      }
-
-      const processedData = data?.map(transaction => ({
+      // Processar dados
+      const processedTransactions = transactionsData.map(transaction => ({
         ...transaction,
         amount: Number(transaction.amount),
         com_nota: transaction.com_nota === true,
         so_recibo: transaction.so_recibo === true,
         idhs: transaction.idhs === true,
         geral: transaction.geral === true,
-      })) || [];
+      }));
 
-      setTransactions(processedData);
+      setTransactions(processedTransactions);
+      setInvoices(invoicesData);
+      setLastQueryTime(new Date());
+      
+      if (processedTransactions.length === 0 && invoicesData.length === 0) {
+        setError('Nenhuma transação ou nota fiscal encontrada no período selecionado');
+      }
     } catch (error) {
-      console.error('Error generating report:', error);
-      setError('Erro ao gerar relatório');
+      console.error('❌ Erro ao gerar relatório:', error);
+      setError(error instanceof Error ? error.message : 'Erro ao gerar relatório');
     } finally {
       setLoading(false);
     }
-  }, [user, filters, validateDates, getDateRangeForQuery]);
+  }, [user, filters, validateDates, fetchAllTransactions, fetchInvoices]);
 
   // Formatação de data
   const formatDisplayDate = useCallback((dateString: string): string => {
@@ -223,10 +258,12 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       .filter(t => t.type === 'expense')
       .reduce((sum, t) => sum + t.amount, 0);
     
+    const invoiceTotal = invoices.reduce((sum, inv) => sum + inv.net_value, 0);
+    
     const balance = income - expense;
     
-    return { income, expense, balance };
-  }, [transactions]);
+    return { income, expense, balance, invoiceTotal };
+  }, [transactions, invoices]);
 
   const statistics = useMemo(() => {
     const expensesByCategory = transactions
@@ -243,365 +280,256 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       outros: transactions.filter(t => t.type === 'expense' && !t.idhs && !t.geral).reduce((sum, t) => sum + t.amount, 0),
     };
 
-    return { expensesByCategory, expensesByOrigin };
+    const expensesByMethod = transactions
+      .filter(t => t.type === 'expense')
+      .reduce((acc, t) => {
+        acc[t.method] = (acc[t.method] || 0) + t.amount;
+        return acc;
+      }, {} as Record<string, number>);
+
+    return { expensesByCategory, expensesByOrigin, expensesByMethod };
   }, [transactions]);
 
-  // Validação de dados para exportação
-  const validateExportData = useCallback((): boolean => {
-    if (transactions.length === 0) {
+  // Reset de filtros
+  const resetFilters = useCallback(() => {
+    setFilters({
+      startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      type: 'all',
+      documentType: 'all',
+      category: 'all',
+      origem: 'all',
+      includeInvoices: false,
+    });
+    setError(null);
+  }, []);
+
+  // Exportação para PDF melhorada
+  const exportToPDF = useCallback(async () => {
+    if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
-      return false;
+      return;
     }
     
-    const invalidTransactions = transactions.filter(t => 
-      !t.id || !t.type || typeof t.amount !== 'number' || isNaN(t.amount)
-    );
+    setExporting('pdf');
     
-    if (invalidTransactions.length > 0) {
-      console.warn('Transações inválidas encontradas:', invalidTransactions);
-      if (!confirm(`${invalidTransactions.length} transação(ões) com dados incompletos. Deseja continuar?`)) {
-        return false;
-      }
-    }
-    
-    return true;
-  }, [transactions]);
-
-  // Função auxiliar para formatar transação para Excel
-  const formatTransactionForExcel = useCallback((transaction: Transaction) => {
-    const origem = transaction.type === 'expense'
-      ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
-      : '-';
-
-    return {
-      Data: formatDisplayDate(transaction.transaction_date),
-      Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
-      Descrição: transaction.description,
-      Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
-      Subcategoria: transaction.subcategoria || '-',
-      'Fonte/Fornecedor': transaction.type === 'income' 
-        ? transaction.fonte_pagadora || '-' 
-        : transaction.fornecedor || '-',
-      Origem: origem,
-      'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
-      'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
-      Método: transaction.method,
-      'Valor (R$)': transaction.amount,
-    };
-  }, [formatDisplayDate]);
-
-  // Exportação para PDF (com coluna Fornecedor)
-const exportToPDF = useCallback(async () => {
-  if (!validateExportData()) return;
-  
-  setExporting('pdf');
-  
-  try {
-    const doc = new jsPDF({ 
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4'
-    });
-    
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 14;
-    
-    // ✅ NOVAS LARGURAS – melhor espaçamento
-    const colWidths = {
-      data: 22,
-      tipo: 16,
-      descricao: 38,
-      fornecedor: 40,    // aumentado
-      categoria: 30,     // aumentado
-      origem: 25,        // aumentado
-      documento: 25,     // aumentado
-      valor: 35
-    };
-    
-    // Calcular posições das colunas
-    let xPos = margin;
-    const colPositions = {
-      data: xPos,
-      tipo: xPos + colWidths.data,
-      descricao: xPos + colWidths.data + colWidths.tipo,
-      fornecedor: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
-      categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor,
-      origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria,
-      documento: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria + colWidths.origem,
-      valor: pageWidth - margin - colWidths.valor
-    };
-    
-    // Logo
     try {
-      const logoWidth = 30;
-      const logoHeight = 15;
-      const logoX = (pageWidth - logoWidth) / 2;
-      doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-    } catch (imgError) {
-      console.warn('Error adding logo to PDF:', imgError);
-    }
-
-    // Título
-    doc.setFontSize(18);
-    doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
-
-    // Período
-    doc.setFontSize(11);
-    doc.text(
-      `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
-      pageWidth / 2,
-      32,
-      { align: 'center' }
-    );
-
-    // Filtros aplicados (opcional)
-    const filtrosAplicados = [];
-    if (filters.type !== 'all') filtrosAplicados.push(`Tipo: ${filters.type === 'income' ? 'Receitas' : 'Despesas'}`);
-    if (filters.category !== 'all') filtrosAplicados.push(`Categoria: ${filters.category.replace('_', ' ')}`);
-    if (filters.origem !== 'all') filtrosAplicados.push(`Origem: ${filters.origem === 'idhs' ? 'IDHS' : filters.origem === 'geral' ? 'Geral' : 'Sem origem'}`);
-    if (filters.documentType !== 'all') filtrosAplicados.push(`Documento: ${filters.documentType === 'com_nota' ? 'Com Nota' : 'Só Recibo'}`);
-
-    if (filtrosAplicados.length > 0) {
-      doc.setFontSize(9);
-      doc.text(`Filtros: ${filtrosAplicados.join(' | ')}`, pageWidth / 2, 38, { align: 'center' });
-    }
-
-    // Cabeçalho da tabela
-    let yPos = 45;
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'bold');
-    
-    doc.text('Data', colPositions.data, yPos);
-    doc.text('Tipo', colPositions.tipo, yPos);
-    doc.text('Descrição', colPositions.descricao, yPos);
-    doc.text('Fornecedor', colPositions.fornecedor, yPos);
-    doc.text('Categoria', colPositions.categoria, yPos);
-    doc.text('Origem', colPositions.origem, yPos);
-    doc.text('Doc', colPositions.documento, yPos);
-    doc.text('Valor', colPositions.valor, yPos);
-
-    yPos += 3;
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 4;
-    
-    doc.setFont(undefined, 'normal');
-
-    // Dados da tabela
-    transactions.forEach((transaction) => {
-      if (yPos > pageHeight - 25) {
-        doc.addPage('landscape');
-        yPos = 25;
-        
-        // Recriar cabeçalho na nova página
-        doc.setFontSize(8);
-        doc.setFont(undefined, 'bold');
-        doc.text('Data', colPositions.data, yPos);
-        doc.text('Tipo', colPositions.tipo, yPos);
-        doc.text('Descrição', colPositions.descricao, yPos);
-        doc.text('Fornecedor', colPositions.fornecedor, yPos);
-        doc.text('Categoria', colPositions.categoria, yPos);
-        doc.text('Origem', colPositions.origem, yPos);
-        doc.text('Doc', colPositions.documento, yPos);
-        doc.text('Valor', colPositions.valor, yPos);
-        yPos += 3;
-        doc.line(margin, yPos, pageWidth - margin, yPos);
-        yPos += 4;
-        doc.setFont(undefined, 'normal');
+      const doc = new jsPDF({ 
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 14;
+      
+      // Adicionar logo
+      try {
+        const logoWidth = 30;
+        const logoHeight = 15;
+        const logoX = (pageWidth - logoWidth) / 2;
+        doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+      } catch (imgError) {
+        console.warn('Error adding logo to PDF:', imgError);
       }
 
-      const origemTexto = transaction.type === 'expense'
-        ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
-        : '-';
+      // Título
+      doc.setFontSize(20);
+      doc.setTextColor(33, 33, 33);
+      doc.text('Relatório de Fluxo de Caixa', pageWidth / 2, 25, { align: 'center' });
 
-      const documentoTipo = transaction.com_nota ? 'Nota' : transaction.so_recibo ? 'Recibo' : '-';
-      const fornecedorTexto = transaction.type === 'income' 
-        ? transaction.fonte_pagadora || '-' 
-        : transaction.fornecedor || '-';
-
-      // Quebrar descrição longa (largura ajustada)
-      const descricaoLinhas = doc.splitTextToSize(
-        transaction.description, 
-        colWidths.descricao - 2
+      // Período
+      doc.setFontSize(11);
+      doc.setTextColor(100, 100, 100);
+      doc.text(
+        `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
+        pageWidth / 2,
+        33,
+        { align: 'center' }
       );
-      
-      // Data formatada
-      doc.text(formatDisplayDate(transaction.transaction_date), colPositions.data, yPos);
-      
-      // Tipo (abreviado)
-      doc.text(transaction.type === 'income' ? 'REC' : 'DESP', colPositions.tipo, yPos);
-      
-      // Descrição (primeira linha)
-      doc.text(descricaoLinhas[0] || '', colPositions.descricao, yPos);
-      
-      // Se descrição tiver mais linhas, ajustar Y
-      let currentYPos = yPos;
-      if (descricaoLinhas.length > 1) {
-        for (let i = 1; i < descricaoLinhas.length; i++) {
-          currentYPos += 4;
-          doc.text(descricaoLinhas[i], colPositions.descricao, currentYPos);
-        }
-      }
-      
-      // Fornecedor
-      doc.text(fornecedorTexto, colPositions.fornecedor, yPos);
-      
-      // Categoria
-      doc.text(transaction.category ? transaction.category.replace('_', ' ') : '-', colPositions.categoria, yPos);
-      
-      // Origem
-      doc.text(origemTexto, colPositions.origem, yPos);
-      
-      // Documento
-      doc.text(documentoTipo, colPositions.documento, yPos);
-      
-      // Valor
-      doc.text(formatCurrencyBR(transaction.amount), colPositions.valor, yPos);
 
-      yPos = currentYPos + 6;
-    });
+      // Data da geração
+      doc.setFontSize(9);
+      doc.text(
+        `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+        pageWidth - margin,
+        10,
+        { align: 'right' }
+      );
 
-    // Linha de total
-    yPos += 2;
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 5;
+      // Cards de resumo
+      let yPos = 45;
+      
+      // Desenhar cards
+      const cardWidth = (pageWidth - (margin * 2) - 20) / 3;
+      const cardHeight = 25;
+      
+      // Card Entradas
+      doc.setFillColor(220, 255, 220);
+      doc.rect(margin, yPos, cardWidth, cardHeight, 'F');
+      doc.setFontSize(10);
+      doc.setTextColor(0, 100, 0);
+      doc.text('Total Entradas', margin + 5, yPos + 8);
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text(formatCurrencyBR(totals.income), margin + 5, yPos + 20);
+      
+      // Card Saídas
+      doc.setFillColor(255, 220, 220);
+      doc.rect(margin + cardWidth + 10, yPos, cardWidth, cardHeight, 'F');
+      doc.setTextColor(200, 0, 0);
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'normal');
+      doc.text('Total Saídas', margin + cardWidth + 15, yPos + 8);
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text(formatCurrencyBR(totals.expense), margin + cardWidth + 15, yPos + 20);
+      
+      // Card Saldo
+      const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [200, 0, 0];
+      doc.setFillColor(totals.balance >= 0 ? 230 : 255, totals.balance >= 0 ? 255 : 230, totals.balance >= 0 ? 230 : 230);
+      doc.rect(margin + (cardWidth + 10) * 2, yPos, cardWidth, cardHeight, 'F');
+      doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'normal');
+      doc.text('Saldo', margin + (cardWidth + 10) * 2 + 5, yPos + 8);
+      doc.setFontSize(14);
+      doc.setFont(undefined, 'bold');
+      doc.text(formatCurrencyBR(totals.balance), margin + (cardWidth + 10) * 2 + 5, yPos + 20);
+      
+      yPos += cardHeight + 10;
+      
+      // Tabela de transações
+      const tableData = transactions.map(transaction => [
+        formatDisplayDate(transaction.transaction_date),
+        transaction.type === 'income' ? 'Entrada' : 'Saída',
+        transaction.description.length > 40 ? transaction.description.substring(0, 37) + '...' : transaction.description,
+        transaction.type === 'income' ? (transaction.fonte_pagadora || '-') : (transaction.fornecedor || '-'),
+        transaction.category ? transaction.category.replace('_', ' ') : '-',
+        transaction.type === 'expense' ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') : '-',
+        formatCurrencyBR(transaction.amount),
+      ]);
+      
+      autoTable(doc, {
+        head: [['Data', 'Tipo', 'Descrição', 'Fornecedor/Fonte', 'Categoria', 'Origem', 'Valor']],
+        body: tableData,
+        startY: yPos,
+        margin: { left: margin, right: margin },
+        styles: { fontSize: 8, cellPadding: 3 },
+        headStyles: { fillColor: [66, 66, 66], textColor: 255, fontSize: 9, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        columnStyles: {
+          0: { cellWidth: 25 },
+          1: { cellWidth: 20 },
+          2: { cellWidth: 50 },
+          3: { cellWidth: 35 },
+          4: { cellWidth: 30 },
+          5: { cellWidth: 20 },
+          6: { cellWidth: 30, halign: 'right' },
+        },
+      });
+      
+      // Rodapé com totais
+      const finalY = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFontSize(10);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`Total de transações: ${transactions.length}`, margin, finalY);
+      doc.text(`Total de entradas: ${transactions.filter(t => t.type === 'income').length}`, margin, finalY + 6);
+      doc.text(`Total de saídas: ${transactions.filter(t => t.type === 'expense').length}`, margin, finalY + 12);
+      
+      doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
+    } catch (error) {
+      console.error('Error exporting to PDF:', error);
+      alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
+    } finally {
+      setExporting('none');
+    }
+  }, [transactions, totals, filters, formatDisplayDate]);
 
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'bold');
-    doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos);
-    yPos += 5;
-    doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin, yPos);
-    yPos += 5;
-    
-    const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [255, 0, 0];
-    doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
-    doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin, yPos);
-    
-    doc.setTextColor(0, 0, 0);
-
-    doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
-  } catch (error) {
-    console.error('Error exporting to PDF:', error);
-    alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
-  } finally {
-    setExporting('none');
-  }
-}, [transactions, totals, filters, validateExportData, formatDisplayDate]);
-
-  // Exportação para Excel (já possui a coluna "Fonte/Fornecedor")
+  // Exportação para Excel melhorada
   const exportToExcel = useCallback(() => {
-    if (!validateExportData()) return;
+    if (transactions.length === 0 && invoices.length === 0) {
+      alert('Não há dados para exportar');
+      return;
+    }
     
     setExporting('excel');
     
     try {
-      const incomeData = transactions
-        .filter(t => t.type === 'income')
-        .map(transaction => formatTransactionForExcel(transaction));
-        
-      const expenseData = transactions
-        .filter(t => t.type === 'expense')
-        .map(transaction => formatTransactionForExcel(transaction));
-      
       const workbook = XLSX.utils.book_new();
       
-      // Aba de Resumo
+      // Aba de Resumo Executivo
       const summaryData = [
         ['RELATÓRIO DE FLUXO DE CAIXA'],
+        [`Data de geração: ${new Date().toLocaleString('pt-BR')}`],
         [`Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`],
         [''],
-        ['FILTROS APLICADOS'],
-        [`Tipo: ${filters.type === 'all' ? 'Todos' : filters.type === 'income' ? 'Apenas Entradas' : 'Apenas Saídas'}`],
-        [`Categoria: ${filters.category === 'all' ? 'Todas' : filters.category.replace('_', ' ')}`],
-        [`Origem: ${filters.origem === 'all' ? 'Todas' : filters.origem === 'idhs' ? 'IDHS' : filters.origem === 'geral' ? 'Geral' : 'Sem origem'}`],
-        [`Documento: ${filters.documentType === 'all' ? 'Todos' : filters.documentType === 'com_nota' ? 'Com Nota' : 'Só Recibo'}`],
-        [''],
         ['RESUMO FINANCEIRO'],
-        ['Descrição', 'Valor Formatado', 'Valor Numérico'],
-        ['Total Entradas', formatCurrencyBR(totals.income), totals.income],
-        ['Total Saídas', formatCurrencyBR(totals.expense), totals.expense],
-        ['Saldo', formatCurrencyBR(totals.balance), totals.balance],
+        ['Indicador', 'Valor'],
+        ['Total de Entradas', formatCurrencyBR(totals.income)],
+        ['Total de Saídas', formatCurrencyBR(totals.expense)],
+        ['Saldo', formatCurrencyBR(totals.balance)],
         [''],
-        ['ESTATÍSTICAS DE DESPESAS'],
-        ['Por Origem:'],
-        ['IDHS', formatCurrencyBR(statistics.expensesByOrigin.idhs), statistics.expensesByOrigin.idhs],
-        ['Geral', formatCurrencyBR(statistics.expensesByOrigin.geral), statistics.expensesByOrigin.geral],
-        ['Outras', formatCurrencyBR(statistics.expensesByOrigin.outros), statistics.expensesByOrigin.outros],
+        ['ESTATÍSTICAS'],
+        ['Total de Transações', transactions.length],
+        ['Total de Entradas', transactions.filter(t => t.type === 'income').length],
+        ['Total de Saídas', transactions.filter(t => t.type === 'expense').length],
         [''],
-        ['Por Categoria:'],
-        ...Object.entries(statistics.expensesByCategory).map(([cat, val]) => [
-          cat.replace('_', ' '),
-          formatCurrencyBR(val),
-          val
-        ]),
+        ['DESPESAS POR ORIGEM'],
+        ['Origem', 'Valor'],
+        ['IDHS', formatCurrencyBR(statistics.expensesByOrigin.idhs)],
+        ['Geral', formatCurrencyBR(statistics.expensesByOrigin.geral)],
+        ['Outras', formatCurrencyBR(statistics.expensesByOrigin.outros)],
+        [''],
+        ['DESPESAS POR MÉTODO'],
+        ...Object.entries(statistics.expensesByMethod).map(([method, value]) => [method, formatCurrencyBR(value)]),
       ];
       
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+      summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
       
-      summarySheet['!cols'] = [
-        { wch: 30 },
-        { wch: 20 },
-        { wch: 15 },
+      // Aba de Transações
+      const transactionsData = transactions.map(transaction => ({
+        Data: formatDisplayDate(transaction.transaction_date),
+        Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
+        Descrição: transaction.description,
+        Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
+        Subcategoria: transaction.subcategoria || '-',
+        'Fonte/Fornecedor': transaction.type === 'income' ? transaction.fonte_pagadora || '-' : transaction.fornecedor || '-',
+        Origem: transaction.type === 'expense' ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') : '-',
+        'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
+        'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
+        Método: transaction.method,
+        'Valor (R$)': transaction.amount,
+      }));
+      
+      const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
+      transactionsSheet['!cols'] = [
+        { wch: 12 }, { wch: 10 }, { wch: 40 }, { wch: 20 },
+        { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 10 },
+        { wch: 10 }, { wch: 15 }, { wch: 15 }
       ];
+      XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
       
-      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
-      
-      // Aba de Receitas
-      if (incomeData.length > 0) {
-        const incomeSheet = XLSX.utils.json_to_sheet(incomeData);
-        incomeSheet['!cols'] = [
-          { wch: 12 }, // Data
-          { wch: 10 }, // Tipo
-          { wch: 40 }, // Descrição
-          { wch: 20 }, // Categoria
-          { wch: 20 }, // Subcategoria
-          { wch: 25 }, // Fonte/Fornecedor
-          { wch: 10 }, // Origem
-          { wch: 10 }, // Com Nota
-          { wch: 10 }, // Só Recibo
-          { wch: 15 }, // Método
-          { wch: 15 }, // Valor
+      // Aba de Notas Fiscais (se houver)
+      if (invoices.length > 0 && filters.includeInvoices) {
+        const invoicesData = invoices.map(invoice => ({
+          'Número NF': invoice.invoice_number,
+          'Unidade': invoice.unit_name,
+          'Data Emissão': formatDisplayDate(invoice.issue_date),
+          'Data Vencimento': formatDisplayDate(invoice.due_date),
+          'Valor (R$)': invoice.net_value,
+          'Status': invoice.payment_status,
+          'Data Pagamento': invoice.payment_date ? formatDisplayDate(invoice.payment_date) : '-',
+          'Valor Pago (R$)': invoice.paid_value || '-',
+        }));
+        
+        const invoicesSheet = XLSX.utils.json_to_sheet(invoicesData);
+        invoicesSheet['!cols'] = [
+          { wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }
         ];
-        XLSX.utils.book_append_sheet(workbook, incomeSheet, 'Receitas');
-      }
-      
-      // Aba de Despesas
-      if (expenseData.length > 0) {
-        const expenseSheet = XLSX.utils.json_to_sheet(expenseData);
-        expenseSheet['!cols'] = [
-          { wch: 12 }, // Data
-          { wch: 10 }, // Tipo
-          { wch: 40 }, // Descrição
-          { wch: 20 }, // Categoria
-          { wch: 20 }, // Subcategoria
-          { wch: 25 }, // Fonte/Fornecedor
-          { wch: 10 }, // Origem
-          { wch: 10 }, // Com Nota
-          { wch: 10 }, // Só Recibo
-          { wch: 15 }, // Método
-          { wch: 15 }, // Valor
-        ];
-        XLSX.utils.book_append_sheet(workbook, expenseSheet, 'Despesas');
-      }
-      
-      // Aba de Todas Transações
-      const allData = transactions.map(transaction => formatTransactionForExcel(transaction));
-      if (allData.length > 0) {
-        const allSheet = XLSX.utils.json_to_sheet(allData);
-        allSheet['!cols'] = [
-          { wch: 12 },
-          { wch: 10 },
-          { wch: 40 },
-          { wch: 20 },
-          { wch: 20 },
-          { wch: 25 },
-          { wch: 10 },
-          { wch: 10 },
-          { wch: 10 },
-          { wch: 15 },
-          { wch: 15 },
-        ];
-        XLSX.utils.book_append_sheet(workbook, allSheet, 'Todas Transações');
+        XLSX.utils.book_append_sheet(workbook, invoicesSheet, 'Notas Fiscais');
       }
       
       XLSX.writeFile(workbook, `relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.xlsx`);
@@ -611,15 +539,14 @@ const exportToPDF = useCallback(async () => {
     } finally {
       setExporting('none');
     }
-  }, [transactions, totals, statistics, filters, formatTransactionForExcel, validateExportData, formatDisplayDate]);
+  }, [transactions, invoices, totals, statistics, filters, formatDisplayDate]);
 
-  // Renderização condicional de loading
   if (initialLoading) {
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-xl shadow-xl p-8">
+        <div className="bg-white rounded-2xl shadow-2xl p-8">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-slate-600">Carregando...</p>
+          <p className="mt-4 text-slate-600 font-medium">Carregando relatório...</p>
         </div>
       </div>
     );
@@ -627,182 +554,225 @@ const exportToPDF = useCallback(async () => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl max-w-7xl w-full p-6 my-8 max-h-[90vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold text-slate-800">Relatório de Fluxo de Caixa</h3>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full my-8 animate-in slide-in-from-bottom-4 duration-300">
+        {/* Header */}
+        <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10">
+          <div>
+            <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              Fluxo de Caixa
+            </h3>
+            <p className="text-sm text-slate-500 mt-1">
+              Relatório completo de movimentações financeiras
+            </p>
+          </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 transition-colors"
+            className="p-2 hover:bg-slate-100 rounded-xl transition-all duration-200"
             aria-label="Fechar"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5 text-slate-500" />
           </button>
         </div>
 
         {/* Filtros */}
-        <div className="space-y-4 mb-6">
-          <div className="flex justify-between items-center">
-            <h4 className="font-medium text-slate-700">Filtros</h4>
-            <button
-              onClick={resetFilters}
-              className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              Limpar Filtros
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Data Inicial</label>
-              <input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) => {
-                  setFilters({ ...filters, startDate: e.target.value });
-                  setError(null);
-                }}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                max={filters.endDate}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Data Final</label>
-              <input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) => {
-                  setFilters({ ...filters, endDate: e.target.value });
-                  setError(null);
-                }}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                min={filters.startDate}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
-              <select
-                value={filters.type}
-                onChange={(e) => {
-                  setFilters({ 
-                    ...filters, 
-                    type: e.target.value as Filters['type'],
-                    ...(e.target.value === 'income' && {
-                      category: 'all',
-                      documentType: 'all',
-                      origem: 'all'
-                    })
-                  });
-                  setError(null);
-                }}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="all">Todos</option>
-                <option value="income">Apenas Entradas</option>
-                <option value="expense">Apenas Saídas</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
-              <select
-                value={filters.category}
-                onChange={(e) => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
-                disabled={filters.type === 'income'}
-                className={`w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                  filters.type === 'income' ? 'bg-slate-100 cursor-not-allowed' : ''
-                }`}
-              >
-                <option value="all">Todas</option>
-                <option value="despesas_fixas">Despesas Fixas</option>
-                <option value="despesas_variaveis">Despesas Variáveis</option>
-              </select>
-              {filters.type === 'income' && (
-                <p className="text-xs text-slate-500 mt-1">Categoria não se aplica a entradas</p>
+        <div className="border-b border-slate-200">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="w-full px-6 py-3 flex justify-between items-center hover:bg-slate-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-slate-500" />
+              <span className="font-medium text-slate-700">Filtros Avançados</span>
+              {Object.values(filters).some(v => v !== 'all' && v !== false && 
+                !(typeof v === 'string' && (v === filters.startDate || v === filters.endDate))) && (
+                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                  Filtros ativos
+                </span>
               )}
             </div>
+            {showFilters ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+          
+          {showFilters && (
+            <div className="px-6 pb-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-slate-400" />
+                    Data Inicial
+                  </label>
+                  <input
+                    type="date"
+                    value={filters.startDate}
+                    onChange={(e) => {
+                      setFilters({ ...filters, startDate: e.target.value });
+                      setError(null);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                  />
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Documento</label>
-              <select
-                value={filters.documentType}
-                onChange={(e) => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
-                disabled={filters.type === 'income'}
-                className={`w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                  filters.type === 'income' ? 'bg-slate-100 cursor-not-allowed' : ''
-                }`}
-              >
-                <option value="all">Todos</option>
-                <option value="com_nota">Com Nota</option>
-                <option value="so_recibo">Só Recibo</option>
-              </select>
-              {filters.type === 'income' && (
-                <p className="text-xs text-slate-500 mt-1">Documento não se aplica a entradas</p>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-slate-400" />
+                    Data Final
+                  </label>
+                  <input
+                    type="date"
+                    value={filters.endDate}
+                    onChange={(e) => {
+                      setFilters({ ...filters, endDate: e.target.value });
+                      setError(null);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
+                  <select
+                    value={filters.type}
+                    onChange={(e) => {
+                      setFilters({ 
+                        ...filters, 
+                        type: e.target.value as Filters['type'],
+                        ...(e.target.value === 'income' && {
+                          category: 'all',
+                          documentType: 'all',
+                          origem: 'all'
+                        })
+                      });
+                      setError(null);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="income">Apenas Entradas</option>
+                    <option value="expense">Apenas Saídas</option>
+                  </select>
+                </div>
+
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={filters.includeInvoices}
+                      onChange={(e) => setFilters({ ...filters, includeInvoices: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-slate-700">Incluir Notas Fiscais no relatório</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
+                  <select
+                    value={filters.category}
+                    onChange={(e) => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
+                    disabled={filters.type === 'income'}
+                    className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
+                    }`}
+                  >
+                    <option value="all">Todas</option>
+                    <option value="despesas_fixas">Despesas Fixas</option>
+                    <option value="despesas_variaveis">Despesas Variáveis</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Documento</label>
+                  <select
+                    value={filters.documentType}
+                    onChange={(e) => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
+                    disabled={filters.type === 'income'}
+                    className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
+                    }`}
+                  >
+                    <option value="all">Todos</option>
+                    <option value="com_nota">Com Nota</option>
+                    <option value="so_recibo">Só Recibo</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Origem</label>
+                  <select
+                    value={filters.origem}
+                    onChange={(e) => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
+                    disabled={filters.type === 'income'}
+                    className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                      filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
+                    }`}
+                  >
+                    <option value="all">Todas</option>
+                    <option value="idhs">IDHS</option>
+                    <option value="geral">Geral</option>
+                    <option value="nenhuma">Sem origem</option>
+                  </select>
+                </div>
+              </div>
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-red-600">{error}</p>
+                  </div>
+                </div>
               )}
-            </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">Origem (IDHS/Geral)</label>
-              <select
-                value={filters.origem}
-                onChange={(e) => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
-                disabled={filters.type === 'income'}
-                className={`w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                  filters.type === 'income' ? 'bg-slate-100 cursor-not-allowed' : ''
-                }`}
-              >
-                <option value="all">Todas</option>
-                <option value="idhs">IDHS</option>
-                <option value="geral">Geral</option>
-                <option value="nenhuma">Sem origem</option>
-              </select>
-              {filters.type === 'income' && (
-                <p className="text-xs text-slate-500 mt-1">Origem não se aplica a entradas</p>
-              )}
-            </div>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center space-x-2">
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-              <p className="text-sm text-red-600">{error}</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleGenerateReport}
+                  disabled={loading}
+                  className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  {loading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      <span>Gerando...</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center justify-center gap-2">
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Gerar Relatório</span>
+                    </span>
+                  )}
+                </button>
+                
+                <button
+                  onClick={resetFilters}
+                  className="px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-all duration-200"
+                >
+                  Limpar
+                </button>
+              </div>
             </div>
           )}
-
-          <button
-            onClick={handleGenerateReport}
-            disabled={loading}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                <span>Gerando...</span>
-              </span>
-            ) : (
-              'Gerar Relatório'
-            )}
-          </button>
         </div>
 
         {/* Resultados */}
         {transactions.length > 0 && (
-          <>
-            <div className="mb-4 flex flex-wrap gap-3">
+          <div className="p-6 space-y-6">
+            {/* Ações */}
+            <div className="flex flex-wrap gap-3">
               <button
                 onClick={exportToPDF}
                 disabled={exporting !== 'none'}
-                className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-red-300 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {exporting === 'pdf' ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    <span>Exportando PDF...</span>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    <span>Exportando...</span>
                   </>
                 ) : (
                   <>
-                    <FileDown className="w-5 h-5" />
+                    <FileDown className="w-4 h-4" />
                     <span>Exportar PDF</span>
                   </>
                 )}
@@ -810,71 +780,94 @@ const exportToPDF = useCallback(async () => {
               <button
                 onClick={exportToExcel}
                 disabled={exporting !== 'none'}
-                className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-green-300 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 {exporting === 'excel' ? (
                   <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    <span>Exportando Excel...</span>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    <span>Exportando...</span>
                   </>
                 ) : (
                   <>
-                    <FileSpreadsheet className="w-5 h-5" />
+                    <FileSpreadsheet className="w-4 h-4" />
                     <span>Exportar Excel</span>
                   </>
                 )}
               </button>
+              
+              {lastQueryTime && (
+                <div className="ml-auto text-xs text-slate-400 flex items-center">
+                  Última atualização: {lastQueryTime.toLocaleTimeString('pt-BR')}
+                </div>
+              )}
             </div>
 
             {/* Cards de resumo */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <p className="text-sm text-green-600 font-medium">Total Entradas</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium text-green-700">Total Entradas</p>
+                  <TrendingUp className="w-5 h-5 text-green-600" />
+                </div>
                 <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totals.income)}</p>
-                <p className="text-xs text-green-600 mt-1">{transactions.filter(t => t.type === 'income').length} transações</p>
+                <p className="text-xs text-green-600 mt-2">
+                  {transactions.filter(t => t.type === 'income').length} transações
+                </p>
               </div>
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <p className="text-sm text-red-600 font-medium">Total Saídas</p>
+              
+              <div className="bg-gradient-to-br from-red-50 to-red-100 border border-red-200 rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium text-red-700">Total Saídas</p>
+                  <TrendingDown className="w-5 h-5 text-red-600" />
+                </div>
                 <p className="text-2xl font-bold text-red-700">{formatCurrencyBR(totals.expense)}</p>
-                <p className="text-xs text-red-600 mt-1">{transactions.filter(t => t.type === 'expense').length} transações</p>
+                <p className="text-xs text-red-600 mt-2">
+                  {transactions.filter(t => t.type === 'expense').length} transações
+                </p>
               </div>
-              <div className={`${
-                totals.balance >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'
-              } border rounded-lg p-4`}>
-                <p className={`text-sm ${totals.balance >= 0 ? 'text-blue-600' : 'text-orange-600'} font-medium`}>Saldo</p>
+              
+              <div className={`bg-gradient-to-br ${
+                totals.balance >= 0 ? 'from-blue-50 to-blue-100 border-blue-200' : 'from-orange-50 to-orange-100 border-orange-200'
+              } border rounded-2xl p-5`}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className={`text-sm font-medium ${totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+                    Saldo
+                  </p>
+                  <DollarSign className={`w-5 h-5 ${totals.balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                </div>
                 <p className={`text-2xl font-bold ${totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
                   {formatCurrencyBR(totals.balance)}
                 </p>
               </div>
             </div>
 
-            {/* Estatísticas adicionais */}
+            {/* Estatísticas */}
             {transactions.some(t => t.type === 'expense') && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                  <p className="text-sm font-medium text-slate-700 mb-2">Despesas por Origem</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                  <p className="text-sm font-semibold text-slate-700 mb-3">Despesas por Origem</p>
                   <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">IDHS:</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">IDHS</span>
                       <span className="font-medium text-purple-700">{formatCurrencyBR(statistics.expensesByOrigin.idhs)}</span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Geral:</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">Geral</span>
                       <span className="font-medium text-blue-700">{formatCurrencyBR(statistics.expensesByOrigin.geral)}</span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Outras:</span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">Outras</span>
                       <span className="font-medium text-slate-700">{formatCurrencyBR(statistics.expensesByOrigin.outros)}</span>
                     </div>
                   </div>
                 </div>
                 
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                  <p className="text-sm font-medium text-slate-700 mb-2">Despesas por Categoria</p>
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
+                  <p className="text-sm font-semibold text-slate-700 mb-3">Despesas por Categoria</p>
                   <div className="space-y-2 max-h-32 overflow-y-auto">
                     {Object.entries(statistics.expensesByCategory).map(([category, value]) => (
-                      <div key={category} className="flex justify-between text-sm">
-                        <span className="text-slate-600">{category.replace('_', ' ')}:</span>
+                      <div key={category} className="flex justify-between items-center text-sm">
+                        <span className="text-slate-600">{category.replace('_', ' ')}</span>
                         <span className="font-medium text-slate-700">{formatCurrencyBR(value)}</span>
                       </div>
                     ))}
@@ -884,42 +877,37 @@ const exportToPDF = useCallback(async () => {
             )}
 
             {/* Tabela de transações */}
-            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-              <div className="overflow-x-auto max-h-96">
+            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="overflow-x-auto max-h-[500px]">
                 <table className="w-full">
                   <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Tipo</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Descrição</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Categoria</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Subcategoria</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Fonte/Fornecedor</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Origem</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Documento</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-slate-600 uppercase">Valor</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Data</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Tipo</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Descrição</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Categoria</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Fonte/Fornecedor</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Origem</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Método</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Valor</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {transactions.map((transaction) => {
+                    {transactions.map((transaction, index) => {
                       const origemExibicao = transaction.type === 'expense'
                         ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
                         : '-';
 
-                      const documentoTipo = transaction.com_nota 
-                        ? 'Nota' 
-                        : transaction.so_recibo 
-                          ? 'Recibo' 
-                          : '-';
-
                       return (
-                        <tr key={transaction.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                        <tr key={transaction.id} className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-mono">
                             {formatDisplayDate(transaction.transaction_date)}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              transaction.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            <span className={`inline-flex px-2 py-1 rounded-lg text-xs font-medium ${
+                              transaction.type === 'income' 
+                                ? 'bg-green-100 text-green-700' 
+                                : 'bg-red-100 text-red-700'
                             }`}>
                               {transaction.type === 'income' ? 'Entrada' : 'Saída'}
                             </span>
@@ -927,24 +915,21 @@ const exportToPDF = useCallback(async () => {
                           <td className="px-4 py-3 text-sm text-slate-700 max-w-xs truncate" title={transaction.description}>
                             {transaction.description}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
                             {transaction.category ? transaction.category.replace('_', ' ') : '-'}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                            {transaction.subcategoria || '-'}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
                             {transaction.type === 'income' 
                               ? transaction.fonte_pagadora || '-' 
                               : transaction.fornecedor || '-'}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
                             {origemExibicao}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                            {documentoTipo}
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
+                            {transaction.method}
                           </td>
-                          <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
+                          <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-semibold ${
                             transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
                           }`}>
                             {formatCurrencyBR(transaction.amount)}
@@ -955,16 +940,29 @@ const exportToPDF = useCallback(async () => {
                   </tbody>
                 </table>
               </div>
-              <div className="bg-slate-50 px-4 py-2 border-t border-slate-200 text-xs text-slate-500">
-                Total de {transactions.length} transação(ões) encontrada(s) no período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
+              <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 text-xs text-slate-500 flex justify-between items-center">
+                <span>Total de {transactions.length} transações encontradas</span>
+                <span>Período: {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}</span>
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {!loading && transactions.length === 0 && (
-          <div className="text-center py-12 text-slate-500">
-            Nenhuma transação encontrada para os filtros selecionados no período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
+          <div className="p-12 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-2xl mb-4">
+              <AlertCircle className="w-8 h-8 text-slate-400" />
+            </div>
+            <p className="text-slate-500 font-medium">Nenhuma transação encontrada</p>
+            <p className="text-sm text-slate-400 mt-1">
+              Para o período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
+            </p>
+            <button
+              onClick={resetFilters}
+              className="mt-4 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              Limpar filtros
+            </button>
           </div>
         )}
       </div>
