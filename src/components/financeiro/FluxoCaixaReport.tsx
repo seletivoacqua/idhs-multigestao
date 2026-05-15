@@ -3,7 +3,6 @@ import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import logoImg from '../../assets/image.png';
 import { formatCurrencyBR } from '../../utils/currencyUtils';
@@ -91,7 +90,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   const fetchAllTransactions = useCallback(async (startDateTime: string, endDateTime: string) => {
     let allData: Transaction[] = [];
     let page = 0;
-    const pageSize = 1000; // Aumentado para 1000 por página
+    const pageSize = 1000;
     let hasMore = true;
 
     while (hasMore) {
@@ -192,19 +191,16 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       console.log('📊 Buscando transações de:', startDateTime, 'até', endDateTime);
       console.log('📋 Filtros aplicados:', filters);
 
-      // Buscar transações com paginação
       const transactionsData = await fetchAllTransactions(startDateTime, endDateTime);
       
       console.log(`✅ Encontradas ${transactionsData.length} transações`);
 
-      // Buscar notas fiscais se necessário
       const invoicesData = await fetchInvoices(startDateTime, endDateTime);
       
       if (invoicesData.length > 0) {
         console.log(`📄 Encontradas ${invoicesData.length} notas fiscais`);
       }
 
-      // Processar dados
       const processedTransactions = transactionsData.map(transaction => ({
         ...transaction,
         amount: Number(transaction.amount),
@@ -304,7 +300,72 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
   }, []);
 
-  // Exportação para PDF melhorada
+  // Função auxiliar para desenhar tabela no PDF
+  const drawPDFTable = (doc: jsPDF, headers: string[], data: string[][], startY: number, margin: number) => {
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const colWidth = (pageWidth - (margin * 2)) / headers.length;
+    let yPos = startY;
+    
+    // Cabeçalho
+    doc.setFillColor(66, 66, 66);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(9);
+    
+    headers.forEach((header, index) => {
+      const xPos = margin + (index * colWidth);
+      doc.rect(xPos, yPos, colWidth, 8, 'F');
+      doc.text(header, xPos + 2, yPos + 5.5);
+    });
+    
+    yPos += 8;
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(8);
+    
+    // Dados
+    for (const row of data) {
+      if (yPos > doc.internal.pageSize.getHeight() - 20) {
+        doc.addPage();
+        yPos = 20;
+        
+        // Redesenhar cabeçalho na nova página
+        doc.setFillColor(66, 66, 66);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont(undefined, 'bold');
+        headers.forEach((header, index) => {
+          const xPos = margin + (index * colWidth);
+          doc.rect(xPos, yPos, colWidth, 8, 'F');
+          doc.text(header, xPos + 2, yPos + 5.5);
+        });
+        yPos += 8;
+        doc.setTextColor(0, 0, 0);
+        doc.setFont(undefined, 'normal');
+      }
+      
+      let maxLines = 1;
+      row.forEach((cell, index) => {
+        const cellText = cell || '-';
+        const xPos = margin + (index * colWidth);
+        const lines = doc.splitTextToSize(cellText, colWidth - 4);
+        maxLines = Math.max(maxLines, lines.length);
+        
+        if (lines.length === 1) {
+          doc.text(cellText, xPos + 2, yPos + 3);
+        } else {
+          lines.forEach((line: string, lineIndex: number) => {
+            doc.text(line, xPos + 2, yPos + 3 + (lineIndex * 3));
+          });
+        }
+      });
+      
+      yPos += Math.max(6, maxLines * 3);
+    }
+    
+    return yPos;
+  };
+
+  // Exportação para PDF
   const exportToPDF = useCallback(async () => {
     if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
@@ -359,8 +420,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
       // Cards de resumo
       let yPos = 45;
-      
-      // Desenhar cards
       const cardWidth = (pageWidth - (margin * 2) - 20) / 3;
       const cardHeight = 25;
       
@@ -399,43 +458,27 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       
       yPos += cardHeight + 10;
       
-      // Tabela de transações
+      // Preparar dados da tabela
+      const headers = ['Data', 'Tipo', 'Descrição', 'Fornecedor/Fonte', 'Categoria', 'Origem', 'Valor'];
       const tableData = transactions.map(transaction => [
         formatDisplayDate(transaction.transaction_date),
         transaction.type === 'income' ? 'Entrada' : 'Saída',
-        transaction.description.length > 40 ? transaction.description.substring(0, 37) + '...' : transaction.description,
+        transaction.description.length > 50 ? transaction.description.substring(0, 47) + '...' : transaction.description,
         transaction.type === 'income' ? (transaction.fonte_pagadora || '-') : (transaction.fornecedor || '-'),
         transaction.category ? transaction.category.replace('_', ' ') : '-',
         transaction.type === 'expense' ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') : '-',
         formatCurrencyBR(transaction.amount),
       ]);
       
-      autoTable(doc, {
-        head: [['Data', 'Tipo', 'Descrição', 'Fornecedor/Fonte', 'Categoria', 'Origem', 'Valor']],
-        body: tableData,
-        startY: yPos,
-        margin: { left: margin, right: margin },
-        styles: { fontSize: 8, cellPadding: 3 },
-        headStyles: { fillColor: [66, 66, 66], textColor: 255, fontSize: 9, fontStyle: 'bold' },
-        alternateRowStyles: { fillColor: [245, 245, 245] },
-        columnStyles: {
-          0: { cellWidth: 25 },
-          1: { cellWidth: 20 },
-          2: { cellWidth: 50 },
-          3: { cellWidth: 35 },
-          4: { cellWidth: 30 },
-          5: { cellWidth: 20 },
-          6: { cellWidth: 30, halign: 'right' },
-        },
-      });
+      // Desenhar tabela
+      const finalY = drawPDFTable(doc, headers, tableData, yPos, margin);
       
       // Rodapé com totais
-      const finalY = (doc as any).lastAutoTable.finalY + 10;
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      doc.text(`Total de transações: ${transactions.length}`, margin, finalY);
-      doc.text(`Total de entradas: ${transactions.filter(t => t.type === 'income').length}`, margin, finalY + 6);
-      doc.text(`Total de saídas: ${transactions.filter(t => t.type === 'expense').length}`, margin, finalY + 12);
+      doc.text(`Total de transações: ${transactions.length}`, margin, finalY + 10);
+      doc.text(`Total de entradas: ${transactions.filter(t => t.type === 'income').length}`, margin, finalY + 16);
+      doc.text(`Total de saídas: ${transactions.filter(t => t.type === 'expense').length}`, margin, finalY + 22);
       
       doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
     } catch (error) {
@@ -446,7 +489,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     }
   }, [transactions, totals, filters, formatDisplayDate]);
 
-  // Exportação para Excel melhorada
+  // Exportação para Excel
   const exportToExcel = useCallback(() => {
     if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
@@ -480,6 +523,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         ['IDHS', formatCurrencyBR(statistics.expensesByOrigin.idhs)],
         ['Geral', formatCurrencyBR(statistics.expensesByOrigin.geral)],
         ['Outras', formatCurrencyBR(statistics.expensesByOrigin.outros)],
+        [''],
+        ['DESPESAS POR CATEGORIA'],
+        ...Object.entries(statistics.expensesByCategory).map(([cat, val]) => [cat.replace('_', ' '), formatCurrencyBR(val)]),
         [''],
         ['DESPESAS POR MÉTODO'],
         ...Object.entries(statistics.expensesByMethod).map(([method, value]) => [method, formatCurrencyBR(value)]),
@@ -527,7 +573,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         
         const invoicesSheet = XLSX.utils.json_to_sheet(invoicesData);
         invoicesSheet['!cols'] = [
-          { wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }
+          { wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, 
+          { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }
         ];
         XLSX.utils.book_append_sheet(workbook, invoicesSheet, 'Notas Fiscais');
       }
@@ -554,7 +601,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full my-8 animate-in slide-in-from-bottom-4 duration-300">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full my-8">
         {/* Header */}
         <div className="sticky top-0 bg-white rounded-t-2xl border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10">
           <div>
@@ -594,7 +641,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           </button>
           
           {showFilters && (
-            <div className="px-6 pb-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+            <div className="px-6 pb-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
