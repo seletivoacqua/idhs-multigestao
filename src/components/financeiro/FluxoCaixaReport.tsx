@@ -398,173 +398,224 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       yPos += cardHeight + 10;
       
       // Configuração das 8 colunas
-      const colWidths = {
-        data: 20,
-        tipo: 16,
-        descricao: 45,
-        categoria: 22,
-        fonte: 32,
-        origem: 16,
-        metodo: 22,
-        valor: 25
-      };
-      
-      let xPos = margin;
-      const colPositions = {
-        data: xPos,
-        tipo: xPos + colWidths.data,
-        descricao: xPos + colWidths.data + colWidths.tipo,
-        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
-        fonte: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria,
-        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte,
-        metodo: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem,
-        valor: pageWidth - margin - colWidths.valor
-      };
-      
-      // Desenhar cabeçalho da tabela com 8 colunas
-      doc.setFillColor(40, 53, 147);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, 'bold');
-      doc.setFontSize(7);
-      
-      doc.rect(colPositions.data, yPos, colWidths.data, 9, 'F');
-      doc.text('Data', colPositions.data + 2, yPos + 6);
-      
-      doc.rect(colPositions.tipo, yPos, colWidths.tipo, 9, 'F');
-      doc.text('Tipo', colPositions.tipo + 2, yPos + 6);
-      
-      doc.rect(colPositions.descricao, yPos, colWidths.descricao, 9, 'F');
-      doc.text('Descrição', colPositions.descricao + 2, yPos + 6);
-      
-      doc.rect(colPositions.categoria, yPos, colWidths.categoria, 9, 'F');
-      doc.text('Categoria', colPositions.categoria + 2, yPos + 6);
-      
-      doc.rect(colPositions.fonte, yPos, colWidths.fonte, 9, 'F');
-      doc.text('Fonte/Fornecedor', colPositions.fonte + 2, yPos + 6);
-      
-      doc.rect(colPositions.origem, yPos, colWidths.origem, 9, 'F');
-      doc.text('Origem', colPositions.origem + 2, yPos + 6);
-      
-      doc.rect(colPositions.metodo, yPos, colWidths.metodo, 9, 'F');
-      doc.text('Método', colPositions.metodo + 2, yPos + 6);
-      
-      doc.rect(colPositions.valor, yPos, colWidths.valor, 9, 'F');
-      doc.text('Valor (R$)', colPositions.valor + 2, yPos + 6);
-      
-      yPos += 9;
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, 'normal');
-      doc.setFontSize(7);
-      
-      // Dados da tabela
-      let rowCount = 0;
-      for (const transaction of transactions) {
-        // Verificar se precisa de nova página
-        if (yPos > pageHeight - 20) {
-          doc.addPage();
-          yPos = 20;
-          
-          // Redesenhar cabeçalho na nova página
-          doc.setFillColor(40, 53, 147);
-          doc.setTextColor(255, 255, 255);
-          doc.setFont(undefined, 'bold');
-          
-          doc.rect(colPositions.data, yPos, colWidths.data, 9, 'F');
-          doc.text('Data', colPositions.data + 2, yPos + 6);
-          doc.rect(colPositions.tipo, yPos, colWidths.tipo, 9, 'F');
-          doc.text('Tipo', colPositions.tipo + 2, yPos + 6);
-          doc.rect(colPositions.descricao, yPos, colWidths.descricao, 9, 'F');
-          doc.text('Descrição', colPositions.descricao + 2, yPos + 6);
-          doc.rect(colPositions.categoria, yPos, colWidths.categoria, 9, 'F');
-          doc.text('Categoria', colPositions.categoria + 2, yPos + 6);
-          doc.rect(colPositions.fonte, yPos, colWidths.fonte, 9, 'F');
-          doc.text('Fonte/Fornecedor', colPositions.fonte + 2, yPos + 6);
-          doc.rect(colPositions.origem, yPos, colWidths.origem, 9, 'F');
-          doc.text('Origem', colPositions.origem + 2, yPos + 6);
-          doc.rect(colPositions.metodo, yPos, colWidths.metodo, 9, 'F');
-          doc.text('Método', colPositions.metodo + 2, yPos + 6);
-          doc.rect(colPositions.valor, yPos, colWidths.valor, 9, 'F');
-          doc.text('Valor (R$)', colPositions.valor + 2, yPos + 6);
-          
-          yPos += 9;
-          doc.setTextColor(0, 0, 0);
-          doc.setFont(undefined, 'normal');
-        }
-        
-        // Alternar cor de fundo das linhas
-        if (rowCount % 2 === 0) {
-          doc.setFillColor(245, 245, 245);
-          doc.rect(margin, yPos - 3, pageWidth - (margin * 2), 6, 'F');
-        }
-        
-        const origemTexto = transaction.type === 'expense'
-          ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
-          : '-';
-        
-        const fonteTexto = transaction.type === 'income' 
-          ? transaction.fonte_pagadora || '-' 
-          : transaction.fornecedor || '-';
-        
-        const tipoTexto = transaction.type === 'income' ? 'Entrada' : 'Saída';
-        const categoriaTexto = transaction.category ? transaction.category.replace('_', ' ') : '-';
-        
-        // Data
-        doc.text(formatDisplayDate(transaction.transaction_date), colPositions.data + 2, yPos);
-        
-        // Tipo com cor
-        if (transaction.type === 'expense') {
-          doc.setTextColor(200, 0, 0);
-        } else {
-          doc.setTextColor(0, 100, 0);
-        }
-        doc.text(tipoTexto, colPositions.tipo + 2, yPos);
-        doc.setTextColor(0, 0, 0);
-        
-        // Descrição
-        const descricaoLines = doc.splitTextToSize(transaction.description, colWidths.descricao - 4);
-        doc.text(descricaoLines[0], colPositions.descricao + 2, yPos);
-        
-        let currentYPos = yPos;
-        let maxLines = descricaoLines.length;
-        
-        if (descricaoLines.length > 1) {
-          for (let i = 1; i < descricaoLines.length; i++) {
-            currentYPos += 3.5;
-            doc.text(descricaoLines[i], colPositions.descricao + 2, currentYPos);
-          }
-        }
-        
-        // Categoria
-        doc.text(categoriaTexto, colPositions.categoria + 2, yPos);
-        
-        // Fonte/Fornecedor
-        const fonteLines = doc.splitTextToSize(fonteTexto, colWidths.fonte - 4);
-        doc.text(fonteLines[0], colPositions.fonte + 2, yPos);
-        if (fonteLines.length > 1) {
-          maxLines = Math.max(maxLines, fonteLines.length);
-          for (let i = 1; i < fonteLines.length; i++) {
-            doc.text(fonteLines[i], colPositions.fonte + 2, currentYPos + (i * 3.5));
-          }
-        }
-        
-        // Origem
-        doc.text(origemTexto, colPositions.origem + 2, yPos);
-        
-        // Método
-        doc.text(transaction.method, colPositions.metodo + 2, yPos);
-        
-        // Valor com cor
-        if (transaction.type === 'expense') {
-          doc.setTextColor(200, 0, 0);
-        } else {
-          doc.setTextColor(0, 100, 0);
-        }
-        doc.text(formatCurrencyBR(transaction.amount), colPositions.valor + 2, yPos);
-        doc.setTextColor(0, 0, 0);
-        
-        yPos = currentYPos + (Math.max(maxLines, 1) * 3.5) + 2;
-        rowCount++;
-      }
+     const tableWidth = pageWidth - (margin * 2);
+
+const colWidths = {
+  data: 22,
+  tipo: 18,
+  descricao: 58,
+  categoria: 28,
+  fonte: 42,
+  origem: 18,
+  metodo: 24,
+  valor: 28
+};
+
+// Espaçamento entre colunas
+const gap = 2;
+
+const colPositions = {
+  data: margin,
+  tipo: margin + colWidths.data + gap,
+  descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
+  categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
+  fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
+  origem: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
+  metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem + (gap * 6),
+  valor: pageWidth - margin - colWidths.valor
+};
+
+// Função para desenhar cabeçalho
+const drawTableHeader = () => {
+  doc.setFillColor(37, 99, 235);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(7.5);
+
+  const headers = [
+    { key: 'data', label: 'DATA' },
+    { key: 'tipo', label: 'TIPO' },
+    { key: 'descricao', label: 'DESCRIÇÃO' },
+    { key: 'categoria', label: 'CATEGORIA' },
+    { key: 'fonte', label: 'FONTE / FORNECEDOR' },
+    { key: 'origem', label: 'ORIGEM' },
+    { key: 'metodo', label: 'MÉTODO' },
+    { key: 'valor', label: 'VALOR (R$)' },
+  ];
+
+  headers.forEach((header) => {
+    const x = colPositions[header.key as keyof typeof colPositions];
+    const width = colWidths[header.key as keyof typeof colWidths];
+
+    doc.rect(x, yPos, width, 10, 'F');
+
+    doc.text(
+      header.label,
+      x + 2,
+      yPos + 6
+    );
+  });
+
+  yPos += 10;
+
+  doc.setTextColor(0, 0, 0);
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(7);
+};
+
+drawTableHeader();
+
+// Dados da tabela
+let rowCount = 0;
+
+for (const transaction of transactions) {
+
+  // Nova página
+  if (yPos > pageHeight - 20) {
+    doc.addPage();
+    yPos = 20;
+    drawTableHeader();
+  }
+
+  const origemTexto =
+    transaction.type === 'expense'
+      ? transaction.idhs
+        ? 'IDHS'
+        : transaction.geral
+        ? 'Geral'
+        : '-'
+      : '-';
+
+  const fonteTexto =
+    transaction.type === 'income'
+      ? transaction.fonte_pagadora || '-'
+      : transaction.fornecedor || '-';
+
+  const tipoTexto =
+    transaction.type === 'income'
+      ? 'Entrada'
+      : 'Saída';
+
+  const categoriaTexto =
+    transaction.category
+      ? transaction.category.replace('_', ' ')
+      : '-';
+
+  // Quebra de linhas
+  const descricaoLines = doc.splitTextToSize(
+    transaction.description || '-',
+    colWidths.descricao - 4
+  );
+
+  const fonteLines = doc.splitTextToSize(
+    fonteTexto,
+    colWidths.fonte - 4
+  );
+
+  const maxLines = Math.max(
+    descricaoLines.length,
+    fonteLines.length,
+    1
+  );
+
+  const rowHeight = (maxLines * 4) + 4;
+
+  // Fundo alternado
+  if (rowCount % 2 === 0) {
+    doc.setFillColor(248, 250, 252);
+    doc.rect(
+      margin,
+      yPos - 3,
+      tableWidth,
+      rowHeight,
+      'F'
+    );
+  }
+
+  // Borda inferior
+  doc.setDrawColor(230, 230, 230);
+  doc.line(
+    margin,
+    yPos + rowHeight - 3,
+    pageWidth - margin,
+    yPos + rowHeight - 3
+  );
+
+  // DATA
+  doc.text(
+    formatDisplayDate(transaction.transaction_date),
+    colPositions.data + 2,
+    yPos + 2
+  );
+
+  // TIPO
+  if (transaction.type === 'expense') {
+    doc.setTextColor(220, 38, 38);
+  } else {
+    doc.setTextColor(22, 163, 74);
+  }
+
+  doc.text(
+    tipoTexto,
+    colPositions.tipo + 2,
+    yPos + 2
+  );
+
+  doc.setTextColor(0, 0, 0);
+
+  // DESCRIÇÃO
+  doc.text(
+    descricaoLines,
+    colPositions.descricao + 2,
+    yPos + 2
+  );
+
+  // CATEGORIA
+  doc.text(
+    categoriaTexto,
+    colPositions.categoria + 2,
+    yPos + 2
+  );
+
+  // FONTE/FORNECEDOR
+  doc.text(
+    fonteLines,
+    colPositions.fonte + 2,
+    yPos + 2
+  );
+
+  // ORIGEM
+  doc.text(
+    origemTexto,
+    colPositions.origem + 2,
+    yPos + 2
+  );
+
+  // MÉTODO
+  doc.text(
+    transaction.method || '-',
+    colPositions.metodo + 2,
+    yPos + 2
+  );
+
+  // VALOR
+  if (transaction.type === 'expense') {
+    doc.setTextColor(220, 38, 38);
+  } else {
+    doc.setTextColor(22, 163, 74);
+  }
+
+  doc.text(
+    formatCurrencyBR(transaction.amount),
+    colPositions.valor + 2,
+    yPos + 2
+  );
+
+  doc.setTextColor(0, 0, 0);
+
+  yPos += rowHeight;
+  rowCount++;
+}
       
       // Rodapé com totais
       yPos += 4;
