@@ -300,7 +300,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     setError(null);
   }, []);
 
-  // Exportação para PDF corrigida
+  // Exportação para PDF com 8 colunas
   const exportToPDF = useCallback(async () => {
     if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
@@ -318,7 +318,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       
       const pageWidth = doc.internal.pageSize.getWidth();
       const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 10;
+      const margin = 8;
       let yPos = 20;
       
       // Adicionar logo
@@ -373,7 +373,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setTextColor(0, 100, 0);
       doc.setFont(undefined, 'bold');
       doc.text('Total Entradas', margin + 3, yPos + 6);
-      doc.setFontSize(12);
+      doc.setFontSize(11);
       doc.text(formatCurrencyBR(totals.income), margin + 3, yPos + 15);
       
       // Card Saídas
@@ -382,7 +382,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setTextColor(200, 0, 0);
       doc.setFontSize(9);
       doc.text('Total Saídas', margin + cardWidth + cardSpacing + 3, yPos + 6);
-      doc.setFontSize(12);
+      doc.setFontSize(11);
       doc.text(formatCurrencyBR(totals.expense), margin + cardWidth + cardSpacing + 3, yPos + 15);
       
       // Card Saldo
@@ -392,20 +392,21 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
       doc.setFontSize(9);
       doc.text('Saldo', margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 6);
-      doc.setFontSize(12);
+      doc.setFontSize(11);
       doc.text(formatCurrencyBR(totals.balance), margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 15);
       
-      yPos += cardHeight + 8;
+      yPos += cardHeight + 10;
       
-      // Cabeçalho da tabela
+      // Configuração das 8 colunas
       const colWidths = {
-        data: 22,
-        tipo: 18,
-        descricao: 50,
-        fornecedor: 35,
-        categoria: 28,
-        origem: 18,
-        valor: 28
+        data: 20,
+        tipo: 16,
+        descricao: 45,
+        categoria: 22,
+        fonte: 32,
+        origem: 16,
+        metodo: 22,
+        valor: 25
       };
       
       let xPos = margin;
@@ -413,72 +414,87 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         data: xPos,
         tipo: xPos + colWidths.data,
         descricao: xPos + colWidths.data + colWidths.tipo,
-        fornecedor: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
-        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor,
-        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.fornecedor + colWidths.categoria,
+        categoria: xPos + colWidths.data + colWidths.tipo + colWidths.descricao,
+        fonte: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria,
+        origem: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte,
+        metodo: xPos + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem,
         valor: pageWidth - margin - colWidths.valor
       };
       
-      // Desenhar cabeçalho da tabela
-      doc.setFillColor(66, 66, 66);
+      // Desenhar cabeçalho da tabela com 8 colunas
+      doc.setFillColor(40, 53, 147);
       doc.setTextColor(255, 255, 255);
       doc.setFont(undefined, 'bold');
-      doc.setFontSize(8);
+      doc.setFontSize(7);
       
-      doc.rect(colPositions.data, yPos, colWidths.data, 8, 'F');
-      doc.text('Data', colPositions.data + 2, yPos + 5.5);
+      // Coluna 1: Data
+      doc.rect(colPositions.data, yPos, colWidths.data, 9, 'F');
+      doc.text('Data', colPositions.data + 2, yPos + 6);
       
-      doc.rect(colPositions.tipo, yPos, colWidths.tipo, 8, 'F');
-      doc.text('Tipo', colPositions.tipo + 2, yPos + 5.5);
+      // Coluna 2: Tipo
+      doc.rect(colPositions.tipo, yPos, colWidths.tipo, 9, 'F');
+      doc.text('Tipo', colPositions.tipo + 2, yPos + 6);
       
-      doc.rect(colPositions.descricao, yPos, colWidths.descricao, 8, 'F');
-      doc.text('Descrição', colPositions.descricao + 2, yPos + 5.5);
+      // Coluna 3: Descrição
+      doc.rect(colPositions.descricao, yPos, colWidths.descricao, 9, 'F');
+      doc.text('Descrição', colPositions.descricao + 2, yPos + 6);
       
-      doc.rect(colPositions.fornecedor, yPos, colWidths.fornecedor, 8, 'F');
-      doc.text('Fornecedor/Fonte', colPositions.fornecedor + 2, yPos + 5.5);
+      // Coluna 4: Categoria
+      doc.rect(colPositions.categoria, yPos, colWidths.categoria, 9, 'F');
+      doc.text('Categoria', colPositions.categoria + 2, yPos + 6);
       
-      doc.rect(colPositions.categoria, yPos, colWidths.categoria, 8, 'F');
-      doc.text('Categoria', colPositions.categoria + 2, yPos + 5.5);
+      // Coluna 5: Fonte/Fornecedor
+      doc.rect(colPositions.fonte, yPos, colWidths.fonte, 9, 'F');
+      doc.text('Fonte/Fornecedor', colPositions.fonte + 2, yPos + 6);
       
-      doc.rect(colPositions.origem, yPos, colWidths.origem, 8, 'F');
-      doc.text('Origem', colPositions.origem + 2, yPos + 5.5);
+      // Coluna 6: Origem
+      doc.rect(colPositions.origem, yPos, colWidths.origem, 9, 'F');
+      doc.text('Origem', colPositions.origem + 2, yPos + 6);
       
-      doc.rect(colPositions.valor, yPos, colWidths.valor, 8, 'F');
-      doc.text('Valor (R$)', colPositions.valor + 2, yPos + 5.5);
+      // Coluna 7: Método
+      doc.rect(colPositions.metodo, yPos, colWidths.metodo, 9, 'F');
+      doc.text('Método', colPositions.metodo + 2, yPos + 6);
       
-      yPos += 8;
+      // Coluna 8: Valor
+      doc.rect(colPositions.valor, yPos, colWidths.valor, 9, 'F');
+      doc.text('Valor (R$)', colPositions.valor + 2, yPos + 6);
+      
+      yPos += 9;
       doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, 'normal');
+      doc.setFontSize(7);
       
       // Dados da tabela
       let rowCount = 0;
       for (const transaction of transactions) {
         // Verificar se precisa de nova página
-        if (yPos > pageHeight - 25) {
+        if (yPos > pageHeight - 20) {
           doc.addPage();
           yPos = 20;
           
           // Redesenhar cabeçalho na nova página
-          doc.setFillColor(66, 66, 66);
+          doc.setFillColor(40, 53, 147);
           doc.setTextColor(255, 255, 255);
           doc.setFont(undefined, 'bold');
           
-          doc.rect(colPositions.data, yPos, colWidths.data, 8, 'F');
-          doc.text('Data', colPositions.data + 2, yPos + 5.5);
-          doc.rect(colPositions.tipo, yPos, colWidths.tipo, 8, 'F');
-          doc.text('Tipo', colPositions.tipo + 2, yPos + 5.5);
-          doc.rect(colPositions.descricao, yPos, colWidths.descricao, 8, 'F');
-          doc.text('Descrição', colPositions.descricao + 2, yPos + 5.5);
-          doc.rect(colPositions.fornecedor, yPos, colWidths.fornecedor, 8, 'F');
-          doc.text('Fornecedor/Fonte', colPositions.fornecedor + 2, yPos + 5.5);
-          doc.rect(colPositions.categoria, yPos, colWidths.categoria, 8, 'F');
-          doc.text('Categoria', colPositions.categoria + 2, yPos + 5.5);
-          doc.rect(colPositions.origem, yPos, colWidths.origem, 8, 'F');
-          doc.text('Origem', colPositions.origem + 2, yPos + 5.5);
-          doc.rect(colPositions.valor, yPos, colWidths.valor, 8, 'F');
-          doc.text('Valor (R$)', colPositions.valor + 2, yPos + 5.5);
+          doc.rect(colPositions.data, yPos, colWidths.data, 9, 'F');
+          doc.text('Data', colPositions.data + 2, yPos + 6);
+          doc.rect(colPositions.tipo, yPos, colWidths.tipo, 9, 'F');
+          doc.text('Tipo', colPositions.tipo + 2, yPos + 6);
+          doc.rect(colPositions.descricao, yPos, colWidths.descricao, 9, 'F');
+          doc.text('Descrição', colPositions.descricao + 2, yPos + 6);
+          doc.rect(colPositions.categoria, yPos, colWidths.categoria, 9, 'F');
+          doc.text('Categoria', colPositions.categoria + 2, yPos + 6);
+          doc.rect(colPositions.fonte, yPos, colWidths.fonte, 9, 'F');
+          doc.text('Fonte/Fornecedor', colPositions.fonte + 2, yPos + 6);
+          doc.rect(colPositions.origem, yPos, colWidths.origem, 9, 'F');
+          doc.text('Origem', colPositions.origem + 2, yPos + 6);
+          doc.rect(colPositions.metodo, yPos, colWidths.metodo, 9, 'F');
+          doc.text('Método', colPositions.metodo + 2, yPos + 6);
+          doc.rect(colPositions.valor, yPos, colWidths.valor, 9, 'F');
+          doc.text('Valor (R$)', colPositions.valor + 2, yPos + 6);
           
-          yPos += 8;
+          yPos += 9;
           doc.setTextColor(0, 0, 0);
           doc.setFont(undefined, 'normal');
         }
@@ -486,14 +502,14 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         // Alternar cor de fundo das linhas
         if (rowCount % 2 === 0) {
           doc.setFillColor(245, 245, 245);
-          doc.rect(margin, yPos - 4, pageWidth - (margin * 2), 6, 'F');
+          doc.rect(margin, yPos - 3, pageWidth - (margin * 2), 6, 'F');
         }
         
         const origemTexto = transaction.type === 'expense'
           ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
           : '-';
         
-        const fornecedorTexto = transaction.type === 'income' 
+        const fonteTexto = transaction.type === 'income' 
           ? transaction.fonte_pagadora || '-' 
           : transaction.fornecedor || '-';
         
@@ -517,21 +533,33 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         doc.text(descricaoLines[0], colPositions.descricao + 2, yPos);
         
         let currentYPos = yPos;
+        let maxLines = descricaoLines.length;
+        
         if (descricaoLines.length > 1) {
           for (let i = 1; i < descricaoLines.length; i++) {
-            currentYPos += 4;
+            currentYPos += 3.5;
             doc.text(descricaoLines[i], colPositions.descricao + 2, currentYPos);
           }
         }
         
-        // Fornecedor
-        doc.text(fornecedorTexto, colPositions.fornecedor + 2, yPos);
-        
         // Categoria
         doc.text(categoriaTexto, colPositions.categoria + 2, yPos);
         
+        // Fonte/Fornecedor
+        const fonteLines = doc.splitTextToSize(fonteTexto, colWidths.fonte - 4);
+        doc.text(fonteLines[0], colPositions.fonte + 2, yPos);
+        if (fonteLines.length > 1) {
+          maxLines = Math.max(maxLines, fonteLines.length);
+          for (let i = 1; i < fonteLines.length; i++) {
+            doc.text(fonteLines[i], colPositions.fonte + 2, currentYPos + (i * 3.5));
+          }
+        }
+        
         // Origem
         doc.text(origemTexto, colPositions.origem + 2, yPos);
+        
+        // Método
+        doc.text(transaction.method, colPositions.metodo + 2, yPos);
         
         // Valor (com cor vermelha se for despesa)
         if (transaction.type === 'expense') {
@@ -542,25 +570,25 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         doc.text(formatCurrencyBR(transaction.amount), colPositions.valor + 2, yPos);
         doc.setTextColor(0, 0, 0);
         
-        yPos = currentYPos + 6;
+        yPos = currentYPos + (Math.max(maxLines, 1) * 3.5) + 2;
         rowCount++;
       }
       
       // Linha de total
-      yPos += 2;
+      yPos += 4;
       doc.setDrawColor(100, 100, 100);
       doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
       
       doc.setFontSize(9);
       doc.setFont(undefined, 'bold');
       doc.setTextColor(0, 100, 0);
-      doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos + 4);
+      doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos + 5);
       
       doc.setTextColor(200, 0, 0);
-      doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 60, yPos + 4);
+      doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 65, yPos + 5);
       
       doc.setTextColor(totals.balance >= 0 ? 0 : 200, totals.balance >= 0 ? 100 : 0, 0);
-      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 120, yPos + 4);
+      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 130, yPos + 5);
       
       doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
     } catch (error) {
@@ -617,26 +645,28 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
       
-      // Aba de Transações
+      // Aba de Transações com 8 colunas
       const transactionsData = transactions.map(transaction => ({
         Data: formatDisplayDate(transaction.transaction_date),
         Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
         Descrição: transaction.description,
         Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
-        Subcategoria: transaction.subcategoria || '-',
         'Fonte/Fornecedor': transaction.type === 'income' ? transaction.fonte_pagadora || '-' : transaction.fornecedor || '-',
         Origem: transaction.type === 'expense' ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') : '-',
-        'Com Nota': transaction.com_nota ? 'Sim' : 'Não',
-        'Só Recibo': transaction.so_recibo ? 'Sim' : 'Não',
         Método: transaction.method,
         'Valor (R$)': transaction.amount,
       }));
       
       const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
       transactionsSheet['!cols'] = [
-        { wch: 12 }, { wch: 10 }, { wch: 40 }, { wch: 20 },
-        { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 10 },
-        { wch: 10 }, { wch: 15 }, { wch: 15 }
+        { wch: 12 }, // Data
+        { wch: 10 }, // Tipo
+        { wch: 50 }, // Descrição
+        { wch: 20 }, // Categoria
+        { wch: 25 }, // Fonte/Fornecedor
+        { wch: 10 }, // Origem
+        { wch: 15 }, // Método
+        { wch: 15 }  // Valor
       ];
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
       
@@ -684,7 +714,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full my-8 flex flex-col max-h-[90vh]">
-        {/* Header - Corrigido: sem position sticky para não sobrepor */}
+        {/* Header */}
         <div className="bg-white rounded-t-2xl border-b border-slate-200 px-6 py-4 flex-shrink-0">
           <div className="flex justify-between items-center">
             <div>
@@ -1010,10 +1040,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                   </div>
                 )}
 
-                {/* Tabela de transações */}
+                {/* Tabela de transações com 8 colunas */}
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                   <div className="overflow-x-auto max-h-[400px]">
-                    <table className="w-full">
+                    <table className="w-full min-w-[1000px]">
                       <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Data</th>
