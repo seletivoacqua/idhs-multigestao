@@ -1263,32 +1263,48 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   // ===========================================
   // FUNÇÃO: loadClassStudents (PARTE EAD - CORRIGIDA)
   // ===========================================
-  const loadClassStudents = async () => {
-    const { data, error } = await supabase
-      .from('class_students')
-      .select('*, students(*)')
-      .eq('class_id', classData.id);
+ const PAGE_SIZE = 500; // Defina no escopo do componente (fora da função)
 
-    if (error) {
-      console.error('Error loading class students:', error);
-      return;
+const loadClassStudents = async () => {
+  let allClassStudents: any[] = [];
+  let start = 0;
+  let hasMore = true;
+
+  try {
+    // 1. Buscar todos os registros de class_students com paginação
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('class_students')
+        .select('*, students(*)')
+        .eq('class_id', classData.id)
+        .range(start, start + PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allClassStudents = [...allClassStudents, ...data];
+        start += PAGE_SIZE;
+        if (data.length < PAGE_SIZE) hasMore = false;
+      }
     }
 
+    // 2. Agora processamos todos os alunos de uma só vez (código original)
     if (classData.modality === 'VIDEOCONFERENCIA') {
-      // Código existente para videoconferência (mantido)
       const { data: allAttendances } = await supabase
         .from('attendance')
         .select('class_number, class_date')
         .eq('class_id', classData.id)
         .order('class_number');
 
-      const uniqueClassNumbers = allAttendances 
+      const uniqueClassNumbers = allAttendances
         ? [...new Set(allAttendances.map(a => a.class_number))]
         : [];
       const totalClassesGiven = uniqueClassNumbers.length;
 
       const studentsWithAttendance = await Promise.all(
-        (data || []).map(async (cs) => {
+        allClassStudents.map(async (cs) => {
           const enrollmentDate = extractDatePart(cs.enrollment_date);
           const isExceptional = cs.enrollment_type === 'exceptional';
 
@@ -1311,52 +1327,49 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
       );
 
       setStudents(studentsWithAttendance);
-    
-  } else {
-    // ===========================================
-    // PARTE EAD - COMPLETAMENTE REESCRITA
-    // ===========================================
-    console.log('📚 Carregando alunos EAD com base em is_frequente');
-    
-   const studentsWithAccess = await Promise.all(
-  (data || []).map(async (cs) => {
-    const { data: accessData } = await supabase
-      .from('ead_access')
-      .select('*')
-      .eq('class_id', classData.id)
-      .eq('student_id', cs.student_id)
-      .maybeSingle();
+    } else {
+      // EAD
+      console.log('📚 Carregando alunos EAD com base em is_frequente');
 
-    // ✅ GARANTIR QUE É BOOLEANO
-    const isFrequente = accessData?.is_frequente === true;
-    
-    // Contar acessos apenas para informação
-    const totalAcessos = [
-      accessData?.access_date_1,
-      accessData?.access_date_2,
-      accessData?.access_date_3
-    ].filter(Boolean).length;
+      const studentsWithAccess = await Promise.all(
+        allClassStudents.map(async (cs) => {
+          const { data: accessData } = await supabase
+            .from('ead_access')
+            .select('*')
+            .eq('class_id', classData.id)
+            .eq('student_id', cs.student_id)
+            .maybeSingle();
 
-    console.log(`📚 Carregando aluno ${cs.students.full_name}:`, {
-      isFrequente,
-      totalAcessos,
-      accessDates: {
-        d1: accessData?.access_date_1,
-        d2: accessData?.access_date_2,
-        d3: accessData?.access_date_3
-      }
-    });
+          const isFrequente = accessData?.is_frequente === true;
+          const totalAcessos = [
+            accessData?.access_date_1,
+            accessData?.access_date_2,
+            accessData?.access_date_3,
+          ].filter(Boolean).length;
 
-    return {
-      ...cs,
-      accessData,
-      isFrequente,        // ✅ Campo correto para a UI
-      totalAcessos,       // Info adicional
-    };
-  })
-);
+          console.log(`📚 Carregando aluno ${cs.students.full_name}:`, {
+            isFrequente,
+            totalAcessos,
+            accessDates: {
+              d1: accessData?.access_date_1,
+              d2: accessData?.access_date_2,
+              d3: accessData?.access_date_3,
+            },
+          });
 
-    setStudents(studentsWithAccess);
+          return {
+            ...cs,
+            accessData,
+            isFrequente,
+            totalAcessos,
+          };
+        })
+      );
+
+      setStudents(studentsWithAccess);
+    }
+  } catch (error) {
+    console.error('Erro ao carregar alunos da turma:', error);
   }
 };
   const loadAvailableStudents = async () => {
