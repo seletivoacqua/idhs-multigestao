@@ -1263,21 +1263,22 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   // ===========================================
   // FUNÇÃO: loadClassStudents (PARTE EAD - CORRIGIDA)
   // ===========================================
- const PAGE_SIZE = 500; // Defina no escopo do componente (fora da função)
+const PAGE_SIZE = 500; // Coloque no início do componente (depois dos useState)
 
 const loadClassStudents = async () => {
   let allClassStudents: any[] = [];
-  let start = 0;
+  let currentPage = 0;
   let hasMore = true;
 
   try {
-    // 1. Buscar todos os registros de class_students com paginação
+    // Buscar todos os registros de class_students paginados
     while (hasMore) {
       const { data, error } = await supabase
         .from('class_students')
         .select('*, students(*)')
         .eq('class_id', classData.id)
-        .range(start, start + PAGE_SIZE - 1);
+        .order('student_id') // ordenação para consistência
+        .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
 
       if (error) throw error;
 
@@ -1285,12 +1286,12 @@ const loadClassStudents = async () => {
         hasMore = false;
       } else {
         allClassStudents = [...allClassStudents, ...data];
-        start += PAGE_SIZE;
+        currentPage++;
         if (data.length < PAGE_SIZE) hasMore = false;
       }
     }
 
-    // 2. Agora processamos todos os alunos de uma só vez (código original)
+    // Agora processa todos os alunos (código original inalterado)
     if (classData.modality === 'VIDEOCONFERENCIA') {
       const { data: allAttendances } = await supabase
         .from('attendance')
@@ -1298,7 +1299,7 @@ const loadClassStudents = async () => {
         .eq('class_id', classData.id)
         .order('class_number');
 
-      const uniqueClassNumbers = allAttendances
+      const uniqueClassNumbers = allAttendances 
         ? [...new Set(allAttendances.map(a => a.class_number))]
         : [];
       const totalClassesGiven = uniqueClassNumbers.length;
@@ -1330,7 +1331,6 @@ const loadClassStudents = async () => {
     } else {
       // EAD
       console.log('📚 Carregando alunos EAD com base em is_frequente');
-
       const studentsWithAccess = await Promise.all(
         allClassStudents.map(async (cs) => {
           const { data: accessData } = await supabase
@@ -1365,31 +1365,47 @@ const loadClassStudents = async () => {
           };
         })
       );
-
       setStudents(studentsWithAccess);
     }
   } catch (error) {
     console.error('Erro ao carregar alunos da turma:', error);
   }
 };
-  const loadAvailableStudents = async () => {
-    if (!user) return;
 
-    const { data, error } = await supabase
-      .from('students')
-      .select('id, full_name')
-      .order('full_name');
+  
+ const loadAvailableStudents = async () => {
+  if (!user) return;
 
-    if (error) {
-      console.error('Error loading students:', error);
-      return;
+  let allStudents: any[] = [];
+  let currentPage = 0;
+  let hasMore = true;
+
+  try {
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('students')
+        .select('id, full_name')
+        .order('full_name')
+        .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allStudents = [...allStudents, ...data];
+        currentPage++;
+        if (data.length < PAGE_SIZE) hasMore = false;
+      }
     }
 
     const enrolledIds = students.map((s) => s.student_id);
-    const available = (data || []).filter((s) => !enrolledIds.includes(s.id));
-
+    const available = allStudents.filter((s) => !enrolledIds.includes(s.id));
     setAvailableStudents(available);
-  };
+  } catch (error) {
+    console.error('Erro ao carregar alunos disponíveis:', error);
+  }
+};
 
   const handleOpenEnrollment = (type: 'regular' | 'exceptional') => {
     setEnrollmentType(type);
