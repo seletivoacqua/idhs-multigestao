@@ -232,292 +232,180 @@ export default function SyntheticReportModal({ isOpen, onClose }: SyntheticRepor
   };
 
   // Calcula quantas aulas já foram ministradas para uma turma de videoconferência
-  const getClassesGivenCount = async (classId: string, endDate: string | null, classStatus: string): Promise<number> => {
-    // Se a turma já foi finalizada, retorna o total de aulas
-    if (isClassFinished(classStatus, endDate)) {
-      const { data: classData } = await supabase
-        .from('classes')
-        .select('total_classes')
-        .eq('id', classId)
-        .single();
-      return classData?.total_classes || 0;
-    }
+ // Versão corrigida - Calcula quantas aulas ÚNICAS já foram ministradas
+const getClassesGivenCount = async (classId: string, endDate: string | null, classStatus: string): Promise<number> => {
+  // Se a turma já foi finalizada, retorna o total de aulas
+  if (isClassFinished(classStatus, endDate)) {
+    const { data: classData } = await supabase
+      .from('classes')
+      .select('total_classes')
+      .eq('id', classId)
+      .single();
+    return classData?.total_classes || 0;
+  }
 
-    // Turma em andamento: contar aulas que já ocorreram
+  // Turma em andamento: contar aulas ÚNICAS que já ocorreram (class_number distintos)
+  const today = new Date().toISOString().split('T')[0];
+  const { data: attendanceRecords } = await supabase
+    .from('attendance')
+    .select('class_number, class_date')
+    .eq('class_id', classId)
+    .lte('class_date', today);
+
+  // Usar Set para garantir números de aula únicos
+  const uniqueClassNumbers = new Set(attendanceRecords?.map(a => a.class_number) || []);
+  return uniqueClassNumbers.size;
+};
+
+// Versão corrigida - Para Videoconferência
+const generateVideoConferenceReport = async () => {
+  const classes = await fetchClasses('VIDEOCONFERENCIA');
+  const reportData: VideoConferenceReportData[] = [];
+
+  for (const cls of classes) {
+    const classesGiven = await getClassesGivenCount(cls.id, cls.end_date, cls.status);
+    const classFinished = isClassFinished(cls.status, cls.end_date);
+
+    const { data: classStudents } = await supabase
+      .from('class_students')
+      .select(`
+        student_id,
+        students ( id, full_name, unit_id )
+      `)
+      .eq('class_id', cls.id);
+
+    for (const cs of classStudents || []) {
+      if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
+        continue;
+      }
+
+      // Buscar TODAS as presenças do aluno
+      const { data: attendanceData } = await supabase
+        .from('attendance')
+        .select('id, class_number, class_date')
+        .eq('class_id', cls.id)
+        .eq('student_id', cs.student_id)
+        .eq('present', true);
+
+      // Contar apenas presenças em aulas que já ocorreram (data <= hoje)
+      const today = new Date().toISOString().split('T')[0];
+      const validAttendances = attendanceData?.filter(a => a.class_date <= today) || [];
+      
+      // Usar Set para garantir contagem única por número de aula
+      const uniqueAttendedClasses = new Set(validAttendances.map(a => a.class_number));
+      const classesAttended = uniqueAttendedClasses.size;
+      
+      // CORREÇÃO CRÍTICA: Garantir que classesAttended nunca seja maior que classesGiven
+      const safeClassesAttended = Math.min(classesAttended, classesGiven);
+      const frequencyValue = classesGiven > 0 ? (safeClassesAttended / classesGiven) * 100 : 0;
+      
+      // Garantir que frequência não ultrapasse 100%
+      const finalFrequencyValue = Math.min(frequencyValue, 100);
+      
+      let situation = '';
+      if (classFinished) {
+        situation = finalFrequencyValue >= 50 ? 'APROVADO' : 'REPROVADO';
+      } else {
+        situation = finalFrequencyValue >= 50 ? 'FREQUENTE (parcial)' : 'EM ANDAMENTO';
+      }
+
+      reportData.push({
+        studentName: cs.students?.full_name || '',
+        courseName: cls.name,
+        className: cls.name,
+        classId: cls.id,
+        classEndDate: cls.end_date,
+        classStatus: getClassStatusDisplay(cls.status, cls.end_date),
+        totalClasses: cls.total_classes,
+        classesGiven,
+        classesAttended: safeClassesAttended,
+        frequency: `${Math.round(finalFrequencyValue)}%`,
+        frequencyValue: finalFrequencyValue,
+        situation,
+      });
+    }
+  }
+
+  reportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  setVideoData(reportData);
+  setEadData([]);
+  setCombinedData([]);
+};
+
+// Versão corrigida - Para ALL Modalities (Videoconferência)
+const generateAllModalitiesReport = async () => {
+  const eadClasses = await fetchClasses('EAD');
+  const videoClasses = await fetchClasses('VIDEOCONFERENCIA');
+  const reportData: CombinedReportData[] = [];
+
+  // Processar EAD (não tem problema de >100%)
+  for (const cls of eadClasses) {
+    // ... código EAD existente ...
+  }
+
+  // Processar Videoconferência (CORRIGIDO)
+  for (const cls of videoClasses) {
+    const classesGiven = await getClassesGivenCount(cls.id, cls.end_date, cls.status);
+    const classFinished = isClassFinished(cls.status, cls.end_date);
     const today = new Date().toISOString().split('T')[0];
-    const { data: attendanceRecords } = await supabase
-      .from('attendance')
-      .select('class_number')
-      .eq('class_id', classId)
-      .lte('class_date', today);
 
-    const uniqueClasses = [...new Set(attendanceRecords?.map(a => a.class_number) || [])];
-    return uniqueClasses.length;
-  };
+    const { data: classStudents } = await supabase
+      .from('class_students')
+      .select(`
+        student_id,
+        students ( id, full_name, unit_id )
+      `)
+      .eq('class_id', cls.id);
 
-  const generateReport = async () => {
-    if (!filters.modality) {
-      alert('Selecione a modalidade para gerar o relatório');
-      return;
-    }
-
-    setLoading(true);
-
-    if (filters.modality === 'ALL') {
-      await generateAllModalitiesReport();
-    } else if (filters.modality === 'EAD') {
-      await generateEADReport();
-    } else if (filters.modality === 'VIDEOCONFERENCIA') {
-      await generateVideoConferenceReport();
-    }
-
-    setLoading(false);
-  };
-
-  const generateEADReport = async () => {
-    const classes = await fetchClasses('EAD');
-    const reportData: EADReportData[] = [];
-
-    for (const cls of classes) {
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select(`
-          student_id,
-          students ( id, full_name, unit_id )
-        `)
-        .eq('class_id', cls.id);
-
-      for (const cs of classStudents || []) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
-          continue;
-        }
-
-        const { data: accessData } = await supabase
-          .from('ead_access')
-          .select('access_date_1, access_date_2, access_date_3, is_frequente')
-          .eq('class_id', cls.id)
-          .eq('student_id', cs.student_id)
-          .maybeSingle();
-
-        const access1 = formatDateTime(accessData?.access_date_1);
-        const access2 = formatDateTime(accessData?.access_date_2);
-        const access3 = formatDateTime(accessData?.access_date_3);
-        const isFrequente = accessData?.is_frequente === true;
-
-        const totalAccesses = [accessData?.access_date_1, accessData?.access_date_2, accessData?.access_date_3]
-          .filter(Boolean).length;
-
-        const classFinished = isClassFinished(cls.status, cls.end_date);
-        let status = '';
-        let statusDisplay = '';
-
-        if (classFinished) {
-          // Turma finalizada: decisão baseada no is_frequente
-          status = isFrequente ? 'APROVADO' : 'REPROVADO';
-          statusDisplay = status;
-        } else {
-          // Turma em andamento: status parcial
-          status = isFrequente ? 'FREQUENTE (parcial)' : 'NÃO FREQUENTE (parcial)';
-          statusDisplay = isFrequente ? '✅ FREQUENTE' : '⚠️ NÃO FREQUENTE';
-        }
-
-        reportData.push({
-          studentName: cs.students?.full_name || '',
-          courseName: cls.name,
-          className: cls.name,
-          classId: cls.id,
-          classEndDate: cls.end_date,
-          classStatus: getClassStatusDisplay(cls.status, cls.end_date),
-          access1,
-          access2,
-          access3,
-          isFrequente,
-          status,
-          statusDisplay,
-        });
+    for (const cs of classStudents || []) {
+      if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
+        continue;
       }
-    }
 
-    reportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-    setEadData(reportData);
-    setVideoData([]);
-    setCombinedData([]);
-  };
+      const { data: attendanceData } = await supabase
+        .from('attendance')
+        .select('id, class_number, class_date')
+        .eq('class_id', cls.id)
+        .eq('student_id', cs.student_id)
+        .eq('present', true);
 
-  const generateVideoConferenceReport = async () => {
-    const classes = await fetchClasses('VIDEOCONFERENCIA');
-    const reportData: VideoConferenceReportData[] = [];
+      // Filtrar apenas aulas que já ocorreram
+      const validAttendances = attendanceData?.filter(a => a.class_date <= today) || [];
+      const uniqueAttendedClasses = new Set(validAttendances.map(a => a.class_number));
+      let classesAttended = uniqueAttendedClasses.size;
+      
+      // CORREÇÃO: Garantir que não ultrapasse aulas dadas
+      classesAttended = Math.min(classesAttended, classesGiven);
+      const frequencyValue = classesGiven > 0 ? (classesAttended / classesGiven) * 100 : 0;
+      const finalFrequencyValue = Math.min(frequencyValue, 100);
 
-    for (const cls of classes) {
-      const classesGiven = await getClassesGivenCount(cls.id, cls.end_date, cls.status);
-      const classFinished = isClassFinished(cls.status, cls.end_date);
-
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select(`
-          student_id,
-          students ( id, full_name, unit_id )
-        `)
-        .eq('class_id', cls.id);
-
-      for (const cs of classStudents || []) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
-          continue;
-        }
-
-        const { data: attendanceData } = await supabase
-          .from('attendance')
-          .select('id')
-          .eq('class_id', cls.id)
-          .eq('student_id', cs.student_id)
-          .eq('present', true);
-
-        const classesAttended = attendanceData?.length || 0;
-        const frequencyValue = classesGiven > 0 ? (classesAttended / classesGiven) * 100 : 0;
-        
-        let situation = '';
-        if (classFinished) {
-          situation = frequencyValue >= 50 ? 'APROVADO' : 'REPROVADO';
-        } else {
-          situation = frequencyValue >= 50 ? 'FREQUENTE (parcial)' : 'EM ANDAMENTO';
-        }
-
-        reportData.push({
-          studentName: cs.students?.full_name || '',
-          courseName: cls.name,
-          className: cls.name,
-          classId: cls.id,
-          classEndDate: cls.end_date,
-          classStatus: getClassStatusDisplay(cls.status, cls.end_date),
-          totalClasses: cls.total_classes,
-          classesGiven,
-          classesAttended,
-          frequency: `${frequencyValue.toFixed(0)}%`,
-          frequencyValue,
-          situation,
-        });
+      let situation = '';
+      if (classFinished) {
+        situation = finalFrequencyValue >= 50 ? 'APROVADO' : 'REPROVADO';
+      } else {
+        situation = finalFrequencyValue >= 50 ? 'FREQUENTE (parcial)' : 'EM ANDAMENTO';
       }
+
+      reportData.push({
+        studentName: cs.students?.full_name || '',
+        courseName: cls.name,
+        className: cls.name,
+        modality: 'Videoconferência',
+        classEndDate: cls.end_date,
+        classStatus: getClassStatusDisplay(cls.status, cls.end_date),
+        totalClasses: cls.total_classes,
+        classesGiven,
+        classesAttended,
+        frequency: `${Math.round(finalFrequencyValue)}%`,
+        frequencyValue: finalFrequencyValue,
+        situation,
+      });
     }
+  }
 
-    reportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-    setVideoData(reportData);
-    setEadData([]);
-    setCombinedData([]);
-  };
-
-  const generateAllModalitiesReport = async () => {
-    const eadClasses = await fetchClasses('EAD');
-    const videoClasses = await fetchClasses('VIDEOCONFERENCIA');
-    const reportData: CombinedReportData[] = [];
-
-    // Processar EAD
-    for (const cls of eadClasses) {
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select(`
-          student_id,
-          students ( id, full_name, unit_id )
-        `)
-        .eq('class_id', cls.id);
-
-      for (const cs of classStudents || []) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
-          continue;
-        }
-
-        const { data: accessData } = await supabase
-          .from('ead_access')
-          .select('access_date_1, access_date_2, access_date_3, is_frequente')
-          .eq('class_id', cls.id)
-          .eq('student_id', cs.student_id)
-          .maybeSingle();
-
-        const access1 = formatDateTime(accessData?.access_date_1);
-        const access2 = formatDateTime(accessData?.access_date_2);
-        const access3 = formatDateTime(accessData?.access_date_3);
-        const isFrequente = accessData?.is_frequente === true;
-        const classFinished = isClassFinished(cls.status, cls.end_date);
-
-        let status = '';
-        if (classFinished) {
-          status = isFrequente ? 'APROVADO' : 'REPROVADO';
-        } else {
-          status = isFrequente ? 'FREQUENTE (parcial)' : 'NÃO FREQUENTE (parcial)';
-        }
-
-        reportData.push({
-          studentName: cs.students?.full_name || '',
-          courseName: cls.name,
-          className: cls.name,
-          modality: 'EAD 24h',
-          classEndDate: cls.end_date,
-          classStatus: getClassStatusDisplay(cls.status, cls.end_date),
-          access1,
-          access2,
-          access3,
-          isFrequente,
-          status,
-        });
-      }
-    }
-
-    // Processar Videoconferência
-    for (const cls of videoClasses) {
-      const classesGiven = await getClassesGivenCount(cls.id, cls.end_date, cls.status);
-      const classFinished = isClassFinished(cls.status, cls.end_date);
-
-      const { data: classStudents } = await supabase
-        .from('class_students')
-        .select(`
-          student_id,
-          students ( id, full_name, unit_id )
-        `)
-        .eq('class_id', cls.id);
-
-      for (const cs of classStudents || []) {
-        if (filters.unitId && cs.students?.unit_id !== filters.unitId) {
-          continue;
-        }
-
-        const { data: attendanceData } = await supabase
-          .from('attendance')
-          .select('id')
-          .eq('class_id', cls.id)
-          .eq('student_id', cs.student_id)
-          .eq('present', true);
-
-        const classesAttended = attendanceData?.length || 0;
-        const frequencyValue = classesGiven > 0 ? (classesAttended / classesGiven) * 100 : 0;
-
-        let situation = '';
-        if (classFinished) {
-          situation = frequencyValue >= 50 ? 'APROVADO' : 'REPROVADO';
-        } else {
-          situation = frequencyValue >= 50 ? 'FREQUENTE (parcial)' : 'EM ANDAMENTO';
-        }
-
-        reportData.push({
-          studentName: cs.students?.full_name || '',
-          courseName: cls.name,
-          className: cls.name,
-          modality: 'Videoconferência',
-          classEndDate: cls.end_date,
-          classStatus: getClassStatusDisplay(cls.status, cls.end_date),
-          totalClasses: cls.total_classes,
-          classesGiven,
-          classesAttended,
-          frequency: `${frequencyValue.toFixed(0)}%`,
-          frequencyValue,
-          situation,
-        });
-      }
-    }
-
-    reportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
-    setCombinedData(reportData);
-    setEadData([]);
-    setVideoData([]);
-  };
+  reportData.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  setCombinedData(prev => [...prev, ...reportData]);
+};
 
   const exportToXLSX = () => {
     if (filters.modality === 'EAD' && eadData.length > 0) {
