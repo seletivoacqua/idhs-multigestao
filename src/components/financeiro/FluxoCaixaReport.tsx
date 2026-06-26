@@ -48,6 +48,7 @@ interface Filters {
   category: 'all' | 'despesas_fixas' | 'despesas_variaveis';
   origem: 'all' | 'idhs' | 'geral' | 'nenhuma';
   includeInvoices: boolean;
+  includeOrigin: boolean; // Novo campo
 }
 
 interface FluxoCaixaReportProps {
@@ -75,6 +76,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     category: 'all',
     origem: 'all',
     includeInvoices: false,
+    includeOrigin: true, // Valor padrão: true para manter compatibilidade
   });
 
   // Validar e ajustar datas
@@ -296,11 +298,12 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       category: 'all',
       origem: 'all',
       includeInvoices: false,
+      includeOrigin: true,
     });
     setError(null);
   }, []);
 
-  // Exportação para PDF com 8 colunas
+  // Exportação para PDF com 8 ou 7 colunas dependendo do checkbox
   const exportToPDF = useCallback(async () => {
     if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
@@ -397,225 +400,265 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       
       yPos += cardHeight + 10;
       
-      // Configuração das 8 colunas
-     const tableWidth = pageWidth - (margin * 2);
+      // Configuração das colunas - DINÂMICO baseado no includeOrigin
+      const includeOrigin = filters.includeOrigin;
+      
+      // Definir larguras das colunas
+      let colWidths: any;
+      let colPositions: any;
+      
+      if (includeOrigin) {
+        // 8 colunas (com origem)
+        colWidths = {
+          data: 22,
+          tipo: 18,
+          descricao: 52,
+          categoria: 26,
+          fonte: 38,
+          origem: 18,
+          metodo: 22,
+          valor: 28
+        };
+      } else {
+        // 7 colunas (sem origem)
+        colWidths = {
+          data: 24,
+          tipo: 20,
+          descricao: 62,
+          categoria: 30,
+          fonte: 42,
+          metodo: 28,
+          valor: 32
+        };
+      }
 
-const colWidths = {
-  data: 22,
-  tipo: 18,
-  descricao: 58,
-  categoria: 28,
-  fonte: 42,
-  origem: 18,
-  metodo: 24,
-  valor: 28
-};
+      const gap = 2;
+      const tableWidth = pageWidth - (margin * 2);
+      
+      // Calcular posições das colunas
+      if (includeOrigin) {
+        colPositions = {
+          data: margin,
+          tipo: margin + colWidths.data + gap,
+          descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
+          categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
+          fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
+          origem: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
+          metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem + (gap * 6),
+          valor: pageWidth - margin - colWidths.valor
+        };
+      } else {
+        colPositions = {
+          data: margin,
+          tipo: margin + colWidths.data + gap,
+          descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
+          categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
+          fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
+          metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
+          valor: pageWidth - margin - colWidths.valor
+        };
+      }
 
-// Espaçamento entre colunas
-const gap = 2;
+      // Função para desenhar cabeçalho
+      const drawTableHeader = () => {
+        doc.setFillColor(37, 99, 235);
+        doc.setTextColor(255, 255, 255);
+        doc.setFont(undefined, 'bold');
+        doc.setFontSize(7.5);
 
-const colPositions = {
-  data: margin,
-  tipo: margin + colWidths.data + gap,
-  descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
-  categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
-  fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
-  origem: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
-  metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem + (gap * 6),
-  valor: pageWidth - margin - colWidths.valor
-};
+        const headers = includeOrigin ? [
+          { key: 'data', label: 'DATA' },
+          { key: 'tipo', label: 'TIPO' },
+          { key: 'descricao', label: 'DESCRIÇÃO' },
+          { key: 'categoria', label: 'CATEGORIA' },
+          { key: 'fonte', label: 'FONTE / FORNECEDOR' },
+          { key: 'origem', label: 'ORIGEM' },
+          { key: 'metodo', label: 'MÉTODO' },
+          { key: 'valor', label: 'VALOR (R$)' },
+        ] : [
+          { key: 'data', label: 'DATA' },
+          { key: 'tipo', label: 'TIPO' },
+          { key: 'descricao', label: 'DESCRIÇÃO' },
+          { key: 'categoria', label: 'CATEGORIA' },
+          { key: 'fonte', label: 'FONTE / FORNECEDOR' },
+          { key: 'metodo', label: 'MÉTODO' },
+          { key: 'valor', label: 'VALOR (R$)' },
+        ];
 
-// Função para desenhar cabeçalho
-const drawTableHeader = () => {
-  doc.setFillColor(37, 99, 235);
-  doc.setTextColor(255, 255, 255);
-  doc.setFont(undefined, 'bold');
-  doc.setFontSize(7.5);
+        headers.forEach((header) => {
+          const x = colPositions[header.key as keyof typeof colPositions];
+          const width = colWidths[header.key as keyof typeof colWidths];
 
-  const headers = [
-    { key: 'data', label: 'DATA' },
-    { key: 'tipo', label: 'TIPO' },
-    { key: 'descricao', label: 'DESCRIÇÃO' },
-    { key: 'categoria', label: 'CATEGORIA' },
-    { key: 'fonte', label: 'FONTE / FORNECEDOR' },
-    { key: 'origem', label: 'ORIGEM' },
-    { key: 'metodo', label: 'MÉTODO' },
-    { key: 'valor', label: 'VALOR (R$)' },
-  ];
+          doc.rect(x, yPos, width, 10, 'F');
 
-  headers.forEach((header) => {
-    const x = colPositions[header.key as keyof typeof colPositions];
-    const width = colWidths[header.key as keyof typeof colWidths];
+          doc.text(
+            header.label,
+            x + 2,
+            yPos + 6
+          );
+        });
 
-    doc.rect(x, yPos, width, 10, 'F');
+        yPos += 10;
 
-    doc.text(
-      header.label,
-      x + 2,
-      yPos + 6
-    );
-  });
+        doc.setTextColor(0, 0, 0);
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(7);
+      };
 
-  yPos += 10;
+      drawTableHeader();
 
-  doc.setTextColor(0, 0, 0);
-  doc.setFont(undefined, 'normal');
-  doc.setFontSize(7);
-};
+      // Dados da tabela
+      let rowCount = 0;
 
-drawTableHeader();
+      for (const transaction of transactions) {
+        // Nova página
+        if (yPos > pageHeight - 20) {
+          doc.addPage();
+          yPos = 20;
+          drawTableHeader();
+        }
 
-// Dados da tabela
-let rowCount = 0;
+        const origemTexto =
+          transaction.type === 'expense'
+            ? transaction.idhs
+              ? 'IDHS'
+              : transaction.geral
+              ? 'Geral'
+              : '-'
+            : '-';
 
-for (const transaction of transactions) {
+        const fonteTexto =
+          transaction.type === 'income'
+            ? transaction.fonte_pagadora || '-'
+            : transaction.fornecedor || '-';
 
-  // Nova página
-  if (yPos > pageHeight - 20) {
-    doc.addPage();
-    yPos = 20;
-    drawTableHeader();
-  }
+        const tipoTexto =
+          transaction.type === 'income'
+            ? 'Entrada'
+            : 'Saída';
 
-  const origemTexto =
-    transaction.type === 'expense'
-      ? transaction.idhs
-        ? 'IDHS'
-        : transaction.geral
-        ? 'Geral'
-        : '-'
-      : '-';
+        const categoriaTexto =
+          transaction.category
+            ? transaction.category.replace('_', ' ')
+            : '-';
 
-  const fonteTexto =
-    transaction.type === 'income'
-      ? transaction.fonte_pagadora || '-'
-      : transaction.fornecedor || '-';
+        // Quebra de linhas
+        const descricaoLines = doc.splitTextToSize(
+          transaction.description || '-',
+          colWidths.descricao - 4
+        );
 
-  const tipoTexto =
-    transaction.type === 'income'
-      ? 'Entrada'
-      : 'Saída';
+        const fonteLines = doc.splitTextToSize(
+          fonteTexto,
+          colWidths.fonte - 4
+        );
 
-  const categoriaTexto =
-    transaction.category
-      ? transaction.category.replace('_', ' ')
-      : '-';
+        const maxLines = Math.max(
+          descricaoLines.length,
+          fonteLines.length,
+          1
+        );
 
-  // Quebra de linhas
-  const descricaoLines = doc.splitTextToSize(
-    transaction.description || '-',
-    colWidths.descricao - 4
-  );
+        const rowHeight = (maxLines * 4) + 4;
 
-  const fonteLines = doc.splitTextToSize(
-    fonteTexto,
-    colWidths.fonte - 4
-  );
+        // Fundo alternado
+        if (rowCount % 2 === 0) {
+          doc.setFillColor(248, 250, 252);
+          doc.rect(
+            margin,
+            yPos - 3,
+            tableWidth,
+            rowHeight,
+            'F'
+          );
+        }
 
-  const maxLines = Math.max(
-    descricaoLines.length,
-    fonteLines.length,
-    1
-  );
+        // Borda inferior
+        doc.setDrawColor(230, 230, 230);
+        doc.line(
+          margin,
+          yPos + rowHeight - 3,
+          pageWidth - margin,
+          yPos + rowHeight - 3
+        );
 
-  const rowHeight = (maxLines * 4) + 4;
+        // DATA
+        doc.text(
+          formatDisplayDate(transaction.transaction_date),
+          colPositions.data + 2,
+          yPos + 2
+        );
 
-  // Fundo alternado
-  if (rowCount % 2 === 0) {
-    doc.setFillColor(248, 250, 252);
-    doc.rect(
-      margin,
-      yPos - 3,
-      tableWidth,
-      rowHeight,
-      'F'
-    );
-  }
+        // TIPO
+        if (transaction.type === 'expense') {
+          doc.setTextColor(220, 38, 38);
+        } else {
+          doc.setTextColor(22, 163, 74);
+        }
 
-  // Borda inferior
-  doc.setDrawColor(230, 230, 230);
-  doc.line(
-    margin,
-    yPos + rowHeight - 3,
-    pageWidth - margin,
-    yPos + rowHeight - 3
-  );
+        doc.text(
+          tipoTexto,
+          colPositions.tipo + 2,
+          yPos + 2
+        );
 
-  // DATA
-  doc.text(
-    formatDisplayDate(transaction.transaction_date),
-    colPositions.data + 2,
-    yPos + 2
-  );
+        doc.setTextColor(0, 0, 0);
 
-  // TIPO
-  if (transaction.type === 'expense') {
-    doc.setTextColor(220, 38, 38);
-  } else {
-    doc.setTextColor(22, 163, 74);
-  }
+        // DESCRIÇÃO
+        doc.text(
+          descricaoLines,
+          colPositions.descricao + 2,
+          yPos + 2
+        );
 
-  doc.text(
-    tipoTexto,
-    colPositions.tipo + 2,
-    yPos + 2
-  );
+        // CATEGORIA
+        doc.text(
+          categoriaTexto,
+          colPositions.categoria + 2,
+          yPos + 2
+        );
 
-  doc.setTextColor(0, 0, 0);
+        // FONTE/FORNECEDOR
+        doc.text(
+          fonteLines,
+          colPositions.fonte + 2,
+          yPos + 2
+        );
 
-  // DESCRIÇÃO
-  doc.text(
-    descricaoLines,
-    colPositions.descricao + 2,
-    yPos + 2
-  );
+        // ORIGEM (se incluído)
+        if (includeOrigin) {
+          doc.text(
+            origemTexto,
+            colPositions.origem + 2,
+            yPos + 2
+          );
+        }
 
-  // CATEGORIA
-  doc.text(
-    categoriaTexto,
-    colPositions.categoria + 2,
-    yPos + 2
-  );
+        // MÉTODO
+        doc.text(
+          transaction.method || '-',
+          colPositions.metodo + 2,
+          yPos + 2
+        );
 
-  // FONTE/FORNECEDOR
-  doc.text(
-    fonteLines,
-    colPositions.fonte + 2,
-    yPos + 2
-  );
+        // VALOR
+        if (transaction.type === 'expense') {
+          doc.setTextColor(220, 38, 38);
+        } else {
+          doc.setTextColor(22, 163, 74);
+        }
 
-  // ORIGEM
-  doc.text(
-    origemTexto,
-    colPositions.origem + 2,
-    yPos + 2
-  );
+        doc.text(
+          formatCurrencyBR(transaction.amount),
+          colPositions.valor + 2,
+          yPos + 2
+        );
 
-  // MÉTODO
-  doc.text(
-    transaction.method || '-',
-    colPositions.metodo + 2,
-    yPos + 2
-  );
+        doc.setTextColor(0, 0, 0);
 
-  // VALOR
-  if (transaction.type === 'expense') {
-    doc.setTextColor(220, 38, 38);
-  } else {
-    doc.setTextColor(22, 163, 74);
-  }
-
-  doc.text(
-    formatCurrencyBR(transaction.amount),
-    colPositions.valor + 2,
-    yPos + 2
-  );
-
-  doc.setTextColor(0, 0, 0);
-
-  yPos += rowHeight;
-  rowCount++;
-}
+        yPos += rowHeight;
+        rowCount++;
+      }
       
       // Rodapé com totais
       yPos += 4;
@@ -642,7 +685,7 @@ for (const transaction of transactions) {
     }
   }, [transactions, totals, filters, formatDisplayDate]);
 
-  // Exportação para Excel
+  // Exportação para Excel - DINÂMICO baseado no includeOrigin
   const exportToExcel = useCallback(() => {
     if (transactions.length === 0 && invoices.length === 0) {
       alert('Não há dados para exportar');
@@ -688,20 +731,34 @@ for (const transaction of transactions) {
       summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
       
-      // Aba de Transações
-      const transactionsData = transactions.map(transaction => ({
-        Data: formatDisplayDate(transaction.transaction_date),
-        Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
-        Descrição: transaction.description,
-        Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
-        'Fonte/Fornecedor': transaction.type === 'income' ? transaction.fonte_pagadora || '-' : transaction.fornecedor || '-',
-        Origem: transaction.type === 'expense' ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') : '-',
-        Método: transaction.method,
-        'Valor (R$)': transaction.amount,
-      }));
+      // Aba de Transações - DINÂMICA
+      const includeOrigin = filters.includeOrigin;
+      
+      const transactionsData = transactions.map(transaction => {
+        const baseData: any = {
+          Data: formatDisplayDate(transaction.transaction_date),
+          Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
+          Descrição: transaction.description,
+          Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
+          'Fonte/Fornecedor': transaction.type === 'income' ? transaction.fonte_pagadora || '-' : transaction.fornecedor || '-',
+          Método: transaction.method,
+          'Valor (R$)': transaction.amount,
+        };
+
+        // Adicionar origem apenas se incluído
+        if (includeOrigin) {
+          baseData.Origem = transaction.type === 'expense' 
+            ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') 
+            : '-';
+        }
+
+        return baseData;
+      });
       
       const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
-      transactionsSheet['!cols'] = [
+      
+      // Definir larguras das colunas baseado no includeOrigin
+      const colWidths = includeOrigin ? [
         { wch: 12 }, // Data
         { wch: 10 }, // Tipo
         { wch: 50 }, // Descrição
@@ -710,7 +767,17 @@ for (const transaction of transactions) {
         { wch: 10 }, // Origem
         { wch: 15 }, // Método
         { wch: 15 }  // Valor
+      ] : [
+        { wch: 12 }, // Data
+        { wch: 10 }, // Tipo
+        { wch: 50 }, // Descrição
+        { wch: 20 }, // Categoria
+        { wch: 25 }, // Fonte/Fornecedor
+        { wch: 15 }, // Método
+        { wch: 15 }  // Valor
       ];
+      
+      transactionsSheet['!cols'] = colWidths;
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
       
       // Aba de Notas Fiscais
@@ -858,7 +925,7 @@ for (const transaction of transactions) {
                     </select>
                   </div>
 
-                  <div className="flex items-end">
+                  <div className="flex flex-col gap-2">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -867,6 +934,17 @@ for (const transaction of transactions) {
                         className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
                       />
                       <span className="text-sm text-slate-700">Incluir Notas Fiscais</span>
+                    </label>
+                    
+                    {/* NOVO CHECKBOX: Incluir Origem */}
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={filters.includeOrigin}
+                        onChange={(e) => setFilters({ ...filters, includeOrigin: e.target.checked })}
+                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-slate-700">Incluir Origem</span>
                     </label>
                   </div>
                 </div>
@@ -1083,7 +1161,7 @@ for (const transaction of transactions) {
                   </div>
                 )}
 
-                {/* Tabela de transações */}
+                {/* Tabela de transações - DINÂMICA */}
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                   <div className="overflow-x-auto max-h-[400px]">
                     <table className="w-full min-w-[1000px]">
@@ -1094,7 +1172,9 @@ for (const transaction of transactions) {
                           <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Descrição</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Categoria</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Fonte/Fornecedor</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Origem</th>
+                          {filters.includeOrigin && (
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Origem</th>
+                          )}
                           <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Método</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Valor</th>
                         </tr>
@@ -1130,9 +1210,11 @@ for (const transaction of transactions) {
                                   ? transaction.fonte_pagadora || '-' 
                                   : transaction.fornecedor || '-'}
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
-                                {origemExibicao}
-                              </td>
+                              {filters.includeOrigin && (
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
+                                  {origemExibicao}
+                                </td>
+                              )}
                               <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
                                 {transaction.method}
                               </td>
