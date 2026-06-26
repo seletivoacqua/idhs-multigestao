@@ -304,386 +304,379 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   }, []);
 
   // Exportação para PDF com 8 ou 7 colunas dependendo do checkbox
-  const exportToPDF = useCallback(async () => {
-    if (transactions.length === 0 && invoices.length === 0) {
-      alert('Não há dados para exportar');
-      return;
-    }
+// Exportação para PDF com 8 ou 7 colunas dependendo do checkbox
+const exportToPDF = useCallback(async () => {
+  if (transactions.length === 0 && invoices.length === 0) {
+    alert('Não há dados para exportar');
+    return;
+  }
+  
+  setExporting('pdf');
+  
+  try {
+    const doc = new jsPDF({ 
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    });
     
-    setExporting('pdf');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 8;
+    let yPos = 20;
     
+    // Adicionar logo
     try {
-      const doc = new jsPDF({ 
-        orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 8;
-      let yPos = 20;
-      
-      // Adicionar logo
-      try {
-        const logoWidth = 35;
-        const logoHeight = 17;
-        const logoX = (pageWidth - logoWidth) / 2;
-        doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-        yPos = 28;
-      } catch (imgError) {
-        console.warn('Error adding logo to PDF:', imgError);
-        yPos = 20;
-      }
-
-      // Título
-      doc.setFontSize(18);
-      doc.setTextColor(33, 33, 33);
-      doc.setFont(undefined, 'bold');
-      doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, yPos, { align: 'center' });
-      yPos += 7;
-
-      // Período
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.setFont(undefined, 'normal');
-      doc.text(
-        `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
-        pageWidth / 2,
-        yPos,
-        { align: 'center' }
-      );
-      yPos += 6;
-
-      // Data da geração
-      doc.setFontSize(8);
-      doc.text(
-        `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
-        pageWidth - margin,
-        10,
-        { align: 'right' }
-      );
-
-      // Cards de resumo
-      const cardWidth = (pageWidth - (margin * 2) - 8) / 3;
-      const cardHeight = 20;
-      const cardSpacing = 4;
-      
-      // Card Entradas
-      doc.setFillColor(220, 255, 220);
-      doc.rect(margin, yPos, cardWidth, cardHeight, 'F');
-      doc.setFontSize(9);
-      doc.setTextColor(0, 100, 0);
-      doc.setFont(undefined, 'bold');
-      doc.text('Total Entradas', margin + 3, yPos + 6);
-      doc.setFontSize(11);
-      doc.text(formatCurrencyBR(totals.income), margin + 3, yPos + 15);
-      
-      // Card Saídas
-      doc.setFillColor(255, 220, 220);
-      doc.rect(margin + cardWidth + cardSpacing, yPos, cardWidth, cardHeight, 'F');
-      doc.setTextColor(200, 0, 0);
-      doc.setFontSize(9);
-      doc.text('Total Saídas', margin + cardWidth + cardSpacing + 3, yPos + 6);
-      doc.setFontSize(11);
-      doc.text(formatCurrencyBR(totals.expense), margin + cardWidth + cardSpacing + 3, yPos + 15);
-      
-      // Card Saldo
-      const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [200, 0, 0];
-      doc.setFillColor(totals.balance >= 0 ? 230 : 255, totals.balance >= 0 ? 255 : 230, totals.balance >= 0 ? 230 : 230);
-      doc.rect(margin + (cardWidth + cardSpacing) * 2, yPos, cardWidth, cardHeight, 'F');
-      doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
-      doc.setFontSize(9);
-      doc.text('Saldo', margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 6);
-      doc.setFontSize(11);
-      doc.text(formatCurrencyBR(totals.balance), margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 15);
-      
-      yPos += cardHeight + 10;
-      
-      // Configuração das colunas - DINÂMICO baseado no includeOrigin
-      const includeOrigin = filters.includeOrigin;
-      
-      // Definir larguras das colunas
-      let colWidths: any;
-      let colPositions: any;
-      
-      if (includeOrigin) {
-        // 8 colunas (com origem)
-        colWidths = {
-          data: 22,
-          tipo: 18,
-          descricao: 52,
-          categoria: 26,
-          fonte: 38,
-          origem: 18,
-          metodo: 22,
-          valor: 28
-        };
-      } else {
-        // 7 colunas (sem origem)
-        colWidths = {
-          data: 24,
-          tipo: 20,
-          descricao: 62,
-          categoria: 30,
-          fonte: 42,
-          metodo: 28,
-          valor: 32
-        };
-      }
-
-      const gap = 2;
-      const tableWidth = pageWidth - (margin * 2);
-      
-      // Calcular posições das colunas
-      if (includeOrigin) {
-        colPositions = {
-          data: margin,
-          tipo: margin + colWidths.data + gap,
-          descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
-          categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
-          fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
-          origem: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
-          metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + colWidths.origem + (gap * 6),
-          valor: pageWidth - margin - colWidths.valor
-        };
-      } else {
-        colPositions = {
-          data: margin,
-          tipo: margin + colWidths.data + gap,
-          descricao: margin + colWidths.data + colWidths.tipo + (gap * 2),
-          categoria: margin + colWidths.data + colWidths.tipo + colWidths.descricao + (gap * 3),
-          fonte: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + (gap * 4),
-          metodo: margin + colWidths.data + colWidths.tipo + colWidths.descricao + colWidths.categoria + colWidths.fonte + (gap * 5),
-          valor: pageWidth - margin - colWidths.valor
-        };
-      }
-
-      // Função para desenhar cabeçalho
-      const drawTableHeader = () => {
-        doc.setFillColor(37, 99, 235);
-        doc.setTextColor(255, 255, 255);
-        doc.setFont(undefined, 'bold');
-        doc.setFontSize(7.5);
-
-        const headers = includeOrigin ? [
-          { key: 'data', label: 'DATA' },
-          { key: 'tipo', label: 'TIPO' },
-          { key: 'descricao', label: 'DESCRIÇÃO' },
-          { key: 'categoria', label: 'CATEGORIA' },
-          { key: 'fonte', label: 'FONTE / FORNECEDOR' },
-          { key: 'origem', label: 'ORIGEM' },
-          { key: 'metodo', label: 'MÉTODO' },
-          { key: 'valor', label: 'VALOR (R$)' },
-        ] : [
-          { key: 'data', label: 'DATA' },
-          { key: 'tipo', label: 'TIPO' },
-          { key: 'descricao', label: 'DESCRIÇÃO' },
-          { key: 'categoria', label: 'CATEGORIA' },
-          { key: 'fonte', label: 'FONTE / FORNECEDOR' },
-          { key: 'metodo', label: 'MÉTODO' },
-          { key: 'valor', label: 'VALOR (R$)' },
-        ];
-
-        headers.forEach((header) => {
-          const x = colPositions[header.key as keyof typeof colPositions];
-          const width = colWidths[header.key as keyof typeof colWidths];
-
-          doc.rect(x, yPos, width, 10, 'F');
-
-          doc.text(
-            header.label,
-            x + 2,
-            yPos + 6
-          );
-        });
-
-        yPos += 10;
-
-        doc.setTextColor(0, 0, 0);
-        doc.setFont(undefined, 'normal');
-        doc.setFontSize(7);
-      };
-
-      drawTableHeader();
-
-      // Dados da tabela
-      let rowCount = 0;
-
-      for (const transaction of transactions) {
-        // Nova página
-        if (yPos > pageHeight - 20) {
-          doc.addPage();
-          yPos = 20;
-          drawTableHeader();
-        }
-
-        const origemTexto =
-          transaction.type === 'expense'
-            ? transaction.idhs
-              ? 'IDHS'
-              : transaction.geral
-              ? 'Geral'
-              : '-'
-            : '-';
-
-        const fonteTexto =
-          transaction.type === 'income'
-            ? transaction.fonte_pagadora || '-'
-            : transaction.fornecedor || '-';
-
-        const tipoTexto =
-          transaction.type === 'income'
-            ? 'Entrada'
-            : 'Saída';
-
-        const categoriaTexto =
-          transaction.category
-            ? transaction.category.replace('_', ' ')
-            : '-';
-
-        // Quebra de linhas
-        const descricaoLines = doc.splitTextToSize(
-          transaction.description || '-',
-          colWidths.descricao - 4
-        );
-
-        const fonteLines = doc.splitTextToSize(
-          fonteTexto,
-          colWidths.fonte - 4
-        );
-
-        const maxLines = Math.max(
-          descricaoLines.length,
-          fonteLines.length,
-          1
-        );
-
-        const rowHeight = (maxLines * 4) + 4;
-
-        // Fundo alternado
-        if (rowCount % 2 === 0) {
-          doc.setFillColor(248, 250, 252);
-          doc.rect(
-            margin,
-            yPos - 3,
-            tableWidth,
-            rowHeight,
-            'F'
-          );
-        }
-
-        // Borda inferior
-        doc.setDrawColor(230, 230, 230);
-        doc.line(
-          margin,
-          yPos + rowHeight - 3,
-          pageWidth - margin,
-          yPos + rowHeight - 3
-        );
-
-        // DATA
-        doc.text(
-          formatDisplayDate(transaction.transaction_date),
-          colPositions.data + 2,
-          yPos + 2
-        );
-
-        // TIPO
-        if (transaction.type === 'expense') {
-          doc.setTextColor(220, 38, 38);
-        } else {
-          doc.setTextColor(22, 163, 74);
-        }
-
-        doc.text(
-          tipoTexto,
-          colPositions.tipo + 2,
-          yPos + 2
-        );
-
-        doc.setTextColor(0, 0, 0);
-
-        // DESCRIÇÃO
-        doc.text(
-          descricaoLines,
-          colPositions.descricao + 2,
-          yPos + 2
-        );
-
-        // CATEGORIA
-        doc.text(
-          categoriaTexto,
-          colPositions.categoria + 2,
-          yPos + 2
-        );
-
-        // FONTE/FORNECEDOR
-        doc.text(
-          fonteLines,
-          colPositions.fonte + 2,
-          yPos + 2
-        );
-
-        // ORIGEM (se incluído)
-        if (includeOrigin) {
-          doc.text(
-            origemTexto,
-            colPositions.origem + 2,
-            yPos + 2
-          );
-        }
-
-        // MÉTODO
-        doc.text(
-          transaction.method || '-',
-          colPositions.metodo + 2,
-          yPos + 2
-        );
-
-        // VALOR
-        if (transaction.type === 'expense') {
-          doc.setTextColor(220, 38, 38);
-        } else {
-          doc.setTextColor(22, 163, 74);
-        }
-
-        doc.text(
-          formatCurrencyBR(transaction.amount),
-          colPositions.valor + 2,
-          yPos + 2
-        );
-
-        doc.setTextColor(0, 0, 0);
-
-        yPos += rowHeight;
-        rowCount++;
-      }
-      
-      // Rodapé com totais
-      yPos += 4;
-      doc.setDrawColor(100, 100, 100);
-      doc.line(margin, yPos - 2, pageWidth - margin, yPos - 2);
-      
-      doc.setFontSize(9);
-      doc.setFont(undefined, 'bold');
-      doc.setTextColor(0, 100, 0);
-      doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos + 5);
-      
-      doc.setTextColor(200, 0, 0);
-      doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 65, yPos + 5);
-      
-      doc.setTextColor(totals.balance >= 0 ? 0 : 200, totals.balance >= 0 ? 100 : 0, 0);
-      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 130, yPos + 5);
-      
-      doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
-    } catch (error) {
-      console.error('Error exporting to PDF:', error);
-      alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
-    } finally {
-      setExporting('none');
+      const logoWidth = 35;
+      const logoHeight = 17;
+      const logoX = (pageWidth - logoWidth) / 2;
+      doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
+      yPos = 28;
+    } catch (imgError) {
+      console.warn('Error adding logo to PDF:', imgError);
+      yPos = 20;
     }
-  }, [transactions, totals, filters, formatDisplayDate]);
+
+    // Título
+    doc.setFontSize(18);
+    doc.setTextColor(33, 33, 33);
+    doc.setFont(undefined, 'bold');
+    doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, yPos, { align: 'center' });
+    yPos += 7;
+
+    // Período
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.setFont(undefined, 'normal');
+    doc.text(
+      `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
+      pageWidth / 2,
+      yPos,
+      { align: 'center' }
+    );
+    yPos += 6;
+
+    // Data da geração
+    doc.setFontSize(8);
+    doc.text(
+      `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+      pageWidth - margin,
+      10,
+      { align: 'right' }
+    );
+
+    // Cards de resumo
+    const cardWidth = (pageWidth - (margin * 2) - 8) / 3;
+    const cardHeight = 20;
+    const cardSpacing = 4;
+    
+    // Card Entradas
+    doc.setFillColor(220, 255, 220);
+    doc.rect(margin, yPos, cardWidth, cardHeight, 'F');
+    doc.setFontSize(9);
+    doc.setTextColor(0, 100, 0);
+    doc.setFont(undefined, 'bold');
+    doc.text('Total Entradas', margin + 3, yPos + 6);
+    doc.setFontSize(11);
+    doc.text(formatCurrencyBR(totals.income), margin + 3, yPos + 15);
+    
+    // Card Saídas
+    doc.setFillColor(255, 220, 220);
+    doc.rect(margin + cardWidth + cardSpacing, yPos, cardWidth, cardHeight, 'F');
+    doc.setTextColor(200, 0, 0);
+    doc.setFontSize(9);
+    doc.text('Total Saídas', margin + cardWidth + cardSpacing + 3, yPos + 6);
+    doc.setFontSize(11);
+    doc.text(formatCurrencyBR(totals.expense), margin + cardWidth + cardSpacing + 3, yPos + 15);
+    
+    // Card Saldo
+    const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [200, 0, 0];
+    doc.setFillColor(totals.balance >= 0 ? 230 : 255, totals.balance >= 0 ? 255 : 230, totals.balance >= 0 ? 230 : 230);
+    doc.rect(margin + (cardWidth + cardSpacing) * 2, yPos, cardWidth, cardHeight, 'F');
+    doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
+    doc.setFontSize(9);
+    doc.text('Saldo', margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 6);
+    doc.setFontSize(11);
+    doc.text(formatCurrencyBR(totals.balance), margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 15);
+    
+    yPos += cardHeight + 10;
+    
+    // Configuração das colunas - DINÂMICO baseado no includeOrigin
+    const includeOrigin = filters.includeOrigin;
+    const tableWidth = pageWidth - (margin * 2);
+    
+    // Definir larguras das colunas - AJUSTADAS para caber na página
+    let colWidths: any;
+    
+    if (includeOrigin) {
+      // 8 colunas (com origem) - AJUSTADO
+      colWidths = {
+        data: 20,
+        tipo: 16,
+        descricao: 45,
+        categoria: 22,
+        fonte: 32,
+        origem: 16,
+        metodo: 20,
+        valor: 26
+      };
+    } else {
+      // 7 colunas (sem origem) - AJUSTADO
+      colWidths = {
+        data: 22,
+        tipo: 18,
+        descricao: 52,
+        categoria: 26,
+        fonte: 36,
+        metodo: 22,
+        valor: 28
+      };
+    }
+
+    // Verificar se a soma das larguras não excede a largura da tabela
+    const totalWidth = Object.values(colWidths).reduce((sum: number, w: number) => sum + w, 0);
+    const gap = 1.5; // Reduzido o gap
+    const totalWithGaps = totalWidth + (Object.keys(colWidths).length - 1) * gap;
+    
+    // Se exceder, ajustar proporcionalmente
+    if (totalWithGaps > tableWidth) {
+      const scaleFactor = (tableWidth - (Object.keys(colWidths).length - 1) * gap) / totalWidth;
+      Object.keys(colWidths).forEach(key => {
+        colWidths[key] = Math.floor(colWidths[key] * scaleFactor);
+      });
+    }
+    
+    // Calcular posições das colunas
+    const colPositions: any = {};
+    let currentX = margin;
+    Object.keys(colWidths).forEach((key, index) => {
+      colPositions[key] = currentX;
+      currentX += colWidths[key] + gap;
+    });
+
+    // Função para desenhar cabeçalho
+    const drawTableHeader = () => {
+      doc.setFillColor(37, 99, 235);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont(undefined, 'bold');
+      doc.setFontSize(7);
+
+      const headers = includeOrigin ? [
+        { key: 'data', label: 'DATA' },
+        { key: 'tipo', label: 'TIPO' },
+        { key: 'descricao', label: 'DESCRIÇÃO' },
+        { key: 'categoria', label: 'CATEGORIA' },
+        { key: 'fonte', label: 'FONTE/FORNECEDOR' },
+        { key: 'origem', label: 'ORIGEM' },
+        { key: 'metodo', label: 'MÉTODO' },
+        { key: 'valor', label: 'VALOR (R$)' },
+      ] : [
+        { key: 'data', label: 'DATA' },
+        { key: 'tipo', label: 'TIPO' },
+        { key: 'descricao', label: 'DESCRIÇÃO' },
+        { key: 'categoria', label: 'CATEGORIA' },
+        { key: 'fonte', label: 'FONTE/FORNECEDOR' },
+        { key: 'metodo', label: 'MÉTODO' },
+        { key: 'valor', label: 'VALOR (R$)' },
+      ];
+
+      const headerHeight = 8;
+      headers.forEach((header) => {
+        const x = colPositions[header.key];
+        const width = colWidths[header.key];
+
+        doc.rect(x, yPos, width, headerHeight, 'F');
+        doc.text(
+          header.label,
+          x + 1,
+          yPos + 5.5
+        );
+      });
+
+      yPos += headerHeight;
+      doc.setTextColor(0, 0, 0);
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(6.5);
+    };
+
+    drawTableHeader();
+
+    // Dados da tabela
+    let rowCount = 0;
+
+    for (const transaction of transactions) {
+      // Nova página
+      if (yPos > pageHeight - 15) {
+        doc.addPage();
+        yPos = 15;
+        drawTableHeader();
+      }
+
+      const origemTexto =
+        transaction.type === 'expense'
+          ? transaction.idhs
+            ? 'IDHS'
+            : transaction.geral
+            ? 'Geral'
+            : '-'
+          : '-';
+
+      const fonteTexto =
+        transaction.type === 'income'
+          ? transaction.fonte_pagadora || '-'
+          : transaction.fornecedor || '-';
+
+      const tipoTexto =
+        transaction.type === 'income'
+          ? 'Entrada'
+          : 'Saída';
+
+      const categoriaTexto =
+        transaction.category
+          ? transaction.category.replace('_', ' ')
+          : '-';
+
+      // Quebra de linhas - AJUSTADO para textos mais longos
+      const descricaoLines = doc.splitTextToSize(
+        transaction.description || '-',
+        colWidths.descricao - 3
+      );
+
+      const fonteLines = doc.splitTextToSize(
+        fonteTexto,
+        colWidths.fonte - 3
+      );
+
+      const maxLines = Math.max(
+        descricaoLines.length,
+        fonteLines.length,
+        1
+      );
+
+      const rowHeight = Math.max((maxLines * 3.5) + 3, 6);
+
+      // Fundo alternado
+      if (rowCount % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(
+          margin,
+          yPos - 2,
+          tableWidth,
+          rowHeight,
+          'F'
+        );
+      }
+
+      // DATA
+      doc.text(
+        formatDisplayDate(transaction.transaction_date),
+        colPositions.data + 1,
+        yPos + 3
+      );
+
+      // TIPO
+      if (transaction.type === 'expense') {
+        doc.setTextColor(220, 38, 38);
+      } else {
+        doc.setTextColor(22, 163, 74);
+      }
+      doc.text(
+        tipoTexto,
+        colPositions.tipo + 1,
+        yPos + 3
+      );
+      doc.setTextColor(0, 0, 0);
+
+      // DESCRIÇÃO
+      doc.text(
+        descricaoLines,
+        colPositions.descricao + 1,
+        yPos + 3
+      );
+
+      // CATEGORIA
+      doc.text(
+        categoriaTexto,
+        colPositions.categoria + 1,
+        yPos + 3
+      );
+
+      // FONTE/FORNECEDOR
+      doc.text(
+        fonteLines,
+        colPositions.fonte + 1,
+        yPos + 3
+      );
+
+      // ORIGEM (se incluído)
+      if (includeOrigin) {
+        doc.text(
+          origemTexto,
+          colPositions.origem + 1,
+          yPos + 3
+        );
+      }
+
+      // MÉTODO
+      doc.text(
+        transaction.method || '-',
+        colPositions.metodo + 1,
+        yPos + 3
+      );
+
+      // VALOR
+      if (transaction.type === 'expense') {
+        doc.setTextColor(220, 38, 38);
+      } else {
+        doc.setTextColor(22, 163, 74);
+      }
+      const valorStr = formatCurrencyBR(transaction.amount);
+      const valorX = colPositions.valor + colWidths.valor - doc.getStringUnitWidth(valorStr) * 6.5 / doc.internal.scaleFactor - 1;
+      doc.text(
+        valorStr,
+        valorX,
+        yPos + 3
+      );
+      doc.setTextColor(0, 0, 0);
+
+      // Borda inferior
+      doc.setDrawColor(230, 230, 230);
+      doc.line(
+        margin,
+        yPos + rowHeight - 1,
+        pageWidth - margin,
+        yPos + rowHeight - 1
+      );
+
+      yPos += rowHeight;
+      rowCount++;
+    }
+    
+    // Rodapé com totais
+    yPos += 3;
+    doc.setDrawColor(100, 100, 100);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    
+    yPos += 3;
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'bold');
+    doc.setTextColor(0, 100, 0);
+    doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos + 4);
+    
+    doc.setTextColor(200, 0, 0);
+    doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 60, yPos + 4);
+    
+    doc.setTextColor(totals.balance >= 0 ? 0 : 200, totals.balance >= 0 ? 100 : 0, 0);
+    doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 115, yPos + 4);
+    
+    doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
+  } catch (error) {
+    console.error('Error exporting to PDF:', error);
+    alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
+  } finally {
+    setExporting('none');
+  }
+}, [transactions, totals, filters, formatDisplayDate]);
 
   // Exportação para Excel - DINÂMICO baseado no includeOrigin
   const exportToExcel = useCallback(() => {
