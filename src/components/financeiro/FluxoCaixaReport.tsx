@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, ChevronUp, BarChart2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
@@ -48,7 +48,7 @@ interface Filters {
   category: 'all' | 'despesas_fixas' | 'despesas_variaveis';
   origem: 'all' | 'idhs' | 'geral' | 'nenhuma';
   includeInvoices: boolean;
-  includeOrigin: boolean; // Novo campo
+  includeOrigin: boolean;
 }
 
 interface FluxoCaixaReportProps {
@@ -67,7 +67,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
   const [error, setError] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(true);
   const [lastQueryTime, setLastQueryTime] = useState<Date | null>(null);
-  
+
   const [filters, setFilters] = useState<Filters>({
     startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
@@ -76,10 +76,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     category: 'all',
     origem: 'all',
     includeInvoices: false,
-    includeOrigin: true, // Valor padrão: true para manter compatibilidade
+    includeOrigin: true,
   });
 
-  // Validar e ajustar datas
   const validateDates = useCallback((): boolean => {
     if (filters.startDate > filters.endDate) {
       setError('Data inicial não pode ser maior que data final');
@@ -88,7 +87,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     return true;
   }, [filters.startDate, filters.endDate]);
 
-  // Buscar transações com paginação e sem limites
   const fetchAllTransactions = useCallback(async (startDate: string, endDate: string) => {
     let allData: Transaction[] = [];
     let page = 0;
@@ -107,590 +105,421 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         .range(from, to)
         .order('transaction_date', { ascending: false });
 
-      if (filters.type !== 'all') {
-        query = query.eq('type', filters.type);
-      }
-
-      if (filters.category !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
+      if (filters.type !== 'all') query = query.eq('type', filters.type);
+      if (filters.category !== 'all' && (filters.type === 'all' || filters.type === 'expense'))
         query = query.eq('category', filters.category);
-      }
-
       if (filters.documentType !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
-        if (filters.documentType === 'com_nota') {
-          query = query.eq('com_nota', true);
-        } else if (filters.documentType === 'so_recibo') {
-          query = query.eq('so_recibo', true);
-        }
+        if (filters.documentType === 'com_nota') query = query.eq('com_nota', true);
+        else if (filters.documentType === 'so_recibo') query = query.eq('so_recibo', true);
       }
-
       if (filters.origem !== 'all' && (filters.type === 'all' || filters.type === 'expense')) {
-        if (filters.origem === 'idhs') {
-          query = query.eq('idhs', true);
-        } else if (filters.origem === 'geral') {
-          query = query.eq('geral', true);
-        } else if (filters.origem === 'nenhuma') {
+        if (filters.origem === 'idhs') query = query.eq('idhs', true);
+        else if (filters.origem === 'geral') query = query.eq('geral', true);
+        else if (filters.origem === 'nenhuma')
           query = query.or('idhs.is.null,idhs.eq.false,and(geral.is.null,geral.eq.false)');
-        }
       }
 
       const { data, error: queryError } = await query;
-
-      if (queryError) {
-        console.error('Error fetching transactions:', queryError);
-        throw new Error(`Erro ao buscar transações: ${queryError.message}`);
-      }
+      if (queryError) throw new Error(`Erro ao buscar transações: ${queryError.message}`);
 
       if (!data || data.length === 0) {
         hasMore = false;
       } else {
         allData = [...allData, ...data];
         page++;
-        
-        if (data.length < pageSize) {
-          hasMore = false;
-        }
+        if (data.length < pageSize) hasMore = false;
       }
     }
-
     return allData;
   }, [filters]);
 
-  // Buscar notas fiscais relacionadas
   const fetchInvoices = useCallback(async (startDate: string, endDate: string) => {
     if (!filters.includeInvoices) return [];
-
     const { data, error: invoiceError } = await supabase
       .from('invoices')
       .select('id, net_value, issue_date, due_date, payment_status, payment_date, paid_value, invoice_number, unit_name')
       .gte('issue_date', startDate)
       .lte('issue_date', endDate)
       .order('issue_date', { ascending: false });
-
-    if (invoiceError) {
-      console.error('Error fetching invoices:', invoiceError);
-      return [];
-    }
-
+    if (invoiceError) return [];
     return data || [];
   }, [filters.includeInvoices]);
 
-  // Geração do relatório com busca completa
   const handleGenerateReport = useCallback(async () => {
-    if (!user) {
-      setError('Usuário não autenticado');
-      return;
-    }
-
+    if (!user) { setError('Usuário não autenticado'); return; }
     if (!validateDates()) return;
-
     setLoading(true);
     setError(null);
-
     try {
-      const startDate = filters.startDate;
-      const endDate = filters.endDate;
-      
-      console.log('📊 Buscando transações de:', startDate, 'até', endDate);
-      console.log('📋 Filtros aplicados:', filters);
-
-      const transactionsData = await fetchAllTransactions(startDate, endDate);
-      
-      console.log(`✅ Encontradas ${transactionsData.length} transações`);
-
-      const invoicesData = await fetchInvoices(startDate, endDate);
-      
-      if (invoicesData.length > 0) {
-        console.log(`📄 Encontradas ${invoicesData.length} notas fiscais`);
-      }
-
-      const processedTransactions = transactionsData.map(transaction => ({
-        ...transaction,
-        amount: Number(transaction.amount),
-        com_nota: transaction.com_nota === true,
-        so_recibo: transaction.so_recibo === true,
-        idhs: transaction.idhs === true,
-        geral: transaction.geral === true,
+      const transactionsData = await fetchAllTransactions(filters.startDate, filters.endDate);
+      const invoicesData = await fetchInvoices(filters.startDate, filters.endDate);
+      const processedTransactions = transactionsData.map(t => ({
+        ...t,
+        amount: Number(t.amount),
+        com_nota: t.com_nota === true,
+        so_recibo: t.so_recibo === true,
+        idhs: t.idhs === true,
+        geral: t.geral === true,
       }));
-
       setTransactions(processedTransactions);
       setInvoices(invoicesData);
       setLastQueryTime(new Date());
-      
-      if (processedTransactions.length === 0 && invoicesData.length === 0) {
+      if (processedTransactions.length === 0 && invoicesData.length === 0)
         setError('Nenhuma transação ou nota fiscal encontrada no período selecionado');
-      }
     } catch (error) {
-      console.error('❌ Erro ao gerar relatório:', error);
       setError(error instanceof Error ? error.message : 'Erro ao gerar relatório');
     } finally {
       setLoading(false);
     }
   }, [user, filters, validateDates, fetchAllTransactions, fetchInvoices]);
 
-  // Formatação de data
   const formatDisplayDate = useCallback((dateString: string): string => {
     try {
-      const datePart = dateString.split('T')[0];
-      const [year, month, day] = datePart.split('-');
+      const [year, month, day] = dateString.split('T')[0].split('-');
       return `${day}/${month}/${year}`;
-    } catch (error) {
-      console.error('Error formatting date:', error);
-      return dateString;
-    }
+    } catch { return dateString; }
   }, []);
 
-  // Carregar relatório inicial
   useEffect(() => {
-    if (user) {
-      handleGenerateReport().finally(() => setInitialLoading(false));
-    }
+    if (user) handleGenerateReport().finally(() => setInitialLoading(false));
   }, [user, handleGenerateReport]);
 
-  // Cálculos com useMemo
   const totals = useMemo(() => {
-    const income = transactions
-      .filter(t => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const expense = transactions
-      .filter(t => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const invoiceTotal = invoices.reduce((sum, inv) => sum + inv.net_value, 0);
-    
-    const balance = income - expense;
-    
-    return { income, expense, balance, invoiceTotal };
+    const income = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const expense = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const invoiceTotal = invoices.reduce((s, i) => s + i.net_value, 0);
+    return { income, expense, balance: income - expense, invoiceTotal };
   }, [transactions, invoices]);
 
   const statistics = useMemo(() => {
     const expensesByCategory = transactions
       .filter(t => t.type === 'expense')
-      .reduce((acc, t) => {
-        const category = t.category || 'sem_categoria';
-        acc[category] = (acc[category] || 0) + t.amount;
-        return acc;
-      }, {} as Record<string, number>);
-
+      .reduce((acc, t) => { const c = t.category || 'sem_categoria'; acc[c] = (acc[c] || 0) + t.amount; return acc; }, {} as Record<string, number>);
     const expensesByOrigin = {
-      idhs: transactions.filter(t => t.type === 'expense' && t.idhs).reduce((sum, t) => sum + t.amount, 0),
-      geral: transactions.filter(t => t.type === 'expense' && t.geral).reduce((sum, t) => sum + t.amount, 0),
-      outros: transactions.filter(t => t.type === 'expense' && !t.idhs && !t.geral).reduce((sum, t) => sum + t.amount, 0),
+      idhs: transactions.filter(t => t.type === 'expense' && t.idhs).reduce((s, t) => s + t.amount, 0),
+      geral: transactions.filter(t => t.type === 'expense' && t.geral).reduce((s, t) => s + t.amount, 0),
+      outros: transactions.filter(t => t.type === 'expense' && !t.idhs && !t.geral).reduce((s, t) => s + t.amount, 0),
     };
-
     const expensesByMethod = transactions
       .filter(t => t.type === 'expense')
-      .reduce((acc, t) => {
-        acc[t.method] = (acc[t.method] || 0) + t.amount;
-        return acc;
-      }, {} as Record<string, number>);
-
+      .reduce((acc, t) => { acc[t.method] = (acc[t.method] || 0) + t.amount; return acc; }, {} as Record<string, number>);
     return { expensesByCategory, expensesByOrigin, expensesByMethod };
   }, [transactions]);
 
-  // Reset de filtros
   const resetFilters = useCallback(() => {
     setFilters({
       startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
       endDate: new Date().toISOString().split('T')[0],
-      type: 'all',
-      documentType: 'all',
-      category: 'all',
-      origem: 'all',
-      includeInvoices: false,
-      includeOrigin: true,
+      type: 'all', documentType: 'all', category: 'all', origem: 'all',
+      includeInvoices: false, includeOrigin: true,
     });
     setError(null);
   }, []);
 
-  // Exportação para PDF com 8 ou 7 colunas dependendo do checkbox
-// Exportação para PDF com 8 ou 7 colunas dependendo do checkbox
-const exportToPDF = useCallback(async () => {
-  if (transactions.length === 0 && invoices.length === 0) {
-    alert('Não há dados para exportar');
-    return;
-  }
-  
-  setExporting('pdf');
-  
-  try {
-    const doc = new jsPDF({ 
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4'
-    });
-    
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 8;
-    let yPos = 20;
-    
-    // Adicionar logo
+  // ─── PDF EXPORT ───────────────────────────────────────────────────────────────
+  const exportToPDF = useCallback(async () => {
+    if (transactions.length === 0 && invoices.length === 0) { alert('Não há dados para exportar'); return; }
+    setExporting('pdf');
     try {
-      const logoWidth = 35;
-      const logoHeight = 17;
-      const logoX = (pageWidth - logoWidth) / 2;
-      doc.addImage(logoImg, 'PNG', logoX, 5, logoWidth, logoHeight);
-      yPos = 28;
-    } catch (imgError) {
-      console.warn('Error adding logo to PDF:', imgError);
-      yPos = 20;
-    }
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 10;
+      let yPos = 8;
 
-    // Título
-    doc.setFontSize(18);
-    doc.setTextColor(33, 33, 33);
-    doc.setFont(undefined, 'bold');
-    doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, yPos, { align: 'center' });
-    yPos += 7;
+      // ── Função de cabeçalho de página (chamada em cada nova página)
+      const drawPageHeader = (isFirstPage: boolean) => {
+        // Fundo azul escuro no topo
+        doc.setFillColor(15, 23, 42);
+        doc.rect(0, 0, pageWidth, isFirstPage ? 38 : 16, 'F');
 
-    // Período
-    doc.setFontSize(10);
-    doc.setTextColor(100, 100, 100);
-    doc.setFont(undefined, 'normal');
-    doc.text(
-      `Período: ${formatDisplayDate(filters.startDate)} a ${formatDisplayDate(filters.endDate)}`,
-      pageWidth / 2,
-      yPos,
-      { align: 'center' }
-    );
-    yPos += 6;
+        if (isFirstPage) {
+          // Logo centralizada
+          try {
+            const logoW = 32, logoH = 15;
+            doc.addImage(logoImg, 'PNG', margin, 4, logoW, logoH);
+          } catch {}
 
-    // Data da geração
-    doc.setFontSize(8);
-    doc.text(
-      `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
-      pageWidth - margin,
-      10,
-      { align: 'right' }
-    );
+          // Título
+          doc.setFontSize(15);
+          doc.setTextColor(255, 255, 255);
+          doc.setFont(undefined, 'bold');
+          doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, 13, { align: 'center' });
 
-    // Cards de resumo
-    const cardWidth = (pageWidth - (margin * 2) - 8) / 3;
-    const cardHeight = 20;
-    const cardSpacing = 4;
-    
-    // Card Entradas
-    doc.setFillColor(220, 255, 220);
-    doc.rect(margin, yPos, cardWidth, cardHeight, 'F');
-    doc.setFontSize(9);
-    doc.setTextColor(0, 100, 0);
-    doc.setFont(undefined, 'bold');
-    doc.text('Total Entradas', margin + 3, yPos + 6);
-    doc.setFontSize(11);
-    doc.text(formatCurrencyBR(totals.income), margin + 3, yPos + 15);
-    
-    // Card Saídas
-    doc.setFillColor(255, 220, 220);
-    doc.rect(margin + cardWidth + cardSpacing, yPos, cardWidth, cardHeight, 'F');
-    doc.setTextColor(200, 0, 0);
-    doc.setFontSize(9);
-    doc.text('Total Saídas', margin + cardWidth + cardSpacing + 3, yPos + 6);
-    doc.setFontSize(11);
-    doc.text(formatCurrencyBR(totals.expense), margin + cardWidth + cardSpacing + 3, yPos + 15);
-    
-    // Card Saldo
-    const balanceColor = totals.balance >= 0 ? [0, 100, 0] : [200, 0, 0];
-    doc.setFillColor(totals.balance >= 0 ? 230 : 255, totals.balance >= 0 ? 255 : 230, totals.balance >= 0 ? 230 : 230);
-    doc.rect(margin + (cardWidth + cardSpacing) * 2, yPos, cardWidth, cardHeight, 'F');
-    doc.setTextColor(balanceColor[0], balanceColor[1], balanceColor[2]);
-    doc.setFontSize(9);
-    doc.text('Saldo', margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 6);
-    doc.setFontSize(11);
-    doc.text(formatCurrencyBR(totals.balance), margin + (cardWidth + cardSpacing) * 2 + 3, yPos + 15);
-    
-    yPos += cardHeight + 10;
-    
-    // Configuração das colunas - DINÂMICO baseado no includeOrigin
-    const includeOrigin = filters.includeOrigin;
-    const tableWidth = pageWidth - (margin * 2);
-    
-    // Definir larguras das colunas - AJUSTADAS para caber na página
-    let colWidths: any;
-    
-    if (includeOrigin) {
-      // 8 colunas (com origem) - AJUSTADO
-      colWidths = {
-        data: 20,
-        tipo: 16,
-        descricao: 45,
-        categoria: 22,
-        fonte: 32,
-        origem: 16,
-        metodo: 20,
-        valor: 26
+          // Subtítulo / período
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'normal');
+          doc.setTextColor(148, 163, 184);
+          doc.text(
+            `Período: ${formatDisplayDate(filters.startDate)} — ${formatDisplayDate(filters.endDate)}   |   Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+            pageWidth / 2, 20, { align: 'center' }
+          );
+
+          // Linha separadora sutil
+          doc.setDrawColor(30, 41, 59);
+          doc.setLineWidth(0.3);
+          doc.line(margin, 24, pageWidth - margin, 24);
+
+          // ── Cards de resumo
+          const cardY = 27;
+          const cardH = 9;
+          const cardW = (pageWidth - margin * 2 - 8) / 3;
+          const cardSpacing = 4;
+
+          // Entrada
+          doc.setFillColor(20, 83, 45);
+          doc.roundedRect(margin, cardY, cardW, cardH, 1.5, 1.5, 'F');
+          doc.setFontSize(6);
+          doc.setTextColor(134, 239, 172);
+          doc.setFont(undefined, 'normal');
+          doc.text('ENTRADAS', margin + 3, cardY + 3.5);
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.setTextColor(220, 252, 231);
+          doc.text(formatCurrencyBR(totals.income), margin + 3, cardY + 7.5);
+
+          // Saída
+          const cx2 = margin + cardW + cardSpacing;
+          doc.setFillColor(127, 29, 29);
+          doc.roundedRect(cx2, cardY, cardW, cardH, 1.5, 1.5, 'F');
+          doc.setFontSize(6);
+          doc.setTextColor(252, 165, 165);
+          doc.setFont(undefined, 'normal');
+          doc.text('SAÍDAS', cx2 + 3, cardY + 3.5);
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.setTextColor(254, 226, 226);
+          doc.text(formatCurrencyBR(totals.expense), cx2 + 3, cardY + 7.5);
+
+          // Saldo
+          const cx3 = margin + (cardW + cardSpacing) * 2;
+          const isPositive = totals.balance >= 0;
+          doc.setFillColor(isPositive ? 12 : 120, isPositive ? 74 : 53, isPositive ? 110 : 15);
+          doc.roundedRect(cx3, cardY, cardW, cardH, 1.5, 1.5, 'F');
+          doc.setFontSize(6);
+          doc.setFont(undefined, 'normal');
+          doc.setTextColor(isPositive ? 196 : 253, isPositive ? 181 : 230, isPositive ? 253 : 138);
+          doc.text('SALDO', cx3 + 3, cardY + 3.5);
+          doc.setFontSize(8);
+          doc.setFont(undefined, 'bold');
+          doc.setTextColor(isPositive ? 233 : 254, isPositive ? 213 : 240, isPositive ? 255 : 138);
+          doc.text(formatCurrencyBR(totals.balance), cx3 + 3, cardY + 7.5);
+
+          yPos = 42;
+        } else {
+          // Páginas seguintes: cabeçalho compacto
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.setFont(undefined, 'normal');
+          doc.text('FLUXO DE CAIXA', margin, 10);
+          doc.text(
+            `${formatDisplayDate(filters.startDate)} — ${formatDisplayDate(filters.endDate)}`,
+            pageWidth / 2, 10, { align: 'center' }
+          );
+          doc.text(`Pág. ${doc.internal.pages.length - 1}`, pageWidth - margin, 10, { align: 'right' });
+          yPos = 18;
+        }
       };
-    } else {
-      // 7 colunas (sem origem) - AJUSTADO
-      colWidths = {
-        data: 22,
-        tipo: 18,
-        descricao: 52,
-        categoria: 26,
-        fonte: 36,
-        metodo: 22,
-        valor: 28
-      };
-    }
 
-    // Verificar se a soma das larguras não excede a largura da tabela
-    const totalWidth = Object.values(colWidths).reduce((sum: number, w: number) => sum + w, 0);
-    const gap = 1.5; // Reduzido o gap
-    const totalWithGaps = totalWidth + (Object.keys(colWidths).length - 1) * gap;
-    
-    // Se exceder, ajustar proporcionalmente
-    if (totalWithGaps > tableWidth) {
-      const scaleFactor = (tableWidth - (Object.keys(colWidths).length - 1) * gap) / totalWidth;
-      Object.keys(colWidths).forEach(key => {
-        colWidths[key] = Math.floor(colWidths[key] * scaleFactor);
-      });
-    }
-    
-    // Calcular posições das colunas
-    const colPositions: any = {};
-    let currentX = margin;
-    Object.keys(colWidths).forEach((key, index) => {
-      colPositions[key] = currentX;
-      currentX += colWidths[key] + gap;
-    });
+      // ── Configuração de colunas
+      const includeOrigin = filters.includeOrigin;
+      const tableWidth = pageWidth - margin * 2;
+      let colWidths: Record<string, number>;
 
-    // Função para desenhar cabeçalho
-    const drawTableHeader = () => {
-      doc.setFillColor(37, 99, 235);
-      doc.setTextColor(255, 255, 255);
-      doc.setFont(undefined, 'bold');
-      doc.setFontSize(7);
-
-      const headers = includeOrigin ? [
-        { key: 'data', label: 'DATA' },
-        { key: 'tipo', label: 'TIPO' },
-        { key: 'descricao', label: 'DESCRIÇÃO' },
-        { key: 'categoria', label: 'CATEGORIA' },
-        { key: 'fonte', label: 'FONTE/FORNECEDOR' },
-        { key: 'origem', label: 'ORIGEM' },
-        { key: 'metodo', label: 'MÉTODO' },
-        { key: 'valor', label: 'VALOR (R$)' },
-      ] : [
-        { key: 'data', label: 'DATA' },
-        { key: 'tipo', label: 'TIPO' },
-        { key: 'descricao', label: 'DESCRIÇÃO' },
-        { key: 'categoria', label: 'CATEGORIA' },
-        { key: 'fonte', label: 'FONTE/FORNECEDOR' },
-        { key: 'metodo', label: 'MÉTODO' },
-        { key: 'valor', label: 'VALOR (R$)' },
-      ];
-
-      const headerHeight = 8;
-      headers.forEach((header) => {
-        const x = colPositions[header.key];
-        const width = colWidths[header.key];
-
-        doc.rect(x, yPos, width, headerHeight, 'F');
-        doc.text(
-          header.label,
-          x + 1,
-          yPos + 5.5
-        );
-      });
-
-      yPos += headerHeight;
-      doc.setTextColor(0, 0, 0);
-      doc.setFont(undefined, 'normal');
-      doc.setFontSize(6.5);
-    };
-
-    drawTableHeader();
-
-    // Dados da tabela
-    let rowCount = 0;
-
-    for (const transaction of transactions) {
-      // Nova página
-      if (yPos > pageHeight - 15) {
-        doc.addPage();
-        yPos = 15;
-        drawTableHeader();
-      }
-
-      const origemTexto =
-        transaction.type === 'expense'
-          ? transaction.idhs
-            ? 'IDHS'
-            : transaction.geral
-            ? 'Geral'
-            : '-'
-          : '-';
-
-      const fonteTexto =
-        transaction.type === 'income'
-          ? transaction.fonte_pagadora || '-'
-          : transaction.fornecedor || '-';
-
-      const tipoTexto =
-        transaction.type === 'income'
-          ? 'Entrada'
-          : 'Saída';
-
-      const categoriaTexto =
-        transaction.category
-          ? transaction.category.replace('_', ' ')
-          : '-';
-
-      // Quebra de linhas - AJUSTADO para textos mais longos
-      const descricaoLines = doc.splitTextToSize(
-        transaction.description || '-',
-        colWidths.descricao - 3
-      );
-
-      const fonteLines = doc.splitTextToSize(
-        fonteTexto,
-        colWidths.fonte - 3
-      );
-
-      const maxLines = Math.max(
-        descricaoLines.length,
-        fonteLines.length,
-        1
-      );
-
-      const rowHeight = Math.max((maxLines * 3.5) + 3, 6);
-
-      // Fundo alternado
-      if (rowCount % 2 === 0) {
-        doc.setFillColor(248, 250, 252);
-        doc.rect(
-          margin,
-          yPos - 2,
-          tableWidth,
-          rowHeight,
-          'F'
-        );
-      }
-
-      // DATA
-      doc.text(
-        formatDisplayDate(transaction.transaction_date),
-        colPositions.data + 1,
-        yPos + 3
-      );
-
-      // TIPO
-      if (transaction.type === 'expense') {
-        doc.setTextColor(220, 38, 38);
-      } else {
-        doc.setTextColor(22, 163, 74);
-      }
-      doc.text(
-        tipoTexto,
-        colPositions.tipo + 1,
-        yPos + 3
-      );
-      doc.setTextColor(0, 0, 0);
-
-      // DESCRIÇÃO
-      doc.text(
-        descricaoLines,
-        colPositions.descricao + 1,
-        yPos + 3
-      );
-
-      // CATEGORIA
-      doc.text(
-        categoriaTexto,
-        colPositions.categoria + 1,
-        yPos + 3
-      );
-
-      // FONTE/FORNECEDOR
-      doc.text(
-        fonteLines,
-        colPositions.fonte + 1,
-        yPos + 3
-      );
-
-      // ORIGEM (se incluído)
       if (includeOrigin) {
-        doc.text(
-          origemTexto,
-          colPositions.origem + 1,
-          yPos + 3
-        );
-      }
-
-      // MÉTODO
-      doc.text(
-        transaction.method || '-',
-        colPositions.metodo + 1,
-        yPos + 3
-      );
-
-      // VALOR
-      if (transaction.type === 'expense') {
-        doc.setTextColor(220, 38, 38);
+        colWidths = { data: 20, tipo: 15, descricao: 46, categoria: 22, fonte: 32, origem: 16, metodo: 20, valor: 26 };
       } else {
-        doc.setTextColor(22, 163, 74);
+        colWidths = { data: 22, tipo: 17, descricao: 54, categoria: 26, fonte: 38, metodo: 22, valor: 28 };
       }
-      const valorStr = formatCurrencyBR(transaction.amount);
-      const valorX = colPositions.valor + colWidths.valor - doc.getStringUnitWidth(valorStr) * 6.5 / doc.internal.scaleFactor - 1;
-      doc.text(
-        valorStr,
-        valorX,
-        yPos + 3
-      );
-      doc.setTextColor(0, 0, 0);
 
-      // Borda inferior
-      doc.setDrawColor(230, 230, 230);
-      doc.line(
-        margin,
-        yPos + rowHeight - 1,
-        pageWidth - margin,
-        yPos + rowHeight - 1
-      );
+      const gap = 1;
+      const totalW = Object.values(colWidths).reduce((s: number, w: number) => s + w, 0);
+      const totalWithGaps = totalW + (Object.keys(colWidths).length - 1) * gap;
+      if (totalWithGaps > tableWidth) {
+        const scale = (tableWidth - (Object.keys(colWidths).length - 1) * gap) / totalW;
+        Object.keys(colWidths).forEach(k => { colWidths[k] = Math.floor(colWidths[k] * scale); });
+      }
 
-      yPos += rowHeight;
-      rowCount++;
+      const colPos: Record<string, number> = {};
+      let cx = margin;
+      Object.keys(colWidths).forEach(k => { colPos[k] = cx; cx += colWidths[k] + gap; });
+
+      // ── Cabeçalho da tabela (repetido em cada página)
+      const HEADER_H = 9;
+      const drawTableHeader = () => {
+        // Fundo do cabeçalho
+        doc.setFillColor(30, 41, 59);
+        doc.rect(margin, yPos, tableWidth, HEADER_H, 'F');
+
+        const headers = includeOrigin
+          ? [
+              { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
+              { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
+              { k: 'origem', l: 'ORIGEM' }, { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+            ]
+          : [
+              { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
+              { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
+              { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+            ];
+
+        doc.setFontSize(6.2);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(148, 163, 184);
+
+        headers.forEach(h => {
+          // Linha vertical separadora sutil
+          doc.setDrawColor(51, 65, 85);
+          doc.setLineWidth(0.2);
+          if (h.k !== 'data') doc.line(colPos[h.k] - gap / 2, yPos + 1, colPos[h.k] - gap / 2, yPos + HEADER_H - 1);
+          doc.text(h.l, colPos[h.k] + 1.5, yPos + 5.8);
+        });
+
+        yPos += HEADER_H;
+        doc.setTextColor(0, 0, 0);
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(6.5);
+      };
+
+      // ── Iniciar primeira página
+      drawPageHeader(true);
+      drawTableHeader();
+
+      // ── Linhas de dados
+      let rowCount = 0;
+      for (const t of transactions) {
+        const fonte = t.type === 'income' ? t.fonte_pagadora || '—' : t.fornecedor || '—';
+        const origemTxt = t.type === 'expense' ? (t.idhs ? 'IDHS' : t.geral ? 'Geral' : '—') : '—';
+        const descLines = doc.splitTextToSize(t.description || '—', colWidths.descricao - 3);
+        const fonteLines = doc.splitTextToSize(fonte, colWidths.fonte - 3);
+        const maxLines = Math.max(descLines.length, fonteLines.length, 1);
+        const rowH = Math.max(maxLines * 3.6 + 3, 7);
+
+        // Nova página?
+        if (yPos + rowH > pageHeight - 14) {
+          // Rodapé da página atual
+          doc.setFillColor(15, 23, 42);
+          doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
+          doc.setFontSize(6);
+          doc.setTextColor(100, 116, 139);
+          doc.setFont(undefined, 'normal');
+          doc.text(`Entradas: ${formatCurrencyBR(totals.income)}   Saídas: ${formatCurrencyBR(totals.expense)}   Saldo: ${formatCurrencyBR(totals.balance)}`, margin, pageHeight - 4);
+          doc.text(`Página ${doc.internal.pages.length - 1}`, pageWidth - margin, pageHeight - 4, { align: 'right' });
+
+          doc.addPage();
+          drawPageHeader(false);
+          drawTableHeader();
+          rowCount = 0;
+        }
+
+        // Fundo alternado
+        if (rowCount % 2 === 0) {
+          doc.setFillColor(248, 250, 252);
+        } else {
+          doc.setFillColor(255, 255, 255);
+        }
+        doc.rect(margin, yPos, tableWidth, rowH, 'F');
+
+        // Borda esquerda colorida por tipo
+        if (t.type === 'income') {
+          doc.setFillColor(22, 163, 74);
+        } else {
+          doc.setFillColor(220, 38, 38);
+        }
+        doc.rect(margin, yPos, 1.5, rowH, 'F');
+
+        doc.setFontSize(6.5);
+        doc.setFont(undefined, 'normal');
+
+        // DATA
+        doc.setTextColor(71, 85, 105);
+        doc.text(formatDisplayDate(t.transaction_date), colPos.data + 2, yPos + 4.5);
+
+        // TIPO badge
+        if (t.type === 'income') {
+          doc.setTextColor(21, 128, 61);
+          doc.setFont(undefined, 'bold');
+        } else {
+          doc.setTextColor(185, 28, 28);
+          doc.setFont(undefined, 'bold');
+        }
+        doc.text(t.type === 'income' ? 'Entrada' : 'Saída', colPos.tipo + 1.5, yPos + 4.5);
+        doc.setFont(undefined, 'normal');
+
+        // DESCRIÇÃO
+        doc.setTextColor(30, 41, 59);
+        doc.text(descLines, colPos.descricao + 1.5, yPos + 4.5);
+
+        // CATEGORIA
+        doc.setTextColor(100, 116, 139);
+        doc.text(t.category ? t.category.replace('_', ' ') : '—', colPos.categoria + 1.5, yPos + 4.5);
+
+        // FONTE
+        doc.setTextColor(71, 85, 105);
+        doc.text(fonteLines, colPos.fonte + 1.5, yPos + 4.5);
+
+        // ORIGEM
+        if (includeOrigin) {
+          doc.setTextColor(99, 102, 241);
+          doc.setFont(undefined, origemTxt !== '—' ? 'bold' : 'normal');
+          doc.text(origemTxt, colPos.origem + 1.5, yPos + 4.5);
+          doc.setFont(undefined, 'normal');
+        }
+
+        // MÉTODO
+        doc.setTextColor(71, 85, 105);
+        doc.text(t.method || '—', colPos.metodo + 1.5, yPos + 4.5);
+
+        // VALOR (alinhado à direita)
+        const valorStr = formatCurrencyBR(t.amount);
+        const valorX = colPos.valor + colWidths.valor - 2;
+        if (t.type === 'income') doc.setTextColor(21, 128, 61);
+        else doc.setTextColor(185, 28, 28);
+        doc.setFont(undefined, 'bold');
+        doc.text(valorStr, valorX, yPos + 4.5, { align: 'right' });
+        doc.setFont(undefined, 'normal');
+
+        // Separador inferior
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.15);
+        doc.line(margin, yPos + rowH, pageWidth - margin, yPos + rowH);
+
+        yPos += rowH;
+        rowCount++;
+      }
+
+      // ── Rodapé da última página
+      doc.setFillColor(15, 23, 42);
+      doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
+      doc.setFontSize(6.5);
+      doc.setFont(undefined, 'bold');
+
+      doc.setTextColor(134, 239, 172);
+      doc.text(`Entradas: ${formatCurrencyBR(totals.income)}`, margin + 2, pageHeight - 4);
+      doc.setTextColor(252, 165, 165);
+      doc.text(`Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 55, pageHeight - 4);
+      const isPositive = totals.balance >= 0;
+      doc.setTextColor(isPositive ? 196 : 253, isPositive ? 181 : 186, isPositive ? 253 : 12);
+      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 108, pageHeight - 4);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont(undefined, 'normal');
+      doc.text(`Página ${doc.internal.pages.length - 1}`, pageWidth - margin, pageHeight - 4, { align: 'right' });
+
+      doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
+    } catch (err) {
+      console.error('Error exporting to PDF:', err);
+      alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
+    } finally {
+      setExporting('none');
     }
-    
-    // Rodapé com totais
-    yPos += 3;
-    doc.setDrawColor(100, 100, 100);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    
-    yPos += 3;
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'bold');
-    doc.setTextColor(0, 100, 0);
-    doc.text(`Total Entradas: ${formatCurrencyBR(totals.income)}`, margin, yPos + 4);
-    
-    doc.setTextColor(200, 0, 0);
-    doc.text(`Total Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 60, yPos + 4);
-    
-    doc.setTextColor(totals.balance >= 0 ? 0 : 200, totals.balance >= 0 ? 100 : 0, 0);
-    doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 115, yPos + 4);
-    
-    doc.save(`relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.pdf`);
-  } catch (error) {
-    console.error('Error exporting to PDF:', error);
-    alert('Erro ao exportar para PDF. Verifique o console para mais detalhes.');
-  } finally {
-    setExporting('none');
-  }
-}, [transactions, totals, filters, formatDisplayDate]);
+  }, [transactions, totals, filters, formatDisplayDate]);
 
-  // Exportação para Excel - DINÂMICO baseado no includeOrigin
+  // ─── EXCEL EXPORT (inalterado na lógica, só organização) ─────────────────────
   const exportToExcel = useCallback(() => {
-    if (transactions.length === 0 && invoices.length === 0) {
-      alert('Não há dados para exportar');
-      return;
-    }
-    
+    if (transactions.length === 0 && invoices.length === 0) { alert('Não há dados para exportar'); return; }
     setExporting('excel');
-    
     try {
       const workbook = XLSX.utils.book_new();
-      
-      // Aba de Resumo Executivo
       const summaryData = [
         ['RELATÓRIO DE FLUXO DE CAIXA'],
         [`Data de geração: ${new Date().toLocaleString('pt-BR')}`],
@@ -714,203 +543,169 @@ const exportToPDF = useCallback(async () => {
         ['Outras', formatCurrencyBR(statistics.expensesByOrigin.outros)],
         [''],
         ['DESPESAS POR CATEGORIA'],
-        ...Object.entries(statistics.expensesByCategory).map(([cat, val]) => [cat.replace('_', ' '), formatCurrencyBR(val)]),
+        ...Object.entries(statistics.expensesByCategory).map(([c, v]) => [c.replace('_', ' '), formatCurrencyBR(v)]),
         [''],
         ['DESPESAS POR MÉTODO'],
-        ...Object.entries(statistics.expensesByMethod).map(([method, value]) => [method, formatCurrencyBR(value)]),
+        ...Object.entries(statistics.expensesByMethod).map(([m, v]) => [m, formatCurrencyBR(v)]),
       ];
-      
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
       summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
-      
-      // Aba de Transações - DINÂMICA
+
       const includeOrigin = filters.includeOrigin;
-      
-      const transactionsData = transactions.map(transaction => {
-        const baseData: any = {
-          Data: formatDisplayDate(transaction.transaction_date),
-          Tipo: transaction.type === 'income' ? 'Entrada' : 'Saída',
-          Descrição: transaction.description,
-          Categoria: transaction.category ? transaction.category.replace('_', ' ') : '-',
-          'Fonte/Fornecedor': transaction.type === 'income' ? transaction.fonte_pagadora || '-' : transaction.fornecedor || '-',
-          Método: transaction.method,
-          'Valor (R$)': transaction.amount,
+      const transactionsData = transactions.map(t => {
+        const base: any = {
+          Data: formatDisplayDate(t.transaction_date),
+          Tipo: t.type === 'income' ? 'Entrada' : 'Saída',
+          Descrição: t.description,
+          Categoria: t.category ? t.category.replace('_', ' ') : '-',
+          'Fonte/Fornecedor': t.type === 'income' ? t.fonte_pagadora || '-' : t.fornecedor || '-',
+          Método: t.method,
+          'Valor (R$)': t.amount,
         };
-
-        // Adicionar origem apenas se incluído
-        if (includeOrigin) {
-          baseData.Origem = transaction.type === 'expense' 
-            ? (transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-') 
-            : '-';
-        }
-
-        return baseData;
+        if (includeOrigin) base.Origem = t.type === 'expense' ? (t.idhs ? 'IDHS' : t.geral ? 'Geral' : '-') : '-';
+        return base;
       });
-      
       const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
-      
-      // Definir larguras das colunas baseado no includeOrigin
-      const colWidths = includeOrigin ? [
-        { wch: 12 }, // Data
-        { wch: 10 }, // Tipo
-        { wch: 50 }, // Descrição
-        { wch: 20 }, // Categoria
-        { wch: 25 }, // Fonte/Fornecedor
-        { wch: 10 }, // Origem
-        { wch: 15 }, // Método
-        { wch: 15 }  // Valor
-      ] : [
-        { wch: 12 }, // Data
-        { wch: 10 }, // Tipo
-        { wch: 50 }, // Descrição
-        { wch: 20 }, // Categoria
-        { wch: 25 }, // Fonte/Fornecedor
-        { wch: 15 }, // Método
-        { wch: 15 }  // Valor
-      ];
-      
-      transactionsSheet['!cols'] = colWidths;
+      transactionsSheet['!cols'] = includeOrigin
+        ? [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }]
+        : [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
-      
-      // Aba de Notas Fiscais
+
       if (invoices.length > 0 && filters.includeInvoices) {
-        const invoicesData = invoices.map(invoice => ({
-          'Número NF': invoice.invoice_number,
-          'Unidade': invoice.unit_name,
-          'Data Emissão': formatDisplayDate(invoice.issue_date),
-          'Data Vencimento': formatDisplayDate(invoice.due_date),
-          'Valor (R$)': invoice.net_value,
-          'Status': invoice.payment_status,
-          'Data Pagamento': invoice.payment_date ? formatDisplayDate(invoice.payment_date) : '-',
-          'Valor Pago (R$)': invoice.paid_value || '-',
+        const invoicesData = invoices.map(inv => ({
+          'Número NF': inv.invoice_number,
+          'Unidade': inv.unit_name,
+          'Data Emissão': formatDisplayDate(inv.issue_date),
+          'Data Vencimento': formatDisplayDate(inv.due_date),
+          'Valor (R$)': inv.net_value,
+          'Status': inv.payment_status,
+          'Data Pagamento': inv.payment_date ? formatDisplayDate(inv.payment_date) : '-',
+          'Valor Pago (R$)': inv.paid_value || '-',
         }));
-        
         const invoicesSheet = XLSX.utils.json_to_sheet(invoicesData);
-        invoicesSheet['!cols'] = [
-          { wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, 
-          { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }
-        ];
+        invoicesSheet['!cols'] = [{ wch: 15 }, { wch: 25 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }];
         XLSX.utils.book_append_sheet(workbook, invoicesSheet, 'Notas Fiscais');
       }
-      
       XLSX.writeFile(workbook, `relatorio-fluxo-caixa-${filters.startDate}-a-${filters.endDate}.xlsx`);
-    } catch (error) {
-      console.error('Error exporting to Excel:', error);
-      alert('Erro ao exportar para Excel. Verifique o console para mais detalhes.');
+    } catch (err) {
+      console.error('Error exporting to Excel:', err);
+      alert('Erro ao exportar para Excel.');
     } finally {
       setExporting('none');
     }
   }, [transactions, invoices, totals, statistics, filters, formatDisplayDate]);
 
+  // ─── LOADING INICIAL ─────────────────────────────────────────────────────────
   if (initialLoading) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-slate-600 font-medium">Carregando relatório...</p>
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="bg-white rounded-2xl shadow-2xl p-10 flex flex-col items-center gap-4">
+          <div className="w-14 h-14 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
+          <p className="text-slate-600 font-medium text-sm">Carregando relatório…</p>
         </div>
       </div>
     );
   }
 
+  const incomeCount = transactions.filter(t => t.type === 'income').length;
+  const expenseCount = transactions.filter(t => t.type === 'expense').length;
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-7xl w-full my-8 flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="bg-white rounded-t-2xl border-b border-slate-200 px-6 py-4 flex-shrink-0">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                Fluxo de Caixa
-              </h3>
-              <p className="text-sm text-slate-500 mt-1">
-                Relatório completo de movimentações financeiras
-              </p>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-7xl my-6 flex flex-col max-h-[92vh]">
+
+        {/* ── HEADER ── */}
+        <div className="flex-shrink-0 bg-gradient-to-r from-slate-900 to-slate-800 rounded-t-2xl px-6 py-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                <BarChart2 className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-white leading-tight">Fluxo de Caixa</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Movimentações financeiras do período</p>
+              </div>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-slate-100 rounded-xl transition-all duration-200"
-              aria-label="Fechar"
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
             >
-              <X className="w-5 h-5 text-slate-500" />
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Conteúdo rolável */}
+        {/* ── BODY (scrollable) ── */}
         <div className="flex-1 overflow-y-auto">
-          {/* Filtros */}
-          <div className="border-b border-slate-200">
+
+          {/* ── FILTROS ── */}
+          <div className="border-b border-slate-100">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className="w-full px-6 py-3 flex justify-between items-center hover:bg-slate-50 transition-colors"
+              className="w-full px-6 py-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors group"
             >
               <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-slate-500" />
-                <span className="font-medium text-slate-700">Filtros Avançados</span>
-                {Object.values(filters).some(v => v !== 'all' && v !== false && 
-                  !(typeof v === 'string' && (v === filters.startDate || v === filters.endDate))) && (
-                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
-                    Filtros ativos
+                <Filter className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                <span className="text-sm font-medium text-slate-700">Filtros Avançados</span>
+                {Object.values(filters).some(v =>
+                  v !== 'all' && v !== false &&
+                  !(typeof v === 'string' && (v === filters.startDate || v === filters.endDate))
+                ) && (
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
+                    Ativos
                   </span>
                 )}
               </div>
-              {showFilters ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              {showFilters
+                ? <ChevronUp className="w-4 h-4 text-slate-400" />
+                : <ChevronDown className="w-4 h-4 text-slate-400" />}
             </button>
-            
+
             {showFilters && (
-              <div className="px-6 pb-6 space-y-4">
+              <div className="px-6 pt-2 pb-6 space-y-4 bg-slate-50/50">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Data Inicial */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-slate-400" />
-                      Data Inicial
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                      <Calendar className="w-3.5 h-3.5" /> Data Inicial
                     </label>
                     <input
                       type="date"
                       value={filters.startDate}
-                      onChange={(e) => {
-                        setFilters({ ...filters, startDate: e.target.value });
-                        setError(null);
-                      }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                      onChange={e => { setFilters({ ...filters, startDate: e.target.value }); setError(null); }}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
                     />
                   </div>
 
+                  {/* Data Final */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2 flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-slate-400" />
-                      Data Final
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                      <Calendar className="w-3.5 h-3.5" /> Data Final
                     </label>
                     <input
                       type="date"
                       value={filters.endDate}
-                      onChange={(e) => {
-                        setFilters({ ...filters, endDate: e.target.value });
-                        setError(null);
-                      }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                      onChange={e => { setFilters({ ...filters, endDate: e.target.value }); setError(null); }}
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
                     />
                   </div>
 
+                  {/* Tipo */}
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Tipo</label>
                     <select
                       value={filters.type}
-                      onChange={(e) => {
-                        setFilters({ 
-                          ...filters, 
+                      onChange={e => {
+                        setFilters({
+                          ...filters,
                           type: e.target.value as Filters['type'],
-                          ...(e.target.value === 'income' && {
-                            category: 'all',
-                            documentType: 'all',
-                            origem: 'all'
-                          })
+                          ...(e.target.value === 'income' && { category: 'all', documentType: 'all', origem: 'all' }),
                         });
                         setError(null);
                       }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     >
                       <option value="all">Todos</option>
                       <option value="income">Apenas Entradas</option>
@@ -918,72 +713,74 @@ const exportToPDF = useCallback(async () => {
                     </select>
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={filters.includeInvoices}
-                        onChange={(e) => setFilters({ ...filters, includeInvoices: e.target.checked })}
-                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-slate-700">Incluir Notas Fiscais</span>
+                  {/* Checkboxes */}
+                  <div className="flex flex-col justify-end gap-2.5">
+                    <label className="flex items-center gap-2.5 cursor-pointer group">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={filters.includeInvoices}
+                          onChange={e => setFilters({ ...filters, includeInvoices: e.target.checked })}
+                          className="sr-only"
+                        />
+                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeInvoices ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full shadow-sm mt-0.5 transition-transform ${filters.includeInvoices ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </div>
+                      </div>
+                      <span className="text-sm text-slate-600 group-hover:text-slate-800">Notas Fiscais</span>
                     </label>
-                    
-                    {/* NOVO CHECKBOX: Incluir Origem */}
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={filters.includeOrigin}
-                        onChange={(e) => setFilters({ ...filters, includeOrigin: e.target.checked })}
-                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-slate-700">Incluir Origem</span>
+                    <label className="flex items-center gap-2.5 cursor-pointer group">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          checked={filters.includeOrigin}
+                          onChange={e => setFilters({ ...filters, includeOrigin: e.target.checked })}
+                          className="sr-only"
+                        />
+                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeOrigin ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                          <div className={`w-3 h-3 bg-white rounded-full shadow-sm mt-0.5 transition-transform ${filters.includeOrigin ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                        </div>
+                      </div>
+                      <span className="text-sm text-slate-600 group-hover:text-slate-800">Incluir Origem</span>
                     </label>
                   </div>
                 </div>
 
+                {/* Filtros secundários */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Categoria</label>
                     <select
                       value={filters.category}
-                      onChange={(e) => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
+                      onChange={e => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
-                      }`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todas</option>
                       <option value="despesas_fixas">Despesas Fixas</option>
                       <option value="despesas_variaveis">Despesas Variáveis</option>
                     </select>
                   </div>
-
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Documento</label>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Documento</label>
                     <select
                       value={filters.documentType}
-                      onChange={(e) => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
+                      onChange={e => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
-                      }`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todos</option>
                       <option value="com_nota">Com Nota</option>
                       <option value="so_recibo">Só Recibo</option>
                     </select>
                   </div>
-
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Origem</label>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Origem</label>
                     <select
                       value={filters.origem}
-                      onChange={(e) => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
+                      onChange={e => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                        filters.type === 'income' ? 'bg-slate-50 text-slate-500' : ''
-                      }`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todas</option>
                       <option value="idhs">IDHS</option>
@@ -993,37 +790,28 @@ const exportToPDF = useCallback(async () => {
                   </div>
                 </div>
 
+                {/* Erro */}
                 {error && (
-                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="text-sm text-red-600">{error}</p>
-                    </div>
+                  <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
+                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-sm text-red-600">{error}</p>
                   </div>
                 )}
 
-                <div className="flex gap-3">
+                {/* Ações dos filtros */}
+                <div className="flex gap-3 pt-1">
                   <button
                     onClick={handleGenerateReport}
                     disabled={loading}
-                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-xl hover:from-blue-700 hover:to-blue-800 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-sm shadow-blue-200"
                   >
-                    {loading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                        <span>Gerando...</span>
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
-                        <RefreshCw className="w-4 h-4" />
-                        <span>Gerar Relatório</span>
-                      </span>
-                    )}
+                    {loading
+                      ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Gerando…</span></>
+                      : <><RefreshCw className="w-4 h-4" /><span>Gerar Relatório</span></>}
                   </button>
-                  
                   <button
                     onClick={resetFilters}
-                    className="px-4 py-2.5 border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 transition-all duration-200"
+                    className="px-4 py-2.5 text-sm text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-100 transition-all"
                   >
                     Limpar
                   </button>
@@ -1032,189 +820,200 @@ const exportToPDF = useCallback(async () => {
             )}
           </div>
 
-          {/* Resultados */}
-          <div className="p-6">
+          {/* ── RESULTADOS ── */}
+          <div className="p-6 space-y-6">
             {transactions.length > 0 && (
-              <div className="space-y-6">
-                {/* Ações */}
-                <div className="flex flex-wrap gap-3">
+              <>
+                {/* Botões de exportação + timestamp */}
+                <div className="flex flex-wrap items-center gap-3">
                   <button
                     onClick={exportToPDF}
                     disabled={exporting !== 'none'}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    className="flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 shadow-sm shadow-rose-200"
                   >
-                    {exporting === 'pdf' ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                        <span>Exportando...</span>
-                      </>
-                    ) : (
-                      <>
-                        <FileDown className="w-4 h-4" />
-                        <span>Exportar PDF</span>
-                      </>
-                    )}
+                    {exporting === 'pdf'
+                      ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Exportando…</span></>
+                      : <><FileDown className="w-4 h-4" /><span>Exportar PDF</span></>}
                   </button>
                   <button
                     onClick={exportToExcel}
                     disabled={exporting !== 'none'}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 shadow-sm shadow-emerald-200"
                   >
-                    {exporting === 'excel' ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                        <span>Exportando...</span>
-                      </>
-                    ) : (
-                      <>
-                        <FileSpreadsheet className="w-4 h-4" />
-                        <span>Exportar Excel</span>
-                      </>
-                    )}
+                    {exporting === 'excel'
+                      ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Exportando…</span></>
+                      : <><FileSpreadsheet className="w-4 h-4" /><span>Exportar Excel</span></>}
                   </button>
-                  
                   {lastQueryTime && (
-                    <div className="ml-auto text-xs text-slate-400 flex items-center">
-                      Última atualização: {lastQueryTime.toLocaleTimeString('pt-BR')}
-                    </div>
+                    <span className="ml-auto text-xs text-slate-400 flex items-center gap-1.5">
+                      <RefreshCw className="w-3 h-3" />
+                      Atualizado às {lastQueryTime.toLocaleTimeString('pt-BR')}
+                    </span>
                   )}
                 </div>
 
                 {/* Cards de resumo */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-green-700">Total Entradas</p>
-                      <TrendingUp className="w-5 h-5 text-green-600" />
+                  {/* Entradas */}
+                  <div className="relative overflow-hidden rounded-2xl border border-green-100 bg-gradient-to-br from-green-50 to-emerald-50 p-5">
+                    <div className="absolute -right-3 -top-3 w-20 h-20 rounded-full bg-green-100/60" />
+                    <div className="flex items-start justify-between mb-3">
+                      <p className="text-xs font-semibold text-green-700 uppercase tracking-wider">Total Entradas</p>
+                      <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center">
+                        <TrendingUp className="w-4 h-4 text-green-600" />
+                      </div>
                     </div>
-                    <p className="text-2xl font-bold text-green-700">{formatCurrencyBR(totals.income)}</p>
-                    <p className="text-xs text-green-600 mt-2">
-                      {transactions.filter(t => t.type === 'income').length} transações
-                    </p>
+                    <p className="text-2xl font-bold text-green-800">{formatCurrencyBR(totals.income)}</p>
+                    <p className="text-xs text-green-600 mt-2">{incomeCount} transaç{incomeCount === 1 ? 'ão' : 'ões'}</p>
                   </div>
-                  
-                  <div className="bg-gradient-to-br from-red-50 to-red-100 border border-red-200 rounded-2xl p-5">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-medium text-red-700">Total Saídas</p>
-                      <TrendingDown className="w-5 h-5 text-red-600" />
+
+                  {/* Saídas */}
+                  <div className="relative overflow-hidden rounded-2xl border border-red-100 bg-gradient-to-br from-red-50 to-rose-50 p-5">
+                    <div className="absolute -right-3 -top-3 w-20 h-20 rounded-full bg-red-100/60" />
+                    <div className="flex items-start justify-between mb-3">
+                      <p className="text-xs font-semibold text-red-700 uppercase tracking-wider">Total Saídas</p>
+                      <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+                        <TrendingDown className="w-4 h-4 text-red-600" />
+                      </div>
                     </div>
-                    <p className="text-2xl font-bold text-red-700">{formatCurrencyBR(totals.expense)}</p>
-                    <p className="text-xs text-red-600 mt-2">
-                      {transactions.filter(t => t.type === 'expense').length} transações
-                    </p>
+                    <p className="text-2xl font-bold text-red-800">{formatCurrencyBR(totals.expense)}</p>
+                    <p className="text-xs text-red-600 mt-2">{expenseCount} transaç{expenseCount === 1 ? 'ão' : 'ões'}</p>
                   </div>
-                  
-                  <div className={`bg-gradient-to-br ${
-                    totals.balance >= 0 ? 'from-blue-50 to-blue-100 border-blue-200' : 'from-orange-50 to-orange-100 border-orange-200'
-                  } border rounded-2xl p-5`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className={`text-sm font-medium ${totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
-                        Saldo
+
+                  {/* Saldo */}
+                  <div className={`relative overflow-hidden rounded-2xl border p-5 ${
+                    totals.balance >= 0
+                      ? 'border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50'
+                      : 'border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50'
+                  }`}>
+                    <div className={`absolute -right-3 -top-3 w-20 h-20 rounded-full ${totals.balance >= 0 ? 'bg-blue-100/60' : 'bg-amber-100/60'}`} />
+                    <div className="flex items-start justify-between mb-3">
+                      <p className={`text-xs font-semibold uppercase tracking-wider ${totals.balance >= 0 ? 'text-blue-700' : 'text-amber-700'}`}>
+                        Saldo do Período
                       </p>
-                      <DollarSign className={`w-5 h-5 ${totals.balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${totals.balance >= 0 ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                        <DollarSign className={`w-4 h-4 ${totals.balance >= 0 ? 'text-blue-600' : 'text-amber-600'}`} />
+                      </div>
                     </div>
-                    <p className={`text-2xl font-bold ${totals.balance >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+                    <p className={`text-2xl font-bold ${totals.balance >= 0 ? 'text-blue-800' : 'text-amber-800'}`}>
                       {formatCurrencyBR(totals.balance)}
+                    </p>
+                    <p className={`text-xs mt-2 ${totals.balance >= 0 ? 'text-blue-600' : 'text-amber-600'}`}>
+                      {totals.balance >= 0 ? 'Resultado positivo' : 'Resultado negativo'}
                     </p>
                   </div>
                 </div>
 
-                {/* Estatísticas */}
+                {/* Estatísticas por origem e categoria */}
                 {transactions.some(t => t.type === 'expense') && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
-                      <p className="text-sm font-semibold text-slate-700 mb-3">Despesas por Origem</p>
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-slate-600">IDHS</span>
-                          <span className="font-medium text-purple-700">{formatCurrencyBR(statistics.expensesByOrigin.idhs)}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-slate-600">Geral</span>
-                          <span className="font-medium text-blue-700">{formatCurrencyBR(statistics.expensesByOrigin.geral)}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-slate-600">Outras</span>
-                          <span className="font-medium text-slate-700">{formatCurrencyBR(statistics.expensesByOrigin.outros)}</span>
-                        </div>
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Despesas por Origem</p>
+                      <div className="space-y-3">
+                        {[
+                          { label: 'IDHS', value: statistics.expensesByOrigin.idhs, color: 'bg-violet-500' },
+                          { label: 'Geral', value: statistics.expensesByOrigin.geral, color: 'bg-blue-500' },
+                          { label: 'Outros', value: statistics.expensesByOrigin.outros, color: 'bg-slate-300' },
+                        ].map(item => {
+                          const pct = totals.expense > 0 ? (item.value / totals.expense) * 100 : 0;
+                          return (
+                            <div key={item.label}>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-sm text-slate-600">{item.label}</span>
+                                <span className="text-sm font-semibold text-slate-800">{formatCurrencyBR(item.value)}</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div className={`h-full ${item.color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                    
-                    <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200">
-                      <p className="text-sm font-semibold text-slate-700 mb-3">Despesas por Categoria</p>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {Object.entries(statistics.expensesByCategory).map(([category, value]) => (
-                          <div key={category} className="flex justify-between items-center text-sm">
-                            <span className="text-slate-600">{category.replace('_', ' ')}</span>
-                            <span className="font-medium text-slate-700">{formatCurrencyBR(value)}</span>
-                          </div>
-                        ))}
+
+                    <div className="rounded-2xl border border-slate-100 bg-white p-5">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Despesas por Categoria</p>
+                      <div className="space-y-3 max-h-36 overflow-y-auto pr-1">
+                        {Object.entries(statistics.expensesByCategory).map(([cat, val]) => {
+                          const pct = totals.expense > 0 ? (val / totals.expense) * 100 : 0;
+                          return (
+                            <div key={cat}>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-sm text-slate-600 capitalize">{cat.replace(/_/g, ' ')}</span>
+                                <span className="text-sm font-semibold text-slate-800">{formatCurrencyBR(val)}</span>
+                              </div>
+                              <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-rose-400 rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Tabela de transações - DINÂMICA */}
-                <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-                  <div className="overflow-x-auto max-h-[400px]">
-                    <table className="w-full min-w-[1000px]">
-                      <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
-                        <tr>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Data</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Tipo</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Descrição</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Categoria</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Fonte/Fornecedor</th>
+                {/* Tabela de transações */}
+                <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                  {/* Cabeçalho da tabela */}
+                  <div className="overflow-x-auto" style={{ maxHeight: '420px' }}>
+                    <table className="w-full min-w-[900px] text-sm">
+                      <thead>
+                        <tr className="bg-slate-900 text-slate-300">
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Data</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Tipo</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider">Descrição</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Categoria</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Fonte / Fornecedor</th>
                           {filters.includeOrigin && (
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Origem</th>
+                            <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Origem</th>
                           )}
-                          <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">Método</th>
-                          <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600 uppercase tracking-wider">Valor</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Método</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Valor</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {transactions.map((transaction, index) => {
-                          const origemExibicao = transaction.type === 'expense'
-                            ? transaction.idhs ? 'IDHS' : transaction.geral ? 'Geral' : '-'
-                            : '-';
-
+                      <tbody className="divide-y divide-slate-100">
+                        {transactions.map((t, idx) => {
+                          const origem = t.type === 'expense'
+                            ? t.idhs ? 'IDHS' : t.geral ? 'Geral' : '—'
+                            : '—';
                           return (
-                            <tr key={transaction.id} className={`hover:bg-slate-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-mono">
-                                {formatDisplayDate(transaction.transaction_date)}
+                            <tr
+                              key={t.id}
+                              className={`group hover:bg-blue-50/50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
+                            >
+                              {/* Borda colorida esquerda via box-shadow no primeiro td */}
+                              <td className={`px-4 py-3 whitespace-nowrap text-xs font-mono text-slate-500 border-l-2 ${t.type === 'income' ? 'border-l-green-400' : 'border-l-red-400'}`}>
+                                {formatDisplayDate(t.transaction_date)}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
-                                <span className={`inline-flex px-2 py-1 rounded-lg text-xs font-medium ${
-                                  transaction.type === 'income' 
-                                    ? 'bg-green-100 text-green-700' 
-                                    : 'bg-red-100 text-red-700'
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold ${
+                                  t.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                                 }`}>
-                                  {transaction.type === 'income' ? 'Entrada' : 'Saída'}
+                                  {t.type === 'income' ? '↑ Entrada' : '↓ Saída'}
                                 </span>
                               </td>
-                              <td className="px-4 py-3 text-sm text-slate-700 max-w-xs truncate" title={transaction.description}>
-                                {transaction.description}
+                              <td className="px-4 py-3 text-sm text-slate-700 max-w-xs">
+                                <span className="block truncate" title={t.description}>{t.description}</span>
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
-                                {transaction.category ? transaction.category.replace('_', ' ') : '-'}
+                              <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500 capitalize">
+                                {t.category ? t.category.replace(/_/g, ' ') : '—'}
                               </td>
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
-                                {transaction.type === 'income' 
-                                  ? transaction.fonte_pagadora || '-' 
-                                  : transaction.fornecedor || '-'}
+                              <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+                                {t.type === 'income' ? t.fonte_pagadora || '—' : t.fornecedor || '—'}
                               </td>
                               {filters.includeOrigin && (
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
-                                  {origemExibicao}
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  {origem !== '—'
+                                    ? <span className="px-2 py-0.5 bg-violet-100 text-violet-700 text-xs font-medium rounded-md">{origem}</span>
+                                    : <span className="text-xs text-slate-400">—</span>}
                                 </td>
                               )}
-                              <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-600">
-                                {transaction.method}
-                              </td>
+                              <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">{t.method}</td>
                               <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-semibold ${
-                                transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+                                t.type === 'income' ? 'text-green-600' : 'text-red-600'
                               }`}>
-                                {formatCurrencyBR(transaction.amount)}
+                                {formatCurrencyBR(t.amount)}
                               </td>
                             </tr>
                           );
@@ -1222,26 +1021,40 @@ const exportToPDF = useCallback(async () => {
                       </tbody>
                     </table>
                   </div>
-                  <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 text-xs text-slate-500 flex justify-between items-center">
-                    <span>Total de {transactions.length} transações encontradas</span>
-                    <span>Período: {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}</span>
+
+                  {/* Footer da tabela */}
+                  <div className="bg-slate-900 px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-slate-400">
+                      <span className="text-slate-200 font-semibold">{transactions.length}</span> transações encontradas
+                    </span>
+                    <div className="flex items-center gap-4 text-xs">
+                      <span className="text-green-400 font-medium">↑ {formatCurrencyBR(totals.income)}</span>
+                      <span className="text-red-400 font-medium">↓ {formatCurrencyBR(totals.expense)}</span>
+                      <span className={`font-semibold ${totals.balance >= 0 ? 'text-blue-300' : 'text-amber-300'}`}>
+                        = {formatCurrencyBR(totals.balance)}
+                      </span>
+                      <span className="text-slate-500">
+                        {formatDisplayDate(filters.startDate)} — {formatDisplayDate(filters.endDate)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </>
             )}
 
+            {/* Empty state */}
             {!loading && transactions.length === 0 && (
-              <div className="text-center py-12">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-100 rounded-2xl mb-4">
-                  <AlertCircle className="w-8 h-8 text-slate-400" />
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+                  <BarChart2 className="w-8 h-8 text-slate-300" />
                 </div>
-                <p className="text-slate-500 font-medium">Nenhuma transação encontrada</p>
-                <p className="text-sm text-slate-400 mt-1">
-                  Para o período de {formatDisplayDate(filters.startDate)} a {formatDisplayDate(filters.endDate)}
+                <p className="font-semibold text-slate-600 mb-1">Nenhuma transação encontrada</p>
+                <p className="text-sm text-slate-400">
+                  Para o período {formatDisplayDate(filters.startDate)} — {formatDisplayDate(filters.endDate)}
                 </p>
                 <button
                   onClick={resetFilters}
-                  className="mt-4 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  className="mt-5 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-200 rounded-xl hover:bg-blue-50 transition-all"
                 >
                   Limpar filtros
                 </button>
