@@ -969,16 +969,18 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
                     <select
-                      value={formData.category}
-                      onChange={(e) => setFormData({ ...formData, category: e.target.value, subcategoria: '' })}
-                      required
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    >
-                      <option value="">Selecione...</option>
-                      <option value="despesas_fixas">Despesas Fixas</option>
-                      <option value="despesas_variaveis">Despesas Variáveis</option>
-                    </select>
-                  </div>
+  value={formData.category}
+  onChange={(e) => setFormData({ ...formData, category: e.target.value, subcategoria: '' })}
+  required
+  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+>
+  <option value="">Selecione...</option>
+  <option value="despesas_fixas">Despesas Fixas</option>
+  <option value="despesas_variaveis">Despesas Variáveis</option>
+  <option value="folha_pagamento">Folha de Pagamento</option>
+  <option value="imposto">Imposto</option>
+  <option value="despesas_sede">Despesas Sede</option>
+</select>
 
                   {formData.category === 'despesas_fixas' && (
                     <div>
