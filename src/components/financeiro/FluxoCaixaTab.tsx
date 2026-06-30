@@ -69,12 +69,12 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const [initialBalanceInput, setInitialBalanceInput] = useState('0');
   const { user } = useAuth();
 
-  // 🔥 CORREÇÃO: Inicializar currentPage com valor do sessionStorage ou 1
+  // Inicializar currentPage com valor do sessionStorage ou 1
   const [currentPage, setCurrentPage] = useState<number>(() => {
     const savedPage = sessionStorage.getItem(STORAGE_KEY);
     return savedPage ? parseInt(savedPage, 10) : 1;
   });
-  
+
   const itemsPerPage = 30;
 
   const [formData, setFormData] = useState({
@@ -100,17 +100,15 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     description: '',
   });
 
-  // 🔥 CORREÇÃO: Salvar página no sessionStorage quando mudar
+  // Salvar página no sessionStorage quando mudar
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEY, currentPage.toString());
   }, [currentPage]);
 
-  // 🔥 CORREÇÃO: Detectar quando o usuário retorna à aba/janela
+  // Detectar quando o usuário retorna à aba/janela
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        // Quando a aba ficar visível novamente, NÃO resetamos a página
-        // Apenas recarregamos os dados se necessário
         if (user) {
           loadTransactions();
         }
@@ -122,24 +120,15 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [user, filterMonth]); // Dependências necessárias para recarregar dados
-
-  // 🔥 CORREÇÃO: Limpar storage quando componente for desmontado (opcional)
-  useEffect(() => {
-    return () => {
-      // Se quiser limpar o storage quando sair do componente completamente
-      // sessionStorage.removeItem(STORAGE_KEY);
-    };
-  }, []);
+  }, [user, filterMonth]);
 
   useEffect(() => {
     if (user) {
       loadTransactions();
       loadFixedExpenses();
       loadInitialBalance();
-      // 🔥 CORREÇÃO: Não resetar currentPage para 1 aqui
     }
-  }, [filterMonth, user]); // Removido currentPage das dependências
+  }, [filterMonth, user]);
 
   useEffect(() => {
     if (refreshTrigger !== undefined && refreshTrigger > 0 && user) {
@@ -147,7 +136,7 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     }
   }, [refreshTrigger]);
 
-  // EFEITO PARA ATUALIZAR DATA DO FORMULÁRIO QUANDO O MÊS MUDAR
+  // Atualizar data do formulário quando o mês mudar
   useEffect(() => {
     setFormData(prev => ({
       ...prev,
@@ -450,19 +439,16 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     setCurrentPage(page);
   };
 
-  // 🔥 CORREÇÃO: Função para resetar para página 1 quando necessário
   const resetToFirstPage = () => {
     setCurrentPage(1);
     sessionStorage.setItem(STORAGE_KEY, '1');
   };
 
-  // 🔥 CORREÇÃO: Quando o filtro de tipo muda, podemos opcionalmente resetar para página 1
   const handleFilterTypeChange = (newType: 'all' | 'income' | 'expense') => {
     setFilterType(newType);
-    resetToFirstPage(); // Opcional: volta para página 1 ao mudar filtro
+    resetToFirstPage();
   };
 
-  // 🔥 CORREÇÃO: Quando o mês muda, resetamos para página 1
   const handleMonthChange = (newMonth: string) => {
     setFilterMonth(newMonth);
     resetToFirstPage();
@@ -876,215 +862,215 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
             </div>
             <div className="overflow-y-auto flex-1 px-6 py-4">
               <form onSubmit={handleAddTransaction} className="space-y-4" id="transaction-form">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, type: 'income', category: '' })}
-                    className={`py-2 rounded-lg font-medium transition-colors ${
-                      formData.type === 'income'
-                        ? 'bg-green-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Receita
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, type: 'expense' })}
-                    className={`py-2 rounded-lg font-medium transition-colors ${
-                      formData.type === 'expense'
-                        ? 'bg-red-600 text-white'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    Despesa
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Valor</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Método</label>
-                <select
-                  value={formData.method}
-                  onChange={(e) => setFormData({ ...formData, method: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {formData.type === 'income' ? (
-                    <>
-                      <option value="pix">PIX</option>
-                      <option value="transferencia">Transferência</option>
-                      <option value="dinheiro">Dinheiro</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="boleto">Boleto</option>
-                      <option value="pix">PIX</option>
-                      <option value="transferencia">Transferência</option>
-                      <option value="cartao_debito">Cartão de Débito</option>
-                      <option value="cartao_credito">Cartão de Crédito</option>
-                    </>
-                  )}
-                </select>
-              </div>
-
-              {formData.type === 'income' && (
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Fonte Pagadora</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Tipo</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, type: 'income', category: '' })}
+                      className={`py-2 rounded-lg font-medium transition-colors ${
+                        formData.type === 'income'
+                          ? 'bg-green-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Receita
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, type: 'expense' })}
+                      className={`py-2 rounded-lg font-medium transition-colors ${
+                        formData.type === 'expense'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Despesa
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Valor</label>
                   <input
-                    type="text"
-                    value={formData.fonte_pagadora}
-                    onChange={(e) => setFormData({ ...formData, fonte_pagadora: e.target.value })}
+                    type="number"
+                    step="0.01"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    required
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
-              )}
 
-              {formData.type === 'expense' && (
-                <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Método</label>
+                  <select
+                    value={formData.method}
+                    onChange={(e) => setFormData({ ...formData, method: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  >
+                    {formData.type === 'income' ? (
+                      <>
+                        <option value="pix">PIX</option>
+                        <option value="transferencia">Transferência</option>
+                        <option value="dinheiro">Dinheiro</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="boleto">Boleto</option>
+                        <option value="pix">PIX</option>
+                        <option value="transferencia">Transferência</option>
+                        <option value="cartao_debito">Cartão de Débito</option>
+                        <option value="cartao_credito">Cartão de Crédito</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                {formData.type === 'income' && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Fornecedor (opcional)</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Fonte Pagadora</label>
                     <input
                       type="text"
-                      value={formData.fornecedor}
-                      onChange={(e) => setFormData({ ...formData, fornecedor: e.target.value })}
-                      placeholder="Nome do fornecedor"
+                      value={formData.fonte_pagadora}
+                      onChange={(e) => setFormData({ ...formData, fonte_pagadora: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
+                )}
 
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
-                    <select
-  value={formData.category}
-  onChange={(e) => setFormData({ ...formData, category: e.target.value, subcategoria: '' })}
-  required
-  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
->
-  <option value="">Selecione...</option>
-  <option value="despesas_fixas">Despesas Fixas</option>
-  <option value="despesas_variaveis">Despesas Variáveis</option>
-  <option value="folha_pagamento">Folha de Pagamento</option>
-  <option value="imposto">Imposto</option>
-  <option value="despesas_sede">Despesas Sede</option>
-</select>
-
-                  {formData.category === 'despesas_fixas' && (
+                {formData.type === 'expense' && (
+                  <>
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Subcategoria</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Fornecedor (opcional)</label>
+                      <input
+                        type="text"
+                        value={formData.fornecedor}
+                        onChange={(e) => setFormData({ ...formData, fornecedor: e.target.value })}
+                        placeholder="Nome do fornecedor"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Categoria</label>
                       <select
-                        value={formData.subcategoria}
-                        onChange={(e) => setFormData({ ...formData, subcategoria: e.target.value })}
+                        value={formData.category}
+                        onChange={(e) => setFormData({ ...formData, category: e.target.value, subcategoria: '' })}
                         required
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       >
                         <option value="">Selecione...</option>
-                        <option value="CLARO FIXO">CLARO FIXO</option>
-                        <option value="CLARO MÓVEL">CLARO MÓVEL</option>
-                        <option value="VIVO FIXO">VIVO FIXO</option>
-                        <option value="VIVO MÓVEL">VIVO MÓVEL</option>
-                        <option value="EQUATORIAL">EQUATORIAL</option>
-                        <option value="FGTS">FGTS</option>
-                        <option value="INSS">INSS</option>
-                        <option value="FOLHA DE PAGAMENTO">FOLHA DE PAGAMENTO</option>
-                        <option value="UNDB">UNDB</option>
+                        <option value="despesas_fixas">Despesas Fixas</option>
+                        <option value="despesas_variaveis">Despesas Variáveis</option>
+                        <option value="folha_pagamento">Folha de Pagamento</option>
+                        <option value="imposto">Imposto</option>
+                        <option value="despesas_sede">Despesas Sede</option>
                       </select>
                     </div>
-                  )}
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-3">
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id="com_nota"
-                          checked={formData.com_nota}
-                          onChange={(e) => setFormData({ ...formData, com_nota: e.target.checked, so_recibo: e.target.checked ? false : formData.so_recibo })}
-                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                        />
-                        <label htmlFor="com_nota" className="ml-2 text-sm font-medium text-slate-700">
-                          Com nota fiscal
-                        </label>
+                    {formData.category === 'despesas_fixas' && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">Subcategoria</label>
+                        <select
+                          value={formData.subcategoria}
+                          onChange={(e) => setFormData({ ...formData, subcategoria: e.target.value })}
+                          required
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="">Selecione...</option>
+                          <option value="CLARO FIXO">CLARO FIXO</option>
+                          <option value="CLARO MÓVEL">CLARO MÓVEL</option>
+                          <option value="VIVO FIXO">VIVO FIXO</option>
+                          <option value="VIVO MÓVEL">VIVO MÓVEL</option>
+                          <option value="EQUATORIAL">EQUATORIAL</option>
+                          <option value="FGTS">FGTS</option>
+                          <option value="INSS">INSS</option>
+                          <option value="FOLHA DE PAGAMENTO">FOLHA DE PAGAMENTO</option>
+                          <option value="UNDB">UNDB</option>
+                        </select>
                       </div>
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id="so_recibo"
-                          checked={formData.so_recibo}
-                          onChange={(e) => setFormData({ ...formData, so_recibo: e.target.checked, com_nota: e.target.checked ? false : formData.com_nota })}
-                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                        />
-                        <label htmlFor="so_recibo" className="ml-2 text-sm font-medium text-slate-700">
-                          Só recibo
-                        </label>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="com_nota"
+                            checked={formData.com_nota}
+                            onChange={(e) => setFormData({ ...formData, com_nota: e.target.checked, so_recibo: e.target.checked ? false : formData.so_recibo })}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                          />
+                          <label htmlFor="com_nota" className="ml-2 text-sm font-medium text-slate-700">
+                            Com nota fiscal
+                          </label>
+                        </div>
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="so_recibo"
+                            checked={formData.so_recibo}
+                            onChange={(e) => setFormData({ ...formData, so_recibo: e.target.checked, com_nota: e.target.checked ? false : formData.com_nota })}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                          />
+                          <label htmlFor="so_recibo" className="ml-2 text-sm font-medium text-slate-700">
+                            Só recibo
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="idhs"
+                            checked={formData.idhs}
+                            onChange={(e) => setFormData({ ...formData, idhs: e.target.checked })}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                          />
+                          <label htmlFor="idhs" className="ml-2 text-sm font-medium text-slate-700">
+                            IDHS
+                          </label>
+                        </div>
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="geral"
+                            checked={formData.geral}
+                            onChange={(e) => setFormData({ ...formData, geral: e.target.checked })}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                          />
+                          <label htmlFor="geral" className="ml-2 text-sm font-medium text-slate-700">
+                            Geral
+                          </label>
+                        </div>
                       </div>
                     </div>
+                  </>
+                )}
 
-                    <div className="space-y-3">
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id="idhs"
-                          checked={formData.idhs}
-                          onChange={(e) => setFormData({ ...formData, idhs: e.target.checked })}
-                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                        />
-                        <label htmlFor="idhs" className="ml-2 text-sm font-medium text-slate-700">
-                          IDHS
-                        </label>
-                      </div>
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          id="geral"
-                          checked={formData.geral}
-                          onChange={(e) => setFormData({ ...formData, geral: e.target.checked })}
-                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                        />
-                        <label htmlFor="geral" className="ml-2 text-sm font-medium text-slate-700">
-                          Geral
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Data</label>
+                  <input
+                    type="date"
+                    value={formData.transaction_date}
+                    onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
+                    required
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Data</label>
-                <input
-                  type="date"
-                  value={formData.transaction_date}
-                  onChange={(e) => setFormData({ ...formData, transaction_date: e.target.value })}
-                  required
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Descrição</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  required
-                  rows={3}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Descrição</label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    required
+                    rows={3}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
               </form>
             </div>
             <div className="px-6 py-4 border-t border-slate-200 bg-slate-50">
