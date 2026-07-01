@@ -348,9 +348,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       let colWidths: Record<string, number>;
 
       if (includeOrigin) {
-        colWidths = { data: 18, tipo: 14, descricao: 40, categoria: 19, fonte: 28, origem: 14, metodo: 16, valor: 22, liquido: 24 };
+        colWidths = { data: 19, tipo: 15, descricao: 44, categoria: 21, fonte: 32, origem: 15, valor: 24, liquido: 26 };
       } else {
-        colWidths = { data: 19, tipo: 15, descricao: 46, categoria: 22, fonte: 32, metodo: 18, valor: 24, liquido: 26 };
+        colWidths = { data: 21, tipo: 16, descricao: 52, categoria: 24, fonte: 36, valor: 26, liquido: 28 };
       }
 
       const gap = 1;
@@ -376,13 +376,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           ? [
               { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
               { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
-              { k: 'origem', l: 'ORIGEM' }, { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+              { k: 'origem', l: 'ORIGEM' }, { k: 'valor', l: 'VALOR (R$)' },
               { k: 'liquido', l: 'SALDO LÍQUIDO' },
             ]
           : [
               { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
               { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
-              { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+              { k: 'valor', l: 'VALOR (R$)' },
               { k: 'liquido', l: 'SALDO LÍQUIDO' },
             ];
 
@@ -489,10 +489,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           doc.setFont(undefined, 'normal');
         }
 
-        // MÉTODO
-        doc.setTextColor(71, 85, 105);
-        doc.text(t.method || '—', colPos.metodo + 1.5, yPos + 4.5);
-
         // VALOR (alinhado à direita)
         const valorStr = formatCurrencyBR(t.amount);
         const valorX = colPos.valor + colWidths.valor - 2;
@@ -593,7 +589,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           Descrição: t.description,
           Categoria: t.category ? t.category.replace('_', ' ') : '-',
           'Fonte/Fornecedor': t.type === 'income' ? t.fonte_pagadora || '-' : t.fornecedor || '-',
-          Método: t.method,
           'Valor (R$)': t.amount,
         };
         if (includeOrigin) base.Origem = t.type === 'expense' ? (t.idhs ? 'IDHS' : t.geral ? 'Geral' : '-') : '-';
@@ -602,8 +597,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       });
       const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
       transactionsSheet['!cols'] = includeOrigin
-        ? [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 18 }]
-        : [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 18 }];
+        ? [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 18 }]
+        : [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
 
       if (invoices.length > 0 && filters.includeInvoices) {
@@ -997,7 +992,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                 <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
                   {/* Cabeçalho da tabela */}
                   <div className="overflow-x-auto" style={{ maxHeight: '420px' }}>
-                    <table className="w-full min-w-[980px] text-sm">
+                    <table className="w-full min-w-[880px] text-sm">
                       <thead>
                         <tr className="bg-slate-900 text-slate-300">
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Data</th>
@@ -1008,7 +1003,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                           {filters.includeOrigin && (
                             <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Origem</th>
                           )}
-                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Método</th>
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Valor</th>
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-l border-slate-700">
                             Valor Líquido
@@ -1052,7 +1046,6 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                                     : <span className="text-xs text-slate-400">—</span>}
                                 </td>
                               )}
-                              <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">{t.method}</td>
                               <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-semibold ${
                                 t.type === 'income' ? 'text-green-600' : 'text-red-600'
                               }`}>
