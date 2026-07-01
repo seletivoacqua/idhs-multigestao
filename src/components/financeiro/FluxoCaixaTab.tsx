@@ -31,7 +31,6 @@ interface FixedExpense {
   pagamento_realizado: boolean;
 }
 
-// Função para formatar valores como moeda brasileira (R$)
 const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
@@ -39,7 +38,6 @@ const formatCurrency = (value: number): string => {
   }).format(value);
 };
 
-// Função auxiliar para formatar data ISO (YYYY-MM-DD) para DD/MM/YYYY
 const formatDate = (isoDate: string): string => {
   if (!isoDate) return '';
   const [year, month, day] = isoDate.split('-');
@@ -47,10 +45,9 @@ const formatDate = (isoDate: string): string => {
 };
 
 interface FluxoCaixaTabProps {
-  refreshTrigger?: number; // Prop para forçar recarregamento quando uma nota for paga
+  refreshTrigger?: number;
 }
 
-// Chave para armazenar a página no sessionStorage
 const STORAGE_KEY = 'fluxo_caixa_current_page';
 
 export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
@@ -69,7 +66,6 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
   const [initialBalanceInput, setInitialBalanceInput] = useState('0');
   const { user } = useAuth();
 
-  // Inicializar currentPage com valor do sessionStorage ou 1
   const [currentPage, setCurrentPage] = useState<number>(() => {
     const savedPage = sessionStorage.getItem(STORAGE_KEY);
     return savedPage ? parseInt(savedPage, 10) : 1;
@@ -100,33 +96,26 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     description: '',
   });
 
-  // Salvar página no sessionStorage quando mudar
   useEffect(() => {
     sessionStorage.setItem(STORAGE_KEY, currentPage.toString());
   }, [currentPage]);
 
-  // Detectar quando o usuário retorna à aba/janela
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        if (user) {
-          loadTransactions();
-        }
+      if (document.visibilityState === 'visible' && user) {
+        loadTransactions();
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [user, filterMonth]);
 
+  // Carrega dados ao mudar mês ou usuário
   useEffect(() => {
     if (user) {
+      loadInitialBalance(filterMonth);
       loadTransactions();
       loadFixedExpenses();
-      loadInitialBalance();
     }
   }, [filterMonth, user]);
 
@@ -136,7 +125,6 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     }
   }, [refreshTrigger]);
 
-  // Atualizar data do formulário quando o mês mudar
   useEffect(() => {
     setFormData(prev => ({
       ...prev,
@@ -144,16 +132,21 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     }));
   }, [filterMonth]);
 
-  const loadInitialBalance = async () => {
+  // 🔥 CORREÇÃO: recebe o mês como parâmetro e reseta o saldo antes da requisição
+  const loadInitialBalance = async (month: string) => {
     if (!user) return;
 
-    const [year, month] = filterMonth.split('-').map(Number);
+    // Limpa o valor anterior para não mostrar dado antigo
+    setInitialBalance(0);
+    setInitialBalanceInput('0');
+
+    const [year, monthNum] = month.split('-').map(Number);
 
     const { data, error } = await supabase
       .from('initial_balances')
       .select('balance')
       .eq('year', year)
-      .eq('month', month)
+      .eq('month', monthNum)
       .maybeSingle();
 
     if (error) {
