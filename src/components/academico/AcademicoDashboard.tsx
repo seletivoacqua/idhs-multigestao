@@ -24,8 +24,9 @@ export function AcademicoDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100">
+      {/* HEADER COM LARGURA TOTAL */}
       <header className="bg-blue-900 shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-4">
               <img src={logoImg} alt="IDHS" className="h-14 drop-shadow-md" />
@@ -54,7 +55,8 @@ export function AcademicoDashboard() {
         <div className="h-1 bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-500" />
       </header>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* CONTAINER PRINCIPAL - LARGURA TOTAL COM PADDING RESPONSIVO */}
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
         <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
           <div className="bg-slate-50 border-b border-slate-200">
             <nav className="flex space-x-1 p-2 overflow-x-auto">
@@ -116,7 +118,8 @@ export function AcademicoDashboard() {
             </nav>
           </div>
 
-          <div className="p-6">
+          {/* CONTEÚDO DAS ABAS */}
+          <div className="p-4 sm:p-6">
             {activeTab === 'units' && <UnitsTab />}
             {activeTab === 'students' && <StudentsTab />}
             {activeTab === 'courses' && <CoursesTab />}
