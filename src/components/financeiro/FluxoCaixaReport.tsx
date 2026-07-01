@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, ChevronUp, BarChart2 } from 'lucide-react';
+import { X, FileDown, FileSpreadsheet, AlertCircle, Filter, Calendar, TrendingUp, TrendingDown, DollarSign, RefreshCw, ChevronDown, ChevronUp, BarChart2, Scale } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
@@ -26,6 +26,10 @@ interface Transaction {
   invoice_id?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+interface TransactionWithBalance extends Transaction {
+  saldoLiquido: number;
 }
 
 interface Invoice {
@@ -191,6 +195,25 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     return { income, expense, balance: income - expense, invoiceTotal };
   }, [transactions, invoices]);
 
+  // ─── SALDO LÍQUIDO (saldo acumulado transação a transação, em ordem cronológica) ──
+  const transactionsWithBalance: TransactionWithBalance[] = useMemo(() => {
+    const chronological = [...transactions].sort((a, b) => {
+      const byDate = a.transaction_date.localeCompare(b.transaction_date);
+      if (byDate !== 0) return byDate;
+      return (a.created_at || '').localeCompare(b.created_at || '');
+    });
+
+    const balanceById = new Map<string, number>();
+    let running = 0;
+    for (const t of chronological) {
+      running += t.type === 'income' ? t.amount : -t.amount;
+      balanceById.set(t.id, running);
+    }
+
+    // Mantém a ordenação original (mais recentes primeiro) usada no restante da UI
+    return transactions.map(t => ({ ...t, saldoLiquido: balanceById.get(t.id) ?? 0 }));
+  }, [transactions]);
+
   const statistics = useMemo(() => {
     const expensesByCategory = transactions
       .filter(t => t.type === 'expense')
@@ -230,21 +253,25 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       // ── Função de cabeçalho de página (chamada em cada nova página)
       const drawPageHeader = (isFirstPage: boolean) => {
         // Fundo azul escuro no topo
-        doc.setFillColor(15, 23, 42);
-        doc.rect(0, 0, pageWidth, isFirstPage ? 38 : 16, 'F');
+        doc.setFillColor(13, 18, 33);
+        doc.rect(0, 0, pageWidth, isFirstPage ? 40 : 16, 'F');
 
         if (isFirstPage) {
-          // Logo centralizada
+          // Linha de destaque (assinatura visual do relatório)
+          doc.setFillColor(79, 70, 229);
+          doc.rect(0, 0, pageWidth, 1.2, 'F');
+
+          // Logo
           try {
             const logoW = 32, logoH = 15;
-            doc.addImage(logoImg, 'PNG', margin, 4, logoW, logoH);
+            doc.addImage(logoImg, 'PNG', margin, 6, logoW, logoH);
           } catch {}
 
           // Título
           doc.setFontSize(15);
           doc.setTextColor(255, 255, 255);
           doc.setFont(undefined, 'bold');
-          doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, 13, { align: 'center' });
+          doc.text('RELATÓRIO DE FLUXO DE CAIXA', pageWidth / 2, 14, { align: 'center' });
 
           // Subtítulo / período
           doc.setFontSize(8);
@@ -252,60 +279,54 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           doc.setTextColor(148, 163, 184);
           doc.text(
             `Período: ${formatDisplayDate(filters.startDate)} — ${formatDisplayDate(filters.endDate)}   |   Gerado em: ${new Date().toLocaleString('pt-BR')}`,
-            pageWidth / 2, 20, { align: 'center' }
+            pageWidth / 2, 21, { align: 'center' }
           );
 
           // Linha separadora sutil
           doc.setDrawColor(30, 41, 59);
           doc.setLineWidth(0.3);
-          doc.line(margin, 24, pageWidth - margin, 24);
+          doc.line(margin, 25, pageWidth - margin, 25);
 
-          // ── Cards de resumo
-          const cardY = 27;
-          const cardH = 9;
-          const cardW = (pageWidth - margin * 2 - 8) / 3;
-          const cardSpacing = 4;
+          // ── Cards de resumo (4 indicadores, incluindo saldo líquido final)
+          const cardY = 28;
+          const cardH = 9.5;
+          const cardGap = 3;
+          const cardW = (pageWidth - margin * 2 - cardGap * 3) / 4;
 
-          // Entrada
-          doc.setFillColor(20, 83, 45);
-          doc.roundedRect(margin, cardY, cardW, cardH, 1.5, 1.5, 'F');
-          doc.setFontSize(6);
-          doc.setTextColor(134, 239, 172);
-          doc.setFont(undefined, 'normal');
-          doc.text('ENTRADAS', margin + 3, cardY + 3.5);
-          doc.setFontSize(8);
-          doc.setFont(undefined, 'bold');
-          doc.setTextColor(220, 252, 231);
-          doc.text(formatCurrencyBR(totals.income), margin + 3, cardY + 7.5);
+          const drawCard = (x: number, label: string, value: string, bg: [number, number, number], labelColor: [number, number, number], valueColor: [number, number, number]) => {
+            doc.setFillColor(...bg);
+            doc.roundedRect(x, cardY, cardW, cardH, 1.6, 1.6, 'F');
+            doc.setFontSize(5.8);
+            doc.setTextColor(...labelColor);
+            doc.setFont(undefined, 'normal');
+            doc.text(label, x + 3, cardY + 3.6);
+            doc.setFontSize(8);
+            doc.setFont(undefined, 'bold');
+            doc.setTextColor(...valueColor);
+            doc.text(value, x + 3, cardY + 7.8);
+          };
 
-          // Saída
-          const cx2 = margin + cardW + cardSpacing;
-          doc.setFillColor(127, 29, 29);
-          doc.roundedRect(cx2, cardY, cardW, cardH, 1.5, 1.5, 'F');
-          doc.setFontSize(6);
-          doc.setTextColor(252, 165, 165);
-          doc.setFont(undefined, 'normal');
-          doc.text('SAÍDAS', cx2 + 3, cardY + 3.5);
-          doc.setFontSize(8);
-          doc.setFont(undefined, 'bold');
-          doc.setTextColor(254, 226, 226);
-          doc.text(formatCurrencyBR(totals.expense), cx2 + 3, cardY + 7.5);
-
-          // Saldo
-          const cx3 = margin + (cardW + cardSpacing) * 2;
           const isPositive = totals.balance >= 0;
-          doc.setFillColor(isPositive ? 12 : 120, isPositive ? 74 : 53, isPositive ? 110 : 15);
-          doc.roundedRect(cx3, cardY, cardW, cardH, 1.5, 1.5, 'F');
-          doc.setFontSize(6);
-          doc.setFont(undefined, 'normal');
-          doc.setTextColor(isPositive ? 196 : 253, isPositive ? 181 : 230, isPositive ? 253 : 138);
-          doc.text('SALDO', cx3 + 3, cardY + 3.5);
-          doc.setFontSize(8);
-          doc.setFont(undefined, 'bold');
-          doc.setTextColor(isPositive ? 233 : 254, isPositive ? 213 : 240, isPositive ? 255 : 138);
-          doc.text(formatCurrencyBR(totals.balance), cx3 + 3, cardY + 7.5);
+          const finalBalance = transactionsWithBalance.length > 0
+            ? transactionsWithBalance.reduce((acc, t) => Math.abs(t.saldoLiquido) > Math.abs(acc) ? t.saldoLiquido : acc, 0)
+            : 0;
 
-          yPos = 42;
+          drawCard(margin, 'ENTRADAS', formatCurrencyBR(totals.income), [20, 83, 45], [134, 239, 172], [220, 252, 231]);
+          drawCard(margin + (cardW + cardGap), 'SAÍDAS', formatCurrencyBR(totals.expense), [127, 29, 29], [252, 165, 165], [254, 226, 226]);
+          drawCard(
+            margin + (cardW + cardGap) * 2, 'SALDO DO PERÍODO', formatCurrencyBR(totals.balance),
+            isPositive ? [17, 24, 90] : [120, 53, 15],
+            isPositive ? [165, 180, 252] : [253, 230, 138],
+            isPositive ? [224, 231, 255] : [254, 240, 138]
+          );
+          drawCard(
+            margin + (cardW + cardGap) * 3, 'SALDO LÍQUIDO ACUMULADO', formatCurrencyBR(totals.balance),
+            [49, 46, 129],
+            [196, 181, 253],
+            [237, 233, 254]
+          );
+
+          yPos = 43;
         } else {
           // Páginas seguintes: cabeçalho compacto
           doc.setFontSize(7);
@@ -317,19 +338,19 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             pageWidth / 2, 10, { align: 'center' }
           );
           doc.text(`Pág. ${doc.internal.pages.length - 1}`, pageWidth - margin, 10, { align: 'right' });
-          yPos = 18;
+          yPos = 19;
         }
       };
 
-      // ── Configuração de colunas
+      // ── Configuração de colunas (agora incluindo Saldo Líquido)
       const includeOrigin = filters.includeOrigin;
       const tableWidth = pageWidth - margin * 2;
       let colWidths: Record<string, number>;
 
       if (includeOrigin) {
-        colWidths = { data: 20, tipo: 15, descricao: 46, categoria: 22, fonte: 32, origem: 16, metodo: 20, valor: 26 };
+        colWidths = { data: 18, tipo: 14, descricao: 40, categoria: 19, fonte: 28, origem: 14, metodo: 16, valor: 22, liquido: 24 };
       } else {
-        colWidths = { data: 22, tipo: 17, descricao: 54, categoria: 26, fonte: 38, metodo: 22, valor: 28 };
+        colWidths = { data: 19, tipo: 15, descricao: 46, categoria: 22, fonte: 32, metodo: 18, valor: 24, liquido: 26 };
       }
 
       const gap = 1;
@@ -356,11 +377,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
               { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
               { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
               { k: 'origem', l: 'ORIGEM' }, { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+              { k: 'liquido', l: 'SALDO LÍQUIDO' },
             ]
           : [
               { k: 'data', l: 'DATA' }, { k: 'tipo', l: 'TIPO' }, { k: 'descricao', l: 'DESCRIÇÃO' },
               { k: 'categoria', l: 'CATEGORIA' }, { k: 'fonte', l: 'FONTE / FORNECEDOR' },
               { k: 'metodo', l: 'MÉTODO' }, { k: 'valor', l: 'VALOR (R$)' },
+              { k: 'liquido', l: 'SALDO LÍQUIDO' },
             ];
 
         doc.setFontSize(6.2);
@@ -387,7 +410,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
       // ── Linhas de dados
       let rowCount = 0;
-      for (const t of transactions) {
+      for (const t of transactionsWithBalance) {
         const fonte = t.type === 'income' ? t.fonte_pagadora || '—' : t.fornecedor || '—';
         const origemTxt = t.type === 'expense' ? (t.idhs ? 'IDHS' : t.geral ? 'Geral' : '—') : '—';
         const descLines = doc.splitTextToSize(t.description || '—', colWidths.descricao - 3);
@@ -398,7 +421,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         // Nova página?
         if (yPos + rowH > pageHeight - 14) {
           // Rodapé da página atual
-          doc.setFillColor(15, 23, 42);
+          doc.setFillColor(13, 18, 33);
           doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
           doc.setFontSize(6);
           doc.setTextColor(100, 116, 139);
@@ -479,6 +502,15 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         doc.text(valorStr, valorX, yPos + 4.5, { align: 'right' });
         doc.setFont(undefined, 'normal');
 
+        // SALDO LÍQUIDO (saldo acumulado, alinhado à direita)
+        const liquidoStr = formatCurrencyBR(t.saldoLiquido);
+        const liquidoX = colPos.liquido + colWidths.liquido - 2;
+        if (t.saldoLiquido < 0) doc.setTextColor(185, 28, 28);
+        else doc.setTextColor(67, 56, 202);
+        doc.setFont(undefined, 'bold');
+        doc.text(liquidoStr, liquidoX, yPos + 4.5, { align: 'right' });
+        doc.setFont(undefined, 'normal');
+
         // Separador inferior
         doc.setDrawColor(226, 232, 240);
         doc.setLineWidth(0.15);
@@ -489,7 +521,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       }
 
       // ── Rodapé da última página
-      doc.setFillColor(15, 23, 42);
+      doc.setFillColor(13, 18, 33);
       doc.rect(0, pageHeight - 10, pageWidth, 10, 'F');
       doc.setFontSize(6.5);
       doc.setFont(undefined, 'bold');
@@ -500,7 +532,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
       doc.text(`Saídas: ${formatCurrencyBR(totals.expense)}`, margin + 55, pageHeight - 4);
       const isPositive = totals.balance >= 0;
       doc.setTextColor(isPositive ? 196 : 253, isPositive ? 181 : 186, isPositive ? 253 : 12);
-      doc.text(`Saldo: ${formatCurrencyBR(totals.balance)}`, margin + 108, pageHeight - 4);
+      doc.text(`Saldo Líquido: ${formatCurrencyBR(totals.balance)}`, margin + 108, pageHeight - 4);
       doc.setTextColor(100, 116, 139);
       doc.setFont(undefined, 'normal');
       doc.text(`Página ${doc.internal.pages.length - 1}`, pageWidth - margin, pageHeight - 4, { align: 'right' });
@@ -512,9 +544,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     } finally {
       setExporting('none');
     }
-  }, [transactions, totals, filters, formatDisplayDate]);
+  }, [transactions, transactionsWithBalance, totals, filters, formatDisplayDate]);
 
-  // ─── EXCEL EXPORT (inalterado na lógica, só organização) ─────────────────────
+  // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
   const exportToExcel = useCallback(() => {
     if (transactions.length === 0 && invoices.length === 0) { alert('Não há dados para exportar'); return; }
     setExporting('excel');
@@ -529,7 +561,8 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         ['Indicador', 'Valor'],
         ['Total de Entradas', formatCurrencyBR(totals.income)],
         ['Total de Saídas', formatCurrencyBR(totals.expense)],
-        ['Saldo', formatCurrencyBR(totals.balance)],
+        ['Saldo do Período', formatCurrencyBR(totals.balance)],
+        ['Saldo Líquido Acumulado (final)', formatCurrencyBR(totals.balance)],
         [''],
         ['ESTATÍSTICAS'],
         ['Total de Transações', transactions.length],
@@ -549,11 +582,11 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
         ...Object.entries(statistics.expensesByMethod).map(([m, v]) => [m, formatCurrencyBR(v)]),
       ];
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
-      summarySheet['!cols'] = [{ wch: 30 }, { wch: 20 }];
+      summarySheet['!cols'] = [{ wch: 34 }, { wch: 20 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo Executivo');
 
       const includeOrigin = filters.includeOrigin;
-      const transactionsData = transactions.map(t => {
+      const transactionsData = transactionsWithBalance.map(t => {
         const base: any = {
           Data: formatDisplayDate(t.transaction_date),
           Tipo: t.type === 'income' ? 'Entrada' : 'Saída',
@@ -564,12 +597,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
           'Valor (R$)': t.amount,
         };
         if (includeOrigin) base.Origem = t.type === 'expense' ? (t.idhs ? 'IDHS' : t.geral ? 'Geral' : '-') : '-';
+        base['Valor Líquido (R$)'] = t.saldoLiquido;
         return base;
       });
       const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
       transactionsSheet['!cols'] = includeOrigin
-        ? [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }]
-        : [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 }];
+        ? [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 18 }]
+        : [{ wch: 12 }, { wch: 10 }, { wch: 50 }, { wch: 20 }, { wch: 25 }, { wch: 15 }, { wch: 15 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(workbook, transactionsSheet, 'Transações');
 
       if (invoices.length > 0 && filters.includeInvoices) {
@@ -594,14 +628,14 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
     } finally {
       setExporting('none');
     }
-  }, [transactions, invoices, totals, statistics, filters, formatDisplayDate]);
+  }, [transactions, transactionsWithBalance, invoices, totals, statistics, filters, formatDisplayDate]);
 
   // ─── LOADING INICIAL ─────────────────────────────────────────────────────────
   if (initialLoading) {
     return (
-      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center z-50">
         <div className="bg-white rounded-2xl shadow-2xl p-10 flex flex-col items-center gap-4">
-          <div className="w-14 h-14 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin" />
+          <div className="w-14 h-14 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin" />
           <p className="text-slate-600 font-medium text-sm">Carregando relatório…</p>
         </div>
       </div>
@@ -613,19 +647,20 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
 
   // ─── RENDER ───────────────────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-7xl my-6 flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-7xl my-6 flex flex-col max-h-[92vh] overflow-hidden">
 
         {/* ── HEADER ── */}
-        <div className="flex-shrink-0 bg-gradient-to-r from-slate-900 to-slate-800 rounded-t-2xl px-6 py-5">
+        <div className="relative flex-shrink-0 bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 px-6 py-5">
+          <div className="absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500" />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                <BarChart2 className="w-5 h-5 text-blue-400" />
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-400/20 flex items-center justify-center">
+                <BarChart2 className="w-5 h-5 text-indigo-300" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-white leading-tight">Fluxo de Caixa</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Movimentações financeiras do período</p>
+                <h3 className="text-base font-semibold text-white leading-tight tracking-tight">Fluxo de Caixa</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Movimentações financeiras e saldo líquido do período</p>
               </div>
             </div>
             <button
@@ -647,13 +682,13 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
               className="w-full px-6 py-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors group"
             >
               <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                <Filter className="w-4 h-4 text-slate-400 group-hover:text-indigo-500 transition-colors" />
                 <span className="text-sm font-medium text-slate-700">Filtros Avançados</span>
                 {Object.values(filters).some(v =>
                   v !== 'all' && v !== false &&
                   !(typeof v === 'string' && (v === filters.startDate || v === filters.endDate))
                 ) && (
-                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
+                  <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium">
                     Ativos
                   </span>
                 )}
@@ -664,7 +699,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
             </button>
 
             {showFilters && (
-              <div className="px-6 pt-2 pb-6 space-y-4 bg-slate-50/50">
+              <div className="px-6 pt-2 pb-6 space-y-4 bg-slate-50/60">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* Data Inicial */}
                   <div>
@@ -675,7 +710,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       type="date"
                       value={filters.startDate}
                       onChange={e => { setFilters({ ...filters, startDate: e.target.value }); setError(null); }}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow"
                     />
                   </div>
 
@@ -688,7 +723,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       type="date"
                       value={filters.endDate}
                       onChange={e => { setFilters({ ...filters, endDate: e.target.value }); setError(null); }}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-shadow"
                     />
                   </div>
 
@@ -705,7 +740,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                         });
                         setError(null);
                       }}
-                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                     >
                       <option value="all">Todos</option>
                       <option value="income">Apenas Entradas</option>
@@ -723,7 +758,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                           onChange={e => setFilters({ ...filters, includeInvoices: e.target.checked })}
                           className="sr-only"
                         />
-                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeInvoices ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeInvoices ? 'bg-indigo-500' : 'bg-slate-300'}`}>
                           <div className={`w-3 h-3 bg-white rounded-full shadow-sm mt-0.5 transition-transform ${filters.includeInvoices ? 'translate-x-4' : 'translate-x-0.5'}`} />
                         </div>
                       </div>
@@ -737,7 +772,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                           onChange={e => setFilters({ ...filters, includeOrigin: e.target.checked })}
                           className="sr-only"
                         />
-                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeOrigin ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                        <div className={`w-8 h-4 rounded-full transition-colors ${filters.includeOrigin ? 'bg-indigo-500' : 'bg-slate-300'}`}>
                           <div className={`w-3 h-3 bg-white rounded-full shadow-sm mt-0.5 transition-transform ${filters.includeOrigin ? 'translate-x-4' : 'translate-x-0.5'}`} />
                         </div>
                       </div>
@@ -754,7 +789,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       value={filters.category}
                       onChange={e => setFilters({ ...filters, category: e.target.value as Filters['category'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todas</option>
                       <option value="despesas_fixas">Despesas Fixas</option>
@@ -767,7 +802,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       value={filters.documentType}
                       onChange={e => setFilters({ ...filters, documentType: e.target.value as Filters['documentType'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todos</option>
                       <option value="com_nota">Com Nota</option>
@@ -780,7 +815,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       value={filters.origem}
                       onChange={e => setFilters({ ...filters, origem: e.target.value as Filters['origem'] })}
                       disabled={filters.type === 'income'}
-                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      className={`w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${filters.type === 'income' ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <option value="all">Todas</option>
                       <option value="idhs">IDHS</option>
@@ -803,7 +838,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                   <button
                     onClick={handleGenerateReport}
                     disabled={loading}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-sm shadow-blue-200"
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-sm shadow-indigo-200"
                   >
                     {loading
                       ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Gerando…</span></>
@@ -853,54 +888,59 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                 </div>
 
                 {/* Cards de resumo */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   {/* Entradas */}
-                  <div className="relative overflow-hidden rounded-2xl border border-green-100 bg-gradient-to-br from-green-50 to-emerald-50 p-5">
-                    <div className="absolute -right-3 -top-3 w-20 h-20 rounded-full bg-green-100/60" />
-                    <div className="flex items-start justify-between mb-3">
-                      <p className="text-xs font-semibold text-green-700 uppercase tracking-wider">Total Entradas</p>
-                      <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center">
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500" />
+                    <div className="flex items-start justify-between mb-3 pl-2">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Entradas</p>
+                      <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center">
                         <TrendingUp className="w-4 h-4 text-green-600" />
                       </div>
                     </div>
-                    <p className="text-2xl font-bold text-green-800">{formatCurrencyBR(totals.income)}</p>
-                    <p className="text-xs text-green-600 mt-2">{incomeCount} transaç{incomeCount === 1 ? 'ão' : 'ões'}</p>
+                    <p className="text-2xl font-bold text-slate-800 pl-2">{formatCurrencyBR(totals.income)}</p>
+                    <p className="text-xs text-slate-400 mt-2 pl-2">{incomeCount} transaç{incomeCount === 1 ? 'ão' : 'ões'}</p>
                   </div>
 
                   {/* Saídas */}
-                  <div className="relative overflow-hidden rounded-2xl border border-red-100 bg-gradient-to-br from-red-50 to-rose-50 p-5">
-                    <div className="absolute -right-3 -top-3 w-20 h-20 rounded-full bg-red-100/60" />
-                    <div className="flex items-start justify-between mb-3">
-                      <p className="text-xs font-semibold text-red-700 uppercase tracking-wider">Total Saídas</p>
-                      <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
+                    <div className="flex items-start justify-between mb-3 pl-2">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Saídas</p>
+                      <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
                         <TrendingDown className="w-4 h-4 text-red-600" />
                       </div>
                     </div>
-                    <p className="text-2xl font-bold text-red-800">{formatCurrencyBR(totals.expense)}</p>
-                    <p className="text-xs text-red-600 mt-2">{expenseCount} transaç{expenseCount === 1 ? 'ão' : 'ões'}</p>
+                    <p className="text-2xl font-bold text-slate-800 pl-2">{formatCurrencyBR(totals.expense)}</p>
+                    <p className="text-xs text-slate-400 mt-2 pl-2">{expenseCount} transaç{expenseCount === 1 ? 'ão' : 'ões'}</p>
                   </div>
 
-                  {/* Saldo */}
-                  <div className={`relative overflow-hidden rounded-2xl border p-5 ${
-                    totals.balance >= 0
-                      ? 'border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50'
-                      : 'border-amber-100 bg-gradient-to-br from-amber-50 to-orange-50'
-                  }`}>
-                    <div className={`absolute -right-3 -top-3 w-20 h-20 rounded-full ${totals.balance >= 0 ? 'bg-blue-100/60' : 'bg-amber-100/60'}`} />
-                    <div className="flex items-start justify-between mb-3">
-                      <p className={`text-xs font-semibold uppercase tracking-wider ${totals.balance >= 0 ? 'text-blue-700' : 'text-amber-700'}`}>
-                        Saldo do Período
-                      </p>
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${totals.balance >= 0 ? 'bg-blue-100' : 'bg-amber-100'}`}>
+                  {/* Saldo do período */}
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${totals.balance >= 0 ? 'bg-blue-500' : 'bg-amber-500'}`} />
+                    <div className="flex items-start justify-between mb-3 pl-2">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Saldo do Período</p>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${totals.balance >= 0 ? 'bg-blue-50' : 'bg-amber-50'}`}>
                         <DollarSign className={`w-4 h-4 ${totals.balance >= 0 ? 'text-blue-600' : 'text-amber-600'}`} />
                       </div>
                     </div>
-                    <p className={`text-2xl font-bold ${totals.balance >= 0 ? 'text-blue-800' : 'text-amber-800'}`}>
-                      {formatCurrencyBR(totals.balance)}
-                    </p>
-                    <p className={`text-xs mt-2 ${totals.balance >= 0 ? 'text-blue-600' : 'text-amber-600'}`}>
+                    <p className="text-2xl font-bold text-slate-800 pl-2">{formatCurrencyBR(totals.balance)}</p>
+                    <p className={`text-xs mt-2 pl-2 ${totals.balance >= 0 ? 'text-blue-500' : 'text-amber-500'}`}>
                       {totals.balance >= 0 ? 'Resultado positivo' : 'Resultado negativo'}
                     </p>
+                  </div>
+
+                  {/* Saldo líquido acumulado (final) */}
+                  <div className="relative overflow-hidden rounded-2xl border border-indigo-100 bg-indigo-50/40 p-5 shadow-sm">
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
+                    <div className="flex items-start justify-between mb-3 pl-2">
+                      <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Saldo Líquido Final</p>
+                      <div className="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
+                        <Scale className="w-4 h-4 text-indigo-600" />
+                      </div>
+                    </div>
+                    <p className="text-2xl font-bold text-indigo-800 pl-2">{formatCurrencyBR(totals.balance)}</p>
+                    <p className="text-xs text-indigo-500 mt-2 pl-2">Acumulado até {formatDisplayDate(filters.endDate)}</p>
                   </div>
                 </div>
 
@@ -954,10 +994,10 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                 )}
 
                 {/* Tabela de transações */}
-                <div className="rounded-2xl border border-slate-200 overflow-hidden">
+                <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
                   {/* Cabeçalho da tabela */}
                   <div className="overflow-x-auto" style={{ maxHeight: '420px' }}>
-                    <table className="w-full min-w-[900px] text-sm">
+                    <table className="w-full min-w-[980px] text-sm">
                       <thead>
                         <tr className="bg-slate-900 text-slate-300">
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Data</th>
@@ -970,17 +1010,20 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                           )}
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Método</th>
                           <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider whitespace-nowrap">Valor</th>
+                          <th className="sticky top-0 z-10 bg-slate-900 px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider whitespace-nowrap border-l border-slate-700">
+                            Valor Líquido
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {transactions.map((t, idx) => {
+                        {transactionsWithBalance.map((t, idx) => {
                           const origem = t.type === 'expense'
                             ? t.idhs ? 'IDHS' : t.geral ? 'Geral' : '—'
                             : '—';
                           return (
                             <tr
                               key={t.id}
-                              className={`group hover:bg-blue-50/50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
+                              className={`group hover:bg-indigo-50/40 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
                             >
                               {/* Borda colorida esquerda via box-shadow no primeiro td */}
                               <td className={`px-4 py-3 whitespace-nowrap text-xs font-mono text-slate-500 border-l-2 ${t.type === 'income' ? 'border-l-green-400' : 'border-l-red-400'}`}>
@@ -1015,6 +1058,11 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                               }`}>
                                 {formatCurrencyBR(t.amount)}
                               </td>
+                              <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-mono font-semibold border-l border-slate-100 ${
+                                t.saldoLiquido >= 0 ? 'text-indigo-700' : 'text-red-600'
+                              }`}>
+                                {formatCurrencyBR(t.saldoLiquido)}
+                              </td>
                             </tr>
                           );
                         })}
@@ -1032,6 +1080,9 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                       <span className="text-red-400 font-medium">↓ {formatCurrencyBR(totals.expense)}</span>
                       <span className={`font-semibold ${totals.balance >= 0 ? 'text-blue-300' : 'text-amber-300'}`}>
                         = {formatCurrencyBR(totals.balance)}
+                      </span>
+                      <span className="font-semibold text-indigo-300 border-l border-slate-700 pl-4">
+                        Líquido: {formatCurrencyBR(totals.balance)}
                       </span>
                       <span className="text-slate-500">
                         {formatDisplayDate(filters.startDate)} — {formatDisplayDate(filters.endDate)}
@@ -1054,7 +1105,7 @@ export function FluxoCaixaReport({ onClose }: FluxoCaixaReportProps) {
                 </p>
                 <button
                   onClick={resetFilters}
-                  className="mt-5 px-4 py-2 text-sm text-blue-600 hover:text-blue-700 font-medium border border-blue-200 rounded-xl hover:bg-blue-50 transition-all"
+                  className="mt-5 px-4 py-2 text-sm text-indigo-600 hover:text-indigo-700 font-medium border border-indigo-200 rounded-xl hover:bg-indigo-50 transition-all"
                 >
                   Limpar filtros
                 </button>
