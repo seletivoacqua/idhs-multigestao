@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X, Building2, Copy } from 'lucide-react';
+import { Plus, AlertCircle, CheckCircle, Clock, Upload, Eye, FileText, Trash2, Edit, RefreshCw, Filter, X, Building2, Copy, Search } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { ControlePagamentoReport } from './ControlePagamentoReport';
@@ -45,6 +45,8 @@ interface FilterState {
   startDate: string;
   endDate: string;
   filterType: 'due_date' | 'payment_date' | 'issue_date';
+  estado: string;           // NOVO: filtro por estado
+  searchTerm: string;       // NOVO: busca textual
 }
 
 interface ControlePagamentoTabProps {
@@ -64,7 +66,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   const [loading, setLoading] = useState(true);
   const [syncingInvoices, setSyncingInvoices] = useState(false);
   const [isReplicating, setIsReplicating] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false); // estado para o botão atualizar
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [filters, setFilters] = useState<FilterState>(() => {
     const savedFilters = localStorage.getItem('controlePagamento_filters');
@@ -82,7 +84,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       year: new Date().getFullYear(),
       startDate: '',
       endDate: '',
-      filterType: 'due_date'
+      filterType: 'due_date',
+      estado: 'all',        // NOVO: padrão "todos"
+      searchTerm: '',       // NOVO: busca vazia
     };
   });
 
@@ -90,7 +94,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
-  // ✅ Função de recarga manual (usada pelo botão e após ações)
+  // ✅ Função de recarga manual
   const refreshInvoices = useCallback(async () => {
     if (!user) return;
     setIsRefreshing(true);
@@ -98,7 +102,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setIsRefreshing(false);
   }, [user]);
 
-  // ✅ Função de replicação (adicionada anteriormente)
+  // ✅ Função de replicação
   const handleReplicateMonth = async () => {
     if (!user) return;
 
@@ -303,7 +307,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     estado: 'MA',
   });
 
-  // ✅ CARREGAMENTO INICIAL ÚNICO (não reage a mudanças de units)
+  // ✅ CARREGAMENTO INICIAL
   useEffect(() => {
     if (user) {
       const init = async () => {
@@ -343,7 +347,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
             .eq('id', invoice.id);
         }
       }
-      await loadInvoices(); // recarrega após atualizar status
+      await loadInvoices();
     }
   }, [user]);
 
@@ -399,12 +403,15 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setInvoices(processedInvoices);
   }, [user, units]);
 
+  // 🔥 FILTROS (incluindo estado e busca textual)
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
+      // Filtro por status
       if (filters.status !== 'all' && inv.payment_status !== filters.status) {
         return false;
       }
 
+      // Filtro por unidade
       if (filters.unitId !== 'all') {
         const unitMatches = 
           (inv.unit_id && inv.unit_id === filters.unitId) || 
@@ -415,6 +422,23 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         }
       }
 
+      // 🔥 NOVO: Filtro por estado
+      if (filters.estado !== 'all' && inv.estado !== filters.estado) {
+        return false;
+      }
+
+      // 🔥 NOVO: Busca textual por nota fiscal ou unidade
+      if (filters.searchTerm.trim() !== '') {
+        const term = filters.searchTerm.toLowerCase().trim();
+        const matchesInvoice = inv.invoice_number.toLowerCase().includes(term);
+        const displayUnitName = inv.units?.name || inv.unit_name || '';
+        const matchesUnit = displayUnitName.toLowerCase().includes(term);
+        if (!matchesInvoice && !matchesUnit) {
+          return false;
+        }
+      }
+
+      // Filtro por mês/ano
       if (filters.month !== 0 || filters.year !== 0) {
         let dateToCheck: Date;
         
@@ -439,6 +463,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         if (filters.year !== 0 && year !== filters.year) return false;
       }
 
+      // Filtro por período personalizado
       if (filters.startDate && filters.endDate) {
         const start = new Date(filters.startDate);
         const end = new Date(filters.endDate);
@@ -515,7 +540,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       year: 0,
       startDate: '',
       endDate: '',
-      filterType: 'due_date'
+      filterType: 'due_date',
+      estado: 'all',
+      searchTerm: '',
     });
   }, []);
 
@@ -524,7 +551,9 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
            filters.unitId !== 'all' ||
            filters.month !== 0 || 
            filters.year !== 0 || 
-           (filters.startDate && filters.endDate);
+           (filters.startDate && filters.endDate) ||
+           filters.estado !== 'all' ||
+           filters.searchTerm.trim() !== '';
   }, [filters]);
 
   const uploadDocument = useCallback(async (invoiceId: string): Promise<string | null> => {
@@ -720,7 +749,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
   }
 
   resetForm();
-  await refreshInvoices(); // usa a função de refresh
+  await refreshInvoices();
 }, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
 
   const resetForm = useCallback(() => {
@@ -942,7 +971,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
             <FileText className="w-5 h-5" />
             <span>Relatório</span>
           </button>
-          {/* Botão de atualizar manual (Refresh) */}
           <button
             onClick={refreshInvoices}
             disabled={isRefreshing}
@@ -970,7 +998,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Painel de Filtros (idêntico ao original) */}
+      {/* Painel de Filtros (com os novos campos) */}
       {showFilterPanel && (
         <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-lg">
           <div className="flex justify-between items-center mb-4">
@@ -1061,6 +1089,35 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
                 </select>
               </div>
             </div>
+
+            {/* NOVO: Filtro por Estado */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
+              <select
+                value={filters.estado}
+                onChange={(e) => setFilters({ ...filters, estado: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">Todos</option>
+                <option value="MA">MA</option>
+                <option value="PA">PA</option>
+              </select>
+            </div>
+
+            {/* NOVO: Busca textual */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Buscar</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={filters.searchTerm}
+                  onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
+                  placeholder="NF ou Unidade"
+                  className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
           </div>
 
           <div className="mt-4">
@@ -1103,7 +1160,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Indicador de Filtros Ativos */}
+      {/* Indicador de Filtros Ativos (atualizado com estado e busca) */}
       {hasActiveFilters && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700 flex-wrap gap-2">
@@ -1141,6 +1198,17 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
                 Período: {formatDate(filters.startDate)} até {formatDate(filters.endDate)}
               </span>
             )}
+            {/* NOVO: indicadores de estado e busca */}
+            {filters.estado !== 'all' && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Estado: {filters.estado}
+              </span>
+            )}
+            {filters.searchTerm.trim() !== '' && (
+              <span className="bg-blue-100 px-2 py-1 rounded">
+                Busca: "{filters.searchTerm}"
+              </span>
+            )}
           </div>
           <div className="flex items-center space-x-4">
             <span className="text-sm text-blue-700 font-medium">
@@ -1156,7 +1224,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Cards de Totais (idêntico ao original) */}
+      {/* Cards de Totais */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
@@ -1204,7 +1272,7 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Tabela de Notas Fiscais (idêntica ao original) */}
+      {/* Tabela de Notas Fiscais */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
         <div className="overflow-x-auto">
           <table className="w-full">
