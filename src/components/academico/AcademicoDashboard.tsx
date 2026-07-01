@@ -23,90 +23,94 @@ export function AcademicoDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="bg-white shadow-sm border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+    <div className="min-h-screen bg-slate-100">
+      <header className="bg-blue-900 shadow-lg">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-4">
-              <img src={logoImg} alt="IDHS" className="h-12" />
-              <h1 className="text-2xl font-bold text-slate-800">Módulo Acadêmico</h1>
+              <img src={logoImg} alt="IDHS" className="h-14 drop-shadow-md" />
+              <div>
+                <p className="text-blue-300 text-xs font-semibold uppercase tracking-widest">Sistema IDHS</p>
+                <h1 className="text-xl font-bold text-white leading-tight">Módulo Acadêmico</h1>
+              </div>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
               {userName && (
-                <div className="flex items-center space-x-2 px-4 py-2 bg-slate-100 rounded-lg">
-                  <User className="w-5 h-5 text-slate-600" />
-                  <span className="text-slate-700 font-medium">{userName}</span>
+                <div className="flex items-center space-x-2 px-4 py-2 bg-blue-800 rounded-lg border border-blue-700">
+                  <User className="w-4 h-4 text-blue-300" />
+                  <span className="text-white text-sm font-medium">{userName}</span>
                 </div>
               )}
               <button
                 onClick={handleSignOut}
-                className="flex items-center space-x-2 px-4 py-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors"
+                className="flex items-center space-x-2 px-4 py-2 text-blue-200 hover:text-white hover:bg-blue-800 rounded-lg transition-colors border border-transparent hover:border-blue-700"
               >
-                <LogOut className="w-5 h-5" />
-                <span>Sair</span>
+                <LogOut className="w-4 h-4" />
+                <span className="text-sm font-medium">Sair</span>
               </button>
             </div>
           </div>
         </div>
+        <div className="h-1 bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-500" />
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200">
-          <div className="border-b border-slate-200">
+        <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+          <div className="bg-slate-50 border-b border-slate-200">
             <nav className="flex space-x-1 p-2 overflow-x-auto">
               <button
                 onClick={() => setActiveTab('units')}
-                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg font-medium transition-all whitespace-nowrap text-sm ${
                   activeTab === 'units'
-                    ? 'bg-green-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-blue-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'
                 }`}
               >
-                <Building2 className="w-5 h-5" />
+                <Building2 className="w-4 h-4" />
                 <span>Unidades</span>
               </button>
               <button
                 onClick={() => setActiveTab('students')}
-                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg font-medium transition-all whitespace-nowrap text-sm ${
                   activeTab === 'students'
-                    ? 'bg-green-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-blue-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'
                 }`}
               >
-                <Users className="w-5 h-5" />
+                <Users className="w-4 h-4" />
                 <span>Alunos</span>
               </button>
               <button
                 onClick={() => setActiveTab('courses')}
-                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg font-medium transition-all whitespace-nowrap text-sm ${
                   activeTab === 'courses'
-                    ? 'bg-green-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-blue-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'
                 }`}
               >
-                <BookOpen className="w-5 h-5" />
+                <BookOpen className="w-4 h-4" />
                 <span>Cursos</span>
               </button>
               <button
                 onClick={() => setActiveTab('cycles')}
-                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg font-medium transition-all whitespace-nowrap text-sm ${
                   activeTab === 'cycles'
-                    ? 'bg-green-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-blue-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'
                 }`}
               >
-                <Calendar className="w-5 h-5" />
+                <Calendar className="w-4 h-4" />
                 <span>Ciclos</span>
               </button>
               <button
                 onClick={() => setActiveTab('reports')}
-                className={`flex items-center space-x-2 px-4 py-3 rounded-lg font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg font-medium transition-all whitespace-nowrap text-sm ${
                   activeTab === 'reports'
-                    ? 'bg-green-600 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
+                    ? 'bg-blue-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-800'
                 }`}
               >
-                <BarChart3 className="w-5 h-5" />
+                <BarChart3 className="w-4 h-4" />
                 <span>Relatórios</span>
               </button>
             </nav>
