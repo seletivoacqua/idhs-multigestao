@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import jsPDF from 'jspdf';
 import * as XLSX from 'xlsx';
-import logoImg from '../../assets/ChatGPT_Image_1_de_jul._de_2026,_15_34_07.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
 import { formatCurrencyBR } from '../../utils/currencyUtils';
 
 interface Transaction {

@@ -6,7 +6,7 @@ import { StudentsTab } from './StudentsTab';
 import { CoursesTab } from './CoursesTab';
 import { CyclesTab } from './CyclesTab';
 import { ReportsTab } from './ReportsTab';
-import logoImg from '../../assets/ChatGPT_Image_1_de_jul._de_2026,_15_34_07.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
 
 type Tab = 'units' | 'students' | 'courses' | 'cycles' | 'reports';
 
