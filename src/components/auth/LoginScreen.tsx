@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserModule } from '../../lib/supabase';
-import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-removebg-preview.png';
 import { supabase } from '../../lib/supabase';
 
 interface LoginScreenProps {

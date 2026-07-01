@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-removebg-preview.png';
 
 interface SyntheticReportModalProps {
   isOpen: boolean;

@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { FluxoCaixaTab } from './FluxoCaixaTab';
 import { ControlePagamentoTab } from './ControlePagamentoTab';
 import { ControleInstitucionalTab } from './ControleInstitucionalTab';
-import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-removebg-preview.png';
 
 type Tab = 'fluxo' | 'pagamento' | 'institucional';
 

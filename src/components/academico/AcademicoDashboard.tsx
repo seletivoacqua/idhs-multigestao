@@ -6,7 +6,7 @@ import { StudentsTab } from './StudentsTab';
 import { CoursesTab } from './CoursesTab';
 import { CyclesTab } from './CyclesTab';
 import { ReportsTab } from './ReportsTab';
-import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-removebg-preview.png';
 
 type Tab = 'units' | 'students' | 'courses' | 'cycles' | 'reports';
 

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { X, Download, CreditCard as Edit2, Save, Upload, Trash2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
+import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-removebg-preview.png';
 import { supabase } from '../../lib/supabase';
 
 interface CertificateModalProps {
