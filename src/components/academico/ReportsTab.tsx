@@ -743,26 +743,38 @@ const generateReport = async () => {
       for (let page = 0; page < totalPages; page++) {
         if (page > 0) pdf.addPage();
 
+        // ── Cabeçalho com fundo escuro (a logo é branca com fundo transparente,
+        // então precisa de uma base escura para ficar visível e com contraste)
+        const headerHeight = margin + 24;
+        pdf.setFillColor(13, 18, 33);
+        pdf.rect(0, 0, pageWidth, headerHeight, 'F');
+
+        // Faixa de destaque no topo
+        pdf.setFillColor(79, 70, 229);
+        pdf.rect(0, 0, pageWidth, 1.2, 'F');
+
         try {
-          pdf.addImage(logoImg, 'PNG', margin, margin, 25, 10);
+          pdf.addImage(logoImg, 'PNG', margin, margin - 2, 28, 12);
         } catch (e) {
           console.warn('Logo não pôde ser carregada');
         }
 
         pdf.setFontSize(16);
-        pdf.setTextColor(30, 41, 59);
+        pdf.setTextColor(255, 255, 255);
         pdf.setFont('helvetica', 'bold');
-        pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 12, { align: 'center' });
+        pdf.text('RELATÓRIO ACADÊMICO', pageWidth / 2, margin + 6, { align: 'center' });
 
-        pdf.setFontSize(10);
+        pdf.setFontSize(9);
         pdf.setFont('helvetica', 'normal');
-        pdf.setTextColor(71, 85, 105);
-        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 18, { align: 'center' });
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth / 2, margin + 12, { align: 'center' });
 
-        pdf.setDrawColor(203, 213, 225);
-        pdf.line(margin, margin + 20, pageWidth - margin, margin + 20);
+        pdf.setDrawColor(30, 41, 59);
+        pdf.setLineWidth(0.3);
+        pdf.line(margin, headerHeight - 2, pageWidth - margin, headerHeight - 2);
 
-        let yPos = margin + 26;
+        let yPos = headerHeight + 6;
+        pdf.setLineWidth(0.2);
         pdf.setFontSize(9);
         pdf.setTextColor(51, 65, 85);
 
