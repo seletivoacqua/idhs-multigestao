@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Building2, GraduationCap, LogIn, UserPlus, Key } from 'lucide-react';
+import {
+  Building2, GraduationCap, LogIn, UserPlus, Key,
+  ArrowLeft, Mail, Lock, User, AlertCircle, CheckCircle2, ShieldCheck,
+} from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserModule } from '../../lib/supabase';
 import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy.png';
@@ -7,6 +10,52 @@ import { supabase } from '../../lib/supabase';
 
 interface LoginScreenProps {
   isResetPasswordRoute?: boolean;
+}
+
+// ─── Fundo decorativo compartilhado (escuro, para a logo branca ganhar contraste) ──
+function AuthBackdrop({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex items-center justify-center p-4">
+      {/* Glow decorativo */}
+      <div className="pointer-events-none absolute -top-32 -left-24 w-[28rem] h-[28rem] rounded-full bg-indigo-600/20 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-32 -right-24 w-[28rem] h-[28rem] rounded-full bg-violet-600/20 blur-3xl" />
+      <div className="pointer-events-none absolute top-1/3 right-1/4 w-64 h-64 rounded-full bg-blue-500/10 blur-3xl" />
+
+      {/* Textura sutil de pontos */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.15]"
+        style={{
+          backgroundImage: 'radial-gradient(rgba(255,255,255,0.4) 1px, transparent 1px)',
+          backgroundSize: '28px 28px',
+        }}
+      />
+
+      {/* Faixa de destaque no topo */}
+      <div className="pointer-events-none absolute top-0 left-0 right-0 h-[3px] bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500" />
+
+      <div className="relative z-10 w-full flex items-center justify-center">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FieldError({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2.5 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function FieldSuccess({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2.5 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl text-sm">
+      <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) {
@@ -110,22 +159,27 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
     }
   };
 
+  // ─── TELA DE REDEFINIÇÃO DE SENHA ──────────────────────────────────────────
   if (isResetPassword) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+      <AuthBackdrop>
         <div className="max-w-md w-full">
-          <div className="bg-white rounded-2xl shadow-xl p-8">
+          <div className="flex justify-center mb-6">
+            <img src={logoImg} alt="IDHS" className="h-14 drop-shadow-[0_0_20px_rgba(129,140,248,0.35)]" />
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-2xl p-8 border border-white/10">
             <div className="flex justify-center mb-6">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
-                <Key className="w-8 h-8 text-blue-600" />
+              <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center ring-4 ring-indigo-50">
+                <Key className="w-8 h-8 text-indigo-600" />
               </div>
             </div>
 
             <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">
               Redefinir Senha
             </h2>
-            <p className="text-center text-slate-600 mb-6">
-              Digite sua nova senha
+            <p className="text-center text-slate-500 mb-6 text-sm">
+              Digite sua nova senha para continuar
             </p>
 
             <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
@@ -133,78 +187,83 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Nova Senha
                 </label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-shadow"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Confirmar Nova Senha
                 </label>
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-shadow"
+                  />
+                </div>
               </div>
 
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                  {error}
-                </div>
-              )}
-
-              {successMessage && (
-                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
-                  {successMessage}
-                </div>
-              )}
+              {error && <FieldError message={error} />}
+              {successMessage && <FieldSuccess message={successMessage} />}
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3 rounded-lg font-semibold text-white flex items-center justify-center space-x-2 transition-colors bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full py-3 rounded-xl font-semibold text-white flex items-center justify-center gap-2 transition-all bg-indigo-600 hover:bg-indigo-700 shadow-sm shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Key className="w-5 h-5" />
+                {loading
+                  ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  : <Key className="w-5 h-5" />}
                 <span>{loading ? 'Atualizando...' : 'Atualizar Senha'}</span>
               </button>
             </form>
           </div>
         </div>
-      </div>
+      </AuthBackdrop>
     );
   }
 
+  // ─── TELA DE SELEÇÃO DE MÓDULO ──────────────────────────────────────────────
   if (!selectedModule) {
     return (
-      <div className="min-h-screen bg-white from-slate-50 to-slate-100 flex items-center justify-center p-4">
+      <AuthBackdrop>
         <div className="max-w-4xl w-full">
           <div className="text-center mb-12">
-            <img src={logoImg} alt="IDHS" className="h-24 mx-auto mb-6" />
-            <h1 className="text-4xl font-bold text-slate-600 mb-3">IDHS Multigestão</h1>
-
+            <img
+              src={logoImg}
+              alt="IDHS"
+              className="h-28 mx-auto mb-6 drop-shadow-[0_0_35px_rgba(129,140,248,0.35)]"
+            />
+            <h1 className="text-4xl font-bold text-white mb-3 tracking-tight">IDHS Multigestão</h1>
+            <p className="text-slate-400 text-sm">Selecione o módulo que deseja acessar</p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setSelectedModule('financeiro')}
-              className="bg-gradient-to-br  rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-blue-500"
+              className="group relative overflow-hidden bg-white rounded-2xl p-8 shadow-2xl hover:shadow-blue-500/20 transition-all duration-300 hover:-translate-y-1 border border-white/10"
             >
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-blue-500" />
               <div className="flex flex-col items-center space-y-4">
-                <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center">
+                <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center ring-4 ring-blue-50/60 group-hover:ring-blue-100 transition-all">
                   <Building2 className="w-10 h-10 text-blue-600" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-800">Financeiro</h2>
-                <p className="text-slate-600 text-center">
+                <p className="text-slate-500 text-center text-sm">
                   Gestão de fluxo de caixa, pagamentos e controle institucional
                 </p>
               </div>
@@ -212,27 +271,37 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
 
             <button
               onClick={() => setSelectedModule('academico')}
-              className="bg-gradient-to-br rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105 border-2 border-transparent hover:border-green-500"
+              className="group relative overflow-hidden bg-white rounded-2xl p-8 shadow-2xl hover:shadow-emerald-500/20 transition-all duration-300 hover:-translate-y-1 border border-white/10"
             >
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-emerald-500" />
               <div className="flex flex-col items-center space-y-4">
-                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center">
-                  <GraduationCap className="w-10 h-10 text-green-600" />
+                <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center ring-4 ring-emerald-50/60 group-hover:ring-emerald-100 transition-all">
+                  <GraduationCap className="w-10 h-10 text-emerald-600" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-800">Acadêmico</h2>
-                <p className="text-slate-600 text-center">
+                <p className="text-slate-500 text-center text-sm">
                   Gestão de alunos, cursos, turmas e certificados
                 </p>
               </div>
             </button>
           </div>
         </div>
-      </div>
+      </AuthBackdrop>
     );
   }
 
+  // ─── TELA DE LOGIN / CADASTRO / ESQUECI A SENHA ─────────────────────────────
+  const moduleColor = selectedModule === 'financeiro'
+    ? { ring: 'ring-blue-50', bg: 'bg-blue-50', text: 'text-blue-600', focus: 'focus:ring-blue-500', button: 'bg-blue-600 hover:bg-blue-700 shadow-blue-200' }
+    : { ring: 'ring-emerald-50', bg: 'bg-emerald-50', text: 'text-emerald-600', focus: 'focus:ring-emerald-500', button: 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
+    <AuthBackdrop>
       <div className="max-w-md w-full">
+        <div className="flex justify-center mb-6">
+          <img src={logoImg} alt="IDHS" className="h-12 drop-shadow-[0_0_20px_rgba(129,140,248,0.35)]" />
+        </div>
+
         <button
           onClick={() => {
             setSelectedModule(null);
@@ -241,21 +310,19 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
             setError('');
             setSuccessMessage('');
           }}
-          className="mb-6 text-slate-600 hover:text-slate-800 flex items-center space-x-2"
+          className="mb-4 text-slate-400 hover:text-white flex items-center gap-2 text-sm transition-colors"
         >
-          <span>←</span>
+          <ArrowLeft className="w-4 h-4" />
           <span>Voltar</span>
         </button>
 
-        <div className="bg-white rounded-2xl shadow-xl p-8">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 border border-white/10">
           <div className="flex justify-center mb-6">
-            <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-              selectedModule === 'financeiro' ? 'bg-blue-100' : 'bg-green-100'
-            }`}>
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center ring-4 ${moduleColor.bg} ${moduleColor.ring}`}>
               {selectedModule === 'financeiro' ? (
-                <Building2 className={`w-8 h-8 ${selectedModule === 'financeiro' ? 'text-blue-600' : 'text-green-600'}`} />
+                <Building2 className={`w-8 h-8 ${moduleColor.text}`} />
               ) : (
-                <GraduationCap className="w-8 h-8 text-green-600" />
+                <GraduationCap className={`w-8 h-8 ${moduleColor.text}`} />
               )}
             </div>
           </div>
@@ -263,7 +330,7 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
           <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">
             {selectedModule === 'financeiro' ? 'Módulo Financeiro' : 'Módulo Acadêmico'}
           </h2>
-          <p className="text-center text-slate-600 mb-6">
+          <p className="text-center text-slate-500 mb-6 text-sm">
             {isForgotPassword ? 'Recuperar senha' : isSignUp ? 'Criar nova conta' : 'Entre com suas credenciais'}
           </p>
 
@@ -273,13 +340,16 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Nome Completo
                 </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    required
+                    className={`w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 ${moduleColor.focus} focus:border-transparent outline-none transition-shadow`}
+                  />
+                </div>
               </div>
             )}
 
@@ -287,13 +357,16 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
               <label className="block text-sm font-medium text-slate-700 mb-2">
                 Email
               </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-              />
+              <div className="relative">
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className={`w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 ${moduleColor.focus} focus:border-transparent outline-none transition-shadow`}
+                />
+              </div>
             </div>
 
             {!isForgotPassword && (
@@ -301,39 +374,31 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
                 <label className="block text-sm font-medium text-slate-700 mb-2">
                   Senha
                 </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                />
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className={`w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 focus:ring-2 ${moduleColor.focus} focus:border-transparent outline-none transition-shadow`}
+                  />
+                </div>
               </div>
             )}
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-                {error}
-              </div>
-            )}
-
-            {successMessage && (
-              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
-                {successMessage}
-              </div>
-            )}
+            {error && <FieldError message={error} />}
+            {successMessage && <FieldSuccess message={successMessage} />}
 
             <button
               type="submit"
               disabled={loading}
-              className={`w-full py-3 rounded-lg font-semibold text-white flex items-center justify-center space-x-2 transition-colors ${
-                selectedModule === 'financeiro'
-                  ? 'bg-blue-600 hover:bg-blue-700'
-                  : 'bg-green-600 hover:bg-green-700'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              className={`w-full py-3 rounded-xl font-semibold text-white flex items-center justify-center gap-2 transition-all shadow-sm ${moduleColor.button} disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              {isSignUp ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}
+              {loading
+                ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : isSignUp ? <UserPlus className="w-5 h-5" /> : <LogIn className="w-5 h-5" />}
               <span>
                 {loading
                   ? 'Processando...'
@@ -355,7 +420,7 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
                   setError('');
                   setSuccessMessage('');
                 }}
-                className="block w-full text-slate-600 hover:text-slate-800 text-sm"
+                className="block w-full text-slate-500 hover:text-slate-800 text-sm transition-colors"
               >
                 {isSignUp ? 'Já tem uma conta? Entrar' : 'Primeiro acesso? Criar conta'}
               </button>
@@ -368,14 +433,19 @@ export function LoginScreen({ isResetPasswordRoute = false }: LoginScreenProps) 
                   setError('');
                   setSuccessMessage('');
                 }}
-                className="block w-full text-slate-600 hover:text-slate-800 text-sm"
+                className="block w-full text-slate-500 hover:text-slate-800 text-sm transition-colors"
               >
                 {isForgotPassword ? 'Voltar para login' : 'Esqueci a senha'}
               </button>
             )}
           </div>
         </div>
+
+        <div className="mt-6 flex items-center justify-center gap-1.5 text-slate-500 text-xs">
+          <ShieldCheck className="w-3.5 h-3.5" />
+          <span>Ambiente seguro • IDHS Multigestão</span>
+        </div>
       </div>
-    </div>
+    </AuthBackdrop>
   );
 }
