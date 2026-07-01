@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoImg from '../../assets/image.png';
+import logoImg from '../../assets/ChatGPT_Image_1_de_jul._de_2026,_15_34_07.png';
 
 interface SyntheticReportModalProps {
   isOpen: boolean;

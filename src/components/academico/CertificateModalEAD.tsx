@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { X, Download, CreditCard as Edit2, Save, Upload, Trash2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import logoImg from '../../assets/image.png';
+import logoImg from '../../assets/ChatGPT_Image_1_de_jul._de_2026,_15_34_07.png';
 import { supabase } from '../../lib/supabase';
 
 interface CertificateModalProps {
