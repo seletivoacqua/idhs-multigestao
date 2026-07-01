@@ -132,17 +132,82 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     }));
   }, [filterMonth]);
 
-  // 🔥 CORREÇÃO: recebe o mês como parâmetro e reseta o saldo antes da requisição
+  // ============================================================
+  // FUNÇÕES AUXILIARES PARA SALDO INICIAL AUTOMÁTICO
+  // ============================================================
+
+  /**
+   * Obtém o saldo inicial de um determinado mês, recursivamente.
+   * Se houver um registro salvo na tabela initial_balances, usa ele.
+   * Caso contrário, calcula a partir do mês anterior.
+   */
+  const getInitialBalanceForMonth = async (year: number, month: number): Promise<number> => {
+    // Verifica se existe registro salvo para este mês
+    const { data: savedData } = await supabase
+      .from('initial_balances')
+      .select('balance')
+      .eq('year', year)
+      .eq('month', month)
+      .maybeSingle();
+
+    if (savedData) {
+      return Number(savedData.balance);
+    }
+
+    // Define um limite inferior para evitar recursão infinita (ex: ano 2000)
+    if (year < 2000 || (year === 2000 && month === 1)) {
+      return 0;
+    }
+
+    // Calcula o mês anterior
+    const prevDate = new Date(year, month - 1, 1);
+    prevDate.setMonth(prevDate.getMonth() - 1);
+    const prevYear = prevDate.getFullYear();
+    const prevMonth = prevDate.getMonth() + 1;
+
+    // Obtém o saldo inicial do mês anterior (recursivo)
+    const prevBalance = await getInitialBalanceForMonth(prevYear, prevMonth);
+
+    // Busca as transações do mês anterior para calcular o saldo final
+    const startPrev = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`;
+    const lastDayPrev = new Date(prevYear, prevMonth, 0).getDate();
+    const endPrev = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(lastDayPrev).padStart(2, '0')}`;
+
+    const { data: incomeData } = await supabase
+      .from('cash_flow_transactions')
+      .select('amount')
+      .eq('type', 'income')
+      .gte('transaction_date', startPrev)
+      .lte('transaction_date', endPrev);
+
+    const { data: expenseData } = await supabase
+      .from('cash_flow_transactions')
+      .select('amount')
+      .eq('type', 'expense')
+      .gte('transaction_date', startPrev)
+      .lte('transaction_date', endPrev);
+
+    const totalIncome = incomeData?.reduce((sum, row) => sum + Number(row.amount), 0) || 0;
+    const totalExpense = expenseData?.reduce((sum, row) => sum + Number(row.amount), 0) || 0;
+
+    return prevBalance + totalIncome - totalExpense;
+  };
+
+  /**
+   * Carrega o saldo inicial para o mês informado.
+   * Primeiro tenta buscar um valor salvo; se não existir, calcula automaticamente.
+   */
   const loadInitialBalance = async (month: string) => {
     if (!user) return;
 
-    // Limpa o valor anterior para não mostrar dado antigo
+    // Limpa o valor anterior
     setInitialBalance(0);
     setInitialBalanceInput('0');
 
     const [year, monthNum] = month.split('-').map(Number);
 
-    const { data, error } = await supabase
+    // Tenta buscar um registro salvo
+    const { data: savedData, error } = await supabase
       .from('initial_balances')
       .select('balance')
       .eq('year', year)
@@ -151,14 +216,28 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
 
     if (error) {
       console.error('Error loading initial balance:', error);
+    }
+
+    if (savedData) {
+      const balance = Number(savedData.balance);
+      setInitialBalance(balance);
+      setInitialBalanceInput(balance.toString());
       return;
     }
 
-    const balance = data?.balance || 0;
-    setInitialBalance(Number(balance));
-    setInitialBalanceInput(balance.toString());
+    // Não há registro salvo: calcular automaticamente
+    try {
+      const calculatedBalance = await getInitialBalanceForMonth(year, monthNum);
+      setInitialBalance(calculatedBalance);
+      setInitialBalanceInput(calculatedBalance.toString());
+    } catch (err) {
+      console.error('Error calculating initial balance:', err);
+      setInitialBalance(0);
+      setInitialBalanceInput('0');
+    }
   };
 
+  // Salvar saldo inicial (edição manual)
   const saveInitialBalance = async () => {
     if (!user) return;
 
@@ -187,6 +266,10 @@ export function FluxoCaixaTab({ refreshTrigger }: FluxoCaixaTabProps) {
     setEditingInitialBalance(false);
     alert('Saldo inicial salvo com sucesso!');
   };
+
+  // ============================================================
+  // DEMAIS FUNÇÕES (mantidas inalteradas)
+  // ============================================================
 
   const loadTransactions = async () => {
     if (!user) return;
