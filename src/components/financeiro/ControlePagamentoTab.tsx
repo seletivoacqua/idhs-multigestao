@@ -45,8 +45,8 @@ interface FilterState {
   startDate: string;
   endDate: string;
   filterType: 'due_date' | 'payment_date' | 'issue_date';
-  estado: string;           // NOVO: filtro por estado
-  searchTerm: string;       // NOVO: busca textual
+  estado: string;
+  searchTerm: string;
 }
 
 interface ControlePagamentoTabProps {
@@ -72,7 +72,19 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const savedFilters = localStorage.getItem('controlePagamento_filters');
     if (savedFilters) {
       try {
-        return JSON.parse(savedFilters);
+        const parsed = JSON.parse(savedFilters);
+        // 🔥 Garantir que todas as propriedades existam
+        return {
+          status: parsed.status || 'all',
+          unitId: parsed.unitId || 'all',
+          month: parsed.month || 0,
+          year: parsed.year || 0,
+          startDate: parsed.startDate || '',
+          endDate: parsed.endDate || '',
+          filterType: parsed.filterType || 'due_date',
+          estado: parsed.estado || 'all',
+          searchTerm: parsed.searchTerm || '',
+        };
       } catch (e) {
         console.error('Erro ao carregar filtros salvos:', e);
       }
@@ -85,8 +97,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       startDate: '',
       endDate: '',
       filterType: 'due_date',
-      estado: 'all',        // NOVO: padrão "todos"
-      searchTerm: '',       // NOVO: busca vazia
+      estado: 'all',
+      searchTerm: '',
     };
   });
 
@@ -94,7 +106,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
   const { user } = useAuth();
 
-  // ✅ Função de recarga manual
   const refreshInvoices = useCallback(async () => {
     if (!user) return;
     setIsRefreshing(true);
@@ -102,7 +113,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setIsRefreshing(false);
   }, [user]);
 
-  // ✅ Função de replicação
   const handleReplicateMonth = async () => {
     if (!user) return;
 
@@ -153,88 +163,88 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     return new Date(year, month - 1, day, 12, 0, 0).toISOString();
   }, []);
 
- const createCashFlowTransaction = useCallback(async (
-  invoiceId: string,
-  invoiceNumber: string,
-  unitName: string,
-  amount: number,
-  paymentDate: string
-): Promise<boolean> => {
-  if (!user) return false;
+  const createCashFlowTransaction = useCallback(async (
+    invoiceId: string,
+    invoiceNumber: string,
+    unitName: string,
+    amount: number,
+    paymentDate: string
+  ): Promise<boolean> => {
+    if (!user) return false;
 
-  try {
-    const transactionDate = paymentDate.split('T')[0];
+    try {
+      const transactionDate = paymentDate.split('T')[0];
 
-    const { data: existing, error: checkError } = await supabase
-      .from('cash_flow_transactions')
-      .select('id, amount, transaction_date')
-      .eq('invoice_id', invoiceId)
-      .maybeSingle();
+      const { data: existing, error: checkError } = await supabase
+        .from('cash_flow_transactions')
+        .select('id, amount, transaction_date')
+        .eq('invoice_id', invoiceId)
+        .maybeSingle();
 
-    if (checkError) {
-      console.error('Erro ao verificar transação existente:', checkError);
-      return false;
-    }
+      if (checkError) {
+        console.error('Erro ao verificar transação existente:', checkError);
+        return false;
+      }
 
-    if (existing) {
-      const needsUpdate = 
-        Math.abs(existing.amount - amount) > 0.01 || 
-        existing.transaction_date !== transactionDate;
+      if (existing) {
+        const needsUpdate = 
+          Math.abs(existing.amount - amount) > 0.01 || 
+          existing.transaction_date !== transactionDate;
 
-      if (needsUpdate) {
-        const { error: updateError } = await supabase
+        if (needsUpdate) {
+          const { error: updateError } = await supabase
+            .from('cash_flow_transactions')
+            .update({
+              amount: amount,
+              transaction_date: transactionDate,
+              description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+              fonte_pagadora: unitName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existing.id);
+
+          if (updateError) {
+            console.error('Erro ao atualizar transação:', updateError);
+            return false;
+          }
+          
+          console.log(`Transação atualizada: NF ${invoiceNumber} - valor R$ ${amount}`);
+        } else {
+          console.log(`Transação já está correta: NF ${invoiceNumber}`);
+        }
+      } else {
+        const transactionData = {
+          user_id: user.id,
+          type: 'income',
+          amount: amount,
+          method: 'transferencia',
+          description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
+          transaction_date: transactionDate,
+          fonte_pagadora: unitName,
+          com_nota: true,
+          invoice_id: invoiceId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        const { error: insertError } = await supabase
           .from('cash_flow_transactions')
-          .update({
-            amount: amount,
-            transaction_date: transactionDate,
-            description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-            fonte_pagadora: unitName,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', existing.id);
+          .insert([transactionData]);
 
-        if (updateError) {
-          console.error('Erro ao atualizar transação:', updateError);
+        if (insertError) {
+          console.error('Erro ao criar transação:', insertError);
           return false;
         }
         
-        console.log(`Transação atualizada: NF ${invoiceNumber} - valor R$ ${amount}`);
-      } else {
-        console.log(`Transação já está correta: NF ${invoiceNumber}`);
+        console.log(`Transação criada: NF ${invoiceNumber} - valor R$ ${amount}`);
       }
-    } else {
-      const transactionData = {
-        user_id: user.id,
-        type: 'income',
-        amount: amount,
-        method: 'transferencia',
-        description: `Pagamento da NF ${invoiceNumber} - ${unitName}`,
-        transaction_date: transactionDate,
-        fonte_pagadora: unitName,
-        com_nota: true,
-        invoice_id: invoiceId,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
 
-      const { error: insertError } = await supabase
-        .from('cash_flow_transactions')
-        .insert([transactionData]);
-
-      if (insertError) {
-        console.error('Erro ao criar transação:', insertError);
-        return false;
-      }
-      
-      console.log(`Transação criada: NF ${invoiceNumber} - valor R$ ${amount}`);
+      return true;
+    } catch (error) {
+      console.error('Erro ao criar/atualizar transação:', error);
+      return false;
     }
-
-    return true;
-  } catch (error) {
-    console.error('Erro ao criar/atualizar transação:', error);
-    return false;
-  }
-}, [user]);
+  }, [user]);
 
   const syncPaidInvoicesWithCashFlow = useCallback(async () => {
     if (!user) return;
@@ -307,7 +317,6 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     estado: 'MA',
   });
 
-  // ✅ CARREGAMENTO INICIAL
   useEffect(() => {
     if (user) {
       const init = async () => {
@@ -403,15 +412,15 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     setInvoices(processedInvoices);
   }, [user, units]);
 
-  // 🔥 FILTROS (incluindo estado e busca textual)
+  // 🔥 FILTROS – com proteção contra undefined
   const filteredInvoices = useMemo(() => {
     return invoices.filter((inv) => {
-      // Filtro por status
+      // Status
       if (filters.status !== 'all' && inv.payment_status !== filters.status) {
         return false;
       }
 
-      // Filtro por unidade
+      // Unidade
       if (filters.unitId !== 'all') {
         const unitMatches = 
           (inv.unit_id && inv.unit_id === filters.unitId) || 
@@ -422,14 +431,16 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         }
       }
 
-      // 🔥 NOVO: Filtro por estado
-      if (filters.estado !== 'all' && inv.estado !== filters.estado) {
+      // Estado (com fallback)
+      const estado = filters.estado || 'all';
+      if (estado !== 'all' && inv.estado !== estado) {
         return false;
       }
 
-      // 🔥 NOVO: Busca textual por nota fiscal ou unidade
-      if (filters.searchTerm.trim() !== '') {
-        const term = filters.searchTerm.toLowerCase().trim();
+      // Busca textual (com fallback)
+      const searchTerm = filters.searchTerm || '';
+      if (searchTerm.trim() !== '') {
+        const term = searchTerm.toLowerCase().trim();
         const matchesInvoice = inv.invoice_number.toLowerCase().includes(term);
         const displayUnitName = inv.units?.name || inv.unit_name || '';
         const matchesUnit = displayUnitName.toLowerCase().includes(term);
@@ -438,7 +449,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         }
       }
 
-      // Filtro por mês/ano
+      // Mês/Ano
       if (filters.month !== 0 || filters.year !== 0) {
         let dateToCheck: Date;
         
@@ -463,7 +474,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
         if (filters.year !== 0 && year !== filters.year) return false;
       }
 
-      // Filtro por período personalizado
+      // Período personalizado
       if (filters.startDate && filters.endDate) {
         const start = new Date(filters.startDate);
         const end = new Date(filters.endDate);
@@ -547,13 +558,14 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
   }, []);
 
   const hasActiveFilters = useMemo(() => {
+    const searchTerm = filters.searchTerm || '';
     return filters.status !== 'all' || 
            filters.unitId !== 'all' ||
            filters.month !== 0 || 
            filters.year !== 0 || 
            (filters.startDate && filters.endDate) ||
            filters.estado !== 'all' ||
-           filters.searchTerm.trim() !== '';
+           searchTerm.trim() !== '';
   }, [filters]);
 
   const uploadDocument = useCallback(async (invoiceId: string): Promise<string | null> => {
@@ -590,167 +602,167 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }
   }, [selectedFile, user]);
 
-const handleSubmit = useCallback(async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!user) return;
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
 
-  let invoiceId = editingInvoice?.id;
-  let shouldUpdateCashFlow = false;
-  let cashFlowAmount: number | null = null;
-  let cashFlowDate: string | null = null;
+    let invoiceId = editingInvoice?.id;
+    let shouldUpdateCashFlow = false;
+    let cashFlowAmount: number | null = null;
+    let cashFlowDate: string | null = null;
 
-  const selectedUnit = units.find(u => u.id === formData.unit_id);
+    const selectedUnit = units.find(u => u.id === formData.unit_id);
 
-  const unitId = selectedUnit?.id || null;
-  const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
+    const unitId = selectedUnit?.id || null;
+    const unitName = selectedUnit ? selectedUnit.name : formData.unit_name;
 
-  const issueDateISO = createISODate(formData.issue_date);
-  const dueDateISO = createISODate(formData.due_date);
-  const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
-  const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
+    const issueDateISO = createISODate(formData.issue_date);
+    const dueDateISO = createISODate(formData.due_date);
+    const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
+    const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
-  const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
-  const finalCashFlowAmount = formData.payment_status === 'PAGO' 
-    ? (newPaidValue || parseFloat(formData.net_value))
-    : null;
+    const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
+    const finalCashFlowAmount = formData.payment_status === 'PAGO' 
+      ? (newPaidValue || parseFloat(formData.net_value))
+      : null;
 
-  if (editingInvoice) {
-    const previousStatus = editingInvoice.payment_status;
-    const newStatus = formData.payment_status;
-    const previousPaidValue = editingInvoice.paid_value;
-    const previousPaymentDate = editingInvoice.payment_date;
+    if (editingInvoice) {
+      const previousStatus = editingInvoice.payment_status;
+      const newStatus = formData.payment_status;
+      const previousPaidValue = editingInvoice.paid_value;
+      const previousPaymentDate = editingInvoice.payment_date;
 
-    if (
-      (previousStatus !== 'PAGO' && newStatus === 'PAGO') ||
-      (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) ||
-      (newStatus === 'PAGO' && previousPaymentDate !== paymentDateISO)
-    ) {
-      shouldUpdateCashFlow = true;
-      cashFlowAmount = finalCashFlowAmount;
-      cashFlowDate = paymentDateISO;
-    }
-
-    if (previousStatus === 'PAGO' && newStatus !== 'PAGO') {
-      const { error: deleteError } = await supabase
-        .from('cash_flow_transactions')
-        .delete()
-        .eq('invoice_id', editingInvoice.id);
-
-      if (deleteError) {
-        console.error('Erro ao remover transação do fluxo de caixa:', deleteError);
-      }
-    }
-
-    const { error } = await supabase
-      .from('invoices')
-      .update({
-        unit_id: unitId,
-        unit_name: unitName,
-        cnpj_cpf: formData.cnpj_cpf,
-        exercise_month: formData.exercise_month,
-        exercise_year: formData.exercise_year,
-        document_type: formData.document_type,
-        invoice_number: formData.invoice_number,
-        issue_date: issueDateISO,
-        due_date: dueDateISO,
-        net_value: parseFloat(formData.net_value),
-        payment_status: formData.payment_status,
-        payment_date: paymentDateISO,
-        paid_value: newPaidValue,
-        data_prevista: dataPrevistaISO,
-        estado: formData.estado,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', editingInvoice.id);
-
-    if (error) {
-      console.error('Error updating invoice:', error);
-      alert('Erro ao atualizar nota fiscal');
-      return;
-    }
-  } else {
-    const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
-      p_user_id: user.id,
-    });
-
-    if (rpcError) {
-      console.error('Error getting next item number:', rpcError);
-      alert('Erro ao gerar número do item');
-      return;
-    }
-
-    const { data: newInvoice, error } = await supabase.from('invoices').insert([
-      {
-        user_id: user.id,
-        item_number: itemNumberData || 1,
-        unit_id: unitId,
-        unit_name: unitName,
-        cnpj_cpf: formData.cnpj_cpf,
-        exercise_month: formData.exercise_month,
-        exercise_year: formData.exercise_year,
-        document_type: formData.document_type,
-        invoice_number: formData.invoice_number,
-        issue_date: issueDateISO,
-        due_date: dueDateISO,
-        net_value: parseFloat(formData.net_value),
-        payment_status: formData.payment_status,
-        payment_date: paymentDateISO,
-        paid_value: newPaidValue,
-        data_prevista: dataPrevistaISO,
-        estado: formData.estado,
-      },
-    ]).select();
-
-    if (error) {
-      console.error('Error adding invoice:', error);
-      alert('Erro ao adicionar nota fiscal');
-      return;
-    }
-
-    if (newInvoice && newInvoice.length > 0) {
-      invoiceId = newInvoice[0].id;
-      if (formData.payment_status === 'PAGO') {
+      if (
+        (previousStatus !== 'PAGO' && newStatus === 'PAGO') ||
+        (newStatus === 'PAGO' && previousPaidValue !== newPaidValue) ||
+        (newStatus === 'PAGO' && previousPaymentDate !== paymentDateISO)
+      ) {
         shouldUpdateCashFlow = true;
         cashFlowAmount = finalCashFlowAmount;
         cashFlowDate = paymentDateISO;
       }
-    }
-  }
 
-  if (selectedFile && invoiceId) {
-    const documentUrl = await uploadDocument(invoiceId);
+      if (previousStatus === 'PAGO' && newStatus !== 'PAGO') {
+        const { error: deleteError } = await supabase
+          .from('cash_flow_transactions')
+          .delete()
+          .eq('invoice_id', editingInvoice.id);
 
-    if (documentUrl) {
-      await supabase
+        if (deleteError) {
+          console.error('Erro ao remover transação do fluxo de caixa:', deleteError);
+        }
+      }
+
+      const { error } = await supabase
         .from('invoices')
         .update({
-          document_url: documentUrl,
-          document_name: selectedFile.name,
-          document_type: selectedFile.type,
+          unit_id: unitId,
+          unit_name: unitName,
+          cnpj_cpf: formData.cnpj_cpf,
+          exercise_month: formData.exercise_month,
+          exercise_year: formData.exercise_year,
+          document_type: formData.document_type,
+          invoice_number: formData.invoice_number,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
+          net_value: parseFloat(formData.net_value),
+          payment_status: formData.payment_status,
+          payment_date: paymentDateISO,
+          paid_value: newPaidValue,
+          data_prevista: dataPrevistaISO,
+          estado: formData.estado,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', invoiceId);
+        .eq('id', editingInvoice.id);
+
+      if (error) {
+        console.error('Error updating invoice:', error);
+        alert('Erro ao atualizar nota fiscal');
+        return;
+      }
+    } else {
+      const { data: itemNumberData, error: rpcError } = await supabase.rpc('get_next_item_number', {
+        p_user_id: user.id,
+      });
+
+      if (rpcError) {
+        console.error('Error getting next item number:', rpcError);
+        alert('Erro ao gerar número do item');
+        return;
+      }
+
+      const { data: newInvoice, error } = await supabase.from('invoices').insert([
+        {
+          user_id: user.id,
+          item_number: itemNumberData || 1,
+          unit_id: unitId,
+          unit_name: unitName,
+          cnpj_cpf: formData.cnpj_cpf,
+          exercise_month: formData.exercise_month,
+          exercise_year: formData.exercise_year,
+          document_type: formData.document_type,
+          invoice_number: formData.invoice_number,
+          issue_date: issueDateISO,
+          due_date: dueDateISO,
+          net_value: parseFloat(formData.net_value),
+          payment_status: formData.payment_status,
+          payment_date: paymentDateISO,
+          paid_value: newPaidValue,
+          data_prevista: dataPrevistaISO,
+          estado: formData.estado,
+        },
+      ]).select();
+
+      if (error) {
+        console.error('Error adding invoice:', error);
+        alert('Erro ao adicionar nota fiscal');
+        return;
+      }
+
+      if (newInvoice && newInvoice.length > 0) {
+        invoiceId = newInvoice[0].id;
+        if (formData.payment_status === 'PAGO') {
+          shouldUpdateCashFlow = true;
+          cashFlowAmount = finalCashFlowAmount;
+          cashFlowDate = paymentDateISO;
+        }
+      }
     }
-  }
 
-  if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
-    const success = await createCashFlowTransaction(
-      invoiceId,
-      formData.invoice_number,
-      unitName,
-      cashFlowAmount,
-      cashFlowDate
-    );
+    if (selectedFile && invoiceId) {
+      const documentUrl = await uploadDocument(invoiceId);
 
-    if (success && onInvoicePaid) {
-      setTimeout(() => {
-        onInvoicePaid(Date.now());
-      }, 100);
+      if (documentUrl) {
+        await supabase
+          .from('invoices')
+          .update({
+            document_url: documentUrl,
+            document_name: selectedFile.name,
+            document_type: selectedFile.type,
+          })
+          .eq('id', invoiceId);
+      }
     }
-  }
 
-  resetForm();
-  await refreshInvoices();
-}, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
+    if (shouldUpdateCashFlow && cashFlowDate && invoiceId && cashFlowAmount !== null) {
+      const success = await createCashFlowTransaction(
+        invoiceId,
+        formData.invoice_number,
+        unitName,
+        cashFlowAmount,
+        cashFlowDate
+      );
+
+      if (success && onInvoicePaid) {
+        setTimeout(() => {
+          onInvoicePaid(Date.now());
+        }, 100);
+      }
+    }
+
+    resetForm();
+    await refreshInvoices();
+  }, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
 
   const resetForm = useCallback(() => {
     setShowAddModal(false);
@@ -932,7 +944,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
 
   return (
     <div className="space-y-6 max-w-full">
-      {/* Header com botões principais */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <h2 className="text-xl font-semibold text-slate-800">Controle de Notas Fiscais</h2>
@@ -998,7 +1009,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Painel de Filtros (com os novos campos) */}
       {showFilterPanel && (
         <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-lg">
           <div className="flex justify-between items-center mb-4">
@@ -1090,7 +1100,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
               </div>
             </div>
 
-            {/* NOVO: Filtro por Estado */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Estado</label>
               <select
@@ -1104,7 +1113,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
               </select>
             </div>
 
-            {/* NOVO: Busca textual */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Buscar</label>
               <div className="relative">
@@ -1160,7 +1168,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Indicador de Filtros Ativos (atualizado com estado e busca) */}
       {hasActiveFilters && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-sm text-blue-700 flex-wrap gap-2">
@@ -1198,13 +1205,12 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
                 Período: {formatDate(filters.startDate)} até {formatDate(filters.endDate)}
               </span>
             )}
-            {/* NOVO: indicadores de estado e busca */}
             {filters.estado !== 'all' && (
               <span className="bg-blue-100 px-2 py-1 rounded">
                 Estado: {filters.estado}
               </span>
             )}
-            {filters.searchTerm.trim() !== '' && (
+            {(filters.searchTerm || '').trim() !== '' && (
               <span className="bg-blue-100 px-2 py-1 rounded">
                 Busca: "{filters.searchTerm}"
               </span>
@@ -1224,7 +1230,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Cards de Totais */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
           <div className="flex items-center space-x-3">
@@ -1272,7 +1277,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Tabela de Notas Fiscais */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden w-full">        
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1426,7 +1430,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       </div>
 
-      {/* Modal de Nova/Editar Nota Fiscal (idêntico ao original) */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full p-6 my-8">
@@ -1658,7 +1661,6 @@ const handleSubmit = useCallback(async (e: React.FormEvent) => {
         </div>
       )}
 
-      {/* Modal de Relatório */}
       {showReportModal && (
         <ControlePagamentoReport onClose={() => setShowReportModal(false)} />
       )}
