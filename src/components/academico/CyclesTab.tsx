@@ -45,6 +45,7 @@ interface Class {
   total_classes: number;
   modality: 'EAD' | 'VIDEOCONFERENCIA';
   status: 'active' | 'closed';
+  completed: boolean;
   courses?: { name: string; modality: string };
   _count?: { students: number };
 }
@@ -1160,6 +1161,7 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [cycleStatus, setCycleStatus] = useState<string>('');
   const [totalClassesGiven, setTotalClassesGiven] = useState<number>(0);
   const [nextClassNumber, setNextClassNumber] = useState(1);
+  const [isCompleted, setIsCompleted] = useState<boolean>(classData.completed);
   const { user } = useAuth();
 
   // NOVO: Estado para controle do modal de edição de matrícula
@@ -1620,6 +1622,21 @@ const handleSaveEditEnrollment = async () => {
     loadAvailableStudents();
   };
 
+  const handleToggleCompleted = async (checked: boolean) => {
+    const { error } = await supabase
+      .from('classes')
+      .update({ completed: checked })
+      .eq('id', classData.id);
+
+    if (error) {
+      console.error('Error updating class completion:', error);
+      alert('Erro ao atualizar o status Concluído da turma');
+      return;
+    }
+
+    setIsCompleted(checked);
+  };
+
   const handleCloseClass = async () => {
     if (!confirm('Tem certeza que deseja encerrar esta turma? Esta ação não pode ser desfeita.')) return;
 
@@ -1815,6 +1832,17 @@ const handleSaveEditEnrollment = async () => {
               }`}>
                 {classData.modality === 'EAD' ? 'EAD 24h' : 'Videoconferência'}
               </span>
+              {classData.modality === 'EAD' && (
+                <label className="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-slate-100 text-slate-700 cursor-pointer hover:bg-slate-200 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={isCompleted}
+                    onChange={(e) => handleToggleCompleted(e.target.checked)}
+                    className="rounded text-green-600 focus:ring-green-500"
+                  />
+                  Concluído
+                </label>
+              )}
             </div>
           </div>
           <button

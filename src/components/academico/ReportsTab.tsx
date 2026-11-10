@@ -59,6 +59,7 @@ interface ReportData {
   accessDates?: string[];
   enrollmentDate?: string;
   enrollmentType?: 'regular' | 'exceptional';
+  completed: boolean;
 }
 
 export function ReportsTab() {
@@ -81,6 +82,7 @@ export function ReportsTab() {
     modality: 'all',
     studentName: '',
     situacao: 'all',
+    completed: 'all',
   });
 
   const [shouldGenerateReport, setShouldGenerateReport] = useState(false);
@@ -207,6 +209,11 @@ export function ReportsTab() {
         return true;
       });
     }
+    if (filters.completed !== 'all') {
+      filtered = filtered.filter(item =>
+        filters.completed === 'sim' ? item.completed : !item.completed
+      );
+    }
     if (filters.startDate || filters.endDate) {
       filtered = filtered.filter(item => {
         const ultimoAcessoParts = item.ultimoAcesso.split('/');
@@ -249,6 +256,7 @@ const generateReport = async () => {
         name,
         modality,
         total_classes,
+        completed,
         cycle_id,
         courses ( name, modality ),
         cycles ( id, name, start_date, end_date, status )
@@ -500,6 +508,7 @@ const generateReport = async () => {
           isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
           enrollmentDate: enrollmentDate || undefined,
           enrollmentType,
+          completed: cls.completed,
         });
       }
     }
@@ -562,6 +571,7 @@ const generateReport = async () => {
       'ÚLTIMO ACESSO',
       'FREQUÊNCIA',
       'STATUS MANUAL (EAD)',
+      'CONCLUÍDO',
       'SITUAÇÃO'
     ];
 
@@ -582,6 +592,7 @@ const generateReport = async () => {
       row.modality.includes('EAD')
         ? (row.isFrequente ? 'FREQUENTE (manual)' : 'AUSENTE (manual)')
         : 'N/A',
+      row.modality.includes('EAD') ? (row.completed ? 'SIM' : 'NÃO') : 'N/A',
       row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
     ]);
 
@@ -956,7 +967,7 @@ const generateReport = async () => {
         </div>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Ciclo</label>
               <select
@@ -1028,6 +1039,19 @@ const generateReport = async () => {
                 <option value="all">Todas</option>
                 <option value="frequentes">Apenas Frequentes</option>
                 <option value="incompletos">Apenas Incompletos/Ausentes</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Concluído</label>
+              <select
+                value={filters.completed}
+                onChange={(e) => handleFilterChange('completed', e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500"
+              >
+                <option value="all">Todos</option>
+                <option value="sim">Concluídos</option>
+                <option value="nao">Não concluídos</option>
               </select>
             </div>
           </div>
@@ -1170,6 +1194,7 @@ const generateReport = async () => {
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">ÚLTIMO ACESSO</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">FREQ.</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">STATUS EAD</th>
+                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">CONCLUÍDO</th>
                 <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider">SITUAÇÃO</th>
               </tr>
             </thead>
@@ -1222,6 +1247,20 @@ const generateReport = async () => {
                     </td>
                   )}
 
+                  <td className="px-4 py-2 text-sm text-center">
+                    {row.modality.includes('EAD') ? (
+                      <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
+                        row.completed
+                          ? 'bg-green-100 text-green-800 border border-green-300'
+                          : 'bg-slate-100 text-slate-600 border border-slate-300'
+                      }`}>
+                        {row.completed ? 'Sim' : 'Não'}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">-</span>
+                    )}
+                  </td>
+
                   {/* COLUNA SITUAÇÃO */}
                   <td className="px-4 py-2 text-sm text-center">
                     <div className="flex flex-col items-center">
@@ -1249,7 +1288,7 @@ const generateReport = async () => {
               {/* Linha de "nenhum dado encontrado" */}
               {displayData.length === 0 && !loading && !initialLoading && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <FileBarChart className="w-12 h-12 text-slate-300 mb-3" />
                       <p className="text-lg">Nenhum dado encontrado</p>
@@ -1264,7 +1303,7 @@ const generateReport = async () => {
               {/* Linha de loading */}
               {loading && (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
                       <RefreshCw className="w-12 h-12 text-slate-300 mb-3 animate-spin" />
                       <p className="text-lg">Carregando dados...</p>
