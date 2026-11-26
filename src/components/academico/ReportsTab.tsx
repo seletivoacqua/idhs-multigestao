@@ -591,7 +591,9 @@ const generateReport = async () => {
         ? (row.isFrequente ? 'FREQUENTE (manual)' : 'AUSENTE (manual)')
         : 'N/A',
       row.modality.includes('EAD') ? (row.completed ? 'SIM' : 'NÃO') : 'N/A',
-      row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
+      row.modality.includes('EAD')
+        ? (row.completed ? 'CONCLUÍDO' : row.isFrequente ? 'FREQUENTE' : 'AUSENTE')
+        : row.situacao,
     ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -702,7 +704,9 @@ const generateReport = async () => {
             row.modality.includes('EAD')
               ? (row.isFrequente ? 'FREQ' : 'AUSENTE')
               : '-',
-            row.modality.includes('EAD') && !row.isFrequente ? 'AUSENTE' : row.situacao,
+            row.modality.includes('EAD')
+              ? (row.completed ? 'CONCLUÍDO' : row.isFrequente ? 'FREQUENTE' : 'AUSENTE')
+              : row.situacao,
           ];
 
           cells.forEach((cellText, idx) => {
@@ -723,7 +727,10 @@ const generateReport = async () => {
             }
 
             if (idx === 8) {
-              if (row.modality.includes('EAD') && !row.isFrequente) {
+              if (row.modality.includes('EAD') && row.completed) {
+                td.style.backgroundColor = '#dbeafe';
+                td.style.color = '#1e3a8a';
+              } else if (row.modality.includes('EAD') && !row.isFrequente) {
                 td.style.backgroundColor = '#fed7aa';
                 td.style.color = '#9b2c1d';
               } else if (row.situacao === 'FREQUENTE') {
@@ -1263,15 +1270,19 @@ const generateReport = async () => {
                   <td className="px-4 py-2 text-sm text-center">
                     <div className="flex flex-col items-center">
                       <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold shadow-md ${
-                        row.situacao === 'FREQUENTE'
-                          ? 'bg-green-500 text-white'
-                          : row.modality.includes('EAD')
-                            ? 'bg-orange-500 text-white'
-                            : 'bg-red-500 text-white'
+                        row.modality.includes('EAD') && row.completed
+                          ? 'bg-blue-600 text-white'
+                          : row.situacao === 'FREQUENTE'
+                            ? 'bg-green-500 text-white'
+                            : row.modality.includes('EAD')
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-red-500 text-white'
                       }`}>
-                        {row.modality.includes('EAD') && row.situacao !== 'FREQUENTE'
-                          ? 'AUSENTE'
-                          : row.situacao}
+                        {row.modality.includes('EAD') && row.completed
+                          ? 'CONCLUÍDO'
+                          : row.modality.includes('EAD') && row.situacao !== 'FREQUENTE'
+                            ? 'AUSENTE'
+                            : row.situacao}
                       </span>
                       {!row.modality.includes('EAD') && row.situacao === 'INCOMPLETO' && (
                         <div className="text-xs text-red-600 mt-1 whitespace-nowrap">
