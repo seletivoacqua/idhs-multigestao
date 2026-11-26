@@ -1592,6 +1592,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                   >
                     <option value="EM ABERTO">EM ABERTO</option>
                     <option value="PAGO">PAGO</option>
+                    <option value="AGENDADO">AGENDADO</option>
                     <option value="ATRASADO">ATRASADO</option>
                   </select>
                 </div>
