@@ -14,8 +14,6 @@ import {
   parseDateInput,
   formatDateForInput,
   isValidDate,
-  compareDates,
-  isDateInRange
 } from '../../utils/dateUtils';
 
 interface Cycle {
@@ -45,7 +43,6 @@ interface Class {
   total_classes: number;
   modality: 'EAD' | 'VIDEOCONFERENCIA';
   status: 'active' | 'closed';
-  completed: boolean;
   courses?: { name: string; modality: string };
   _count?: { students: number };
 }
@@ -53,18 +50,6 @@ interface Class {
 interface Student {
   id: string;
   full_name: string;
-}
-
-// ===========================================
-// FUNÇÃO CORRIGIDA - EAD (3 ACESSOS, QUALQUER DATA)
-// ===========================================
-function validateEADAccess(
-  access_date_1: string | null, 
-  access_date_2: string | null, 
-  access_date_3: string | null
-): boolean {
-  const dates = [access_date_1, access_date_2, access_date_3].filter(Boolean);
-  return dates.length > 0; // ✅ Aluno frequente se tiver PELO MENOS 1 acesso
 }
 
 // Função para contar aulas já realizadas
@@ -371,8 +356,9 @@ async function updateAllStudentsStatusOnClose(classId: string) {
           accessData?.access_date_3 ? formatDateToDisplay(accessData.access_date_3) : '---'
         ].join(' | ');
         
+        const studentName = (student.students as any)?.full_name || (student.students as any)?.[0]?.full_name || student.student_id;
         detalhes.push(
-          `👤 ${student.students?.full_name || student.student_id}:\n` +
+          `👤 ${studentName}:\n` +
           `   📊 Frequência: ${isApproved ? '✅ FREQUENTE' : '❌ NÃO FREQUENTE'}\n` +
           `   📅 Acessos: ${totalAcessos}/3 (${datasAcesso})\n` +
           `   📝 Tipo: ${student.enrollment_type === 'exceptional' ? 'Excepcional' : 'Regular'}`
@@ -1143,6 +1129,11 @@ function CycleClassesModal({ cycle, onClose }: CycleClassesModalProps) {
 // ===========================================
 // COMPONENTE - ClassManagementModal
 // ===========================================
+interface ClassManagementModalProps {
+  classData: Class;
+  onClose: () => void;
+}
+
 function ClassManagementModal({ classData, onClose }: ClassManagementModalProps) {
   const [tab, setTab] = useState<'students' | 'attendance' | 'close'>('students');
   const [students, setStudents] = useState<any[]>([]);
@@ -1161,7 +1152,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
   const [cycleStatus, setCycleStatus] = useState<string>('');
   const [totalClassesGiven, setTotalClassesGiven] = useState<number>(0);
   const [nextClassNumber, setNextClassNumber] = useState(1);
-  const [isCompleted, setIsCompleted] = useState<boolean>(classData.completed);
   const { user } = useAuth();
 
   // NOVO: Estado para controle do modal de edição de matrícula
@@ -1171,17 +1161,6 @@ function ClassManagementModal({ classData, onClose }: ClassManagementModalProps)
     enrollmentDate: string;
     enrollmentType: 'regular' | 'exceptional';
   } | null>(null);
-
-  // Função para buscar o próximo número de aula
-  const loadNextClassNumber = async () => {
-    const { data, error } = await supabase.rpc('get_next_class_number', {
-      p_class_id: classData.id
-    });
-    if (!error && data) {
-      setNextClassNumber(data);
-      console.log('Próxima aula carregada:', data); // debug
-    }
-  };
 
   // Efeito inicial: carrega todos os dados ao abrir o modal
   useEffect(() => {
@@ -1363,6 +1342,7 @@ const loadClassStudents = async () => {
             ...cs,
             accessData,
             isFrequente,
+            isCompleted: accessData?.completed === true,
             totalAcessos,
           };
         })
@@ -1622,21 +1602,6 @@ const handleSaveEditEnrollment = async () => {
     loadAvailableStudents();
   };
 
-  const handleToggleCompleted = async (checked: boolean) => {
-    const { error } = await supabase
-      .from('classes')
-      .update({ completed: checked })
-      .eq('id', classData.id);
-
-    if (error) {
-      console.error('Error updating class completion:', error);
-      alert('Erro ao atualizar o status Concluído da turma');
-      return;
-    }
-
-    setIsCompleted(checked);
-  };
-
   const handleCloseClass = async () => {
     if (!confirm('Tem certeza que deseja encerrar esta turma? Esta ação não pode ser desfeita.')) return;
 
@@ -1797,7 +1762,7 @@ const handleSaveEditEnrollment = async () => {
         message: isApproved ? 'Aluno aprovado' : 'Aluno reprovado'
       };
     } else {
-      const isApproved = student.isPresent;
+      const isApproved = student.isFrequente;
       return {
         status: isApproved ? 'Aprovado' : 'Reprovado',
         color: isApproved ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
@@ -1832,17 +1797,7 @@ const handleSaveEditEnrollment = async () => {
               }`}>
                 {classData.modality === 'EAD' ? 'EAD 24h' : 'Videoconferência'}
               </span>
-              {classData.modality === 'EAD' && (
-                <label className="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-slate-100 text-slate-700 cursor-pointer hover:bg-slate-200 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={isCompleted}
-                    onChange={(e) => handleToggleCompleted(e.target.checked)}
-                    className="rounded text-green-600 focus:ring-green-500"
-                  />
-                  Concluído
-                </label>
-              )}
+
             </div>
           </div>
           <button
@@ -2194,12 +2149,12 @@ const handleSaveEditEnrollment = async () => {
                               ) : (
                                 <span
                                   className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                                    student.isPresent
+                                    student.isFrequente
                                       ? 'bg-green-100 text-green-800'
                                       : 'bg-yellow-100 text-yellow-800'
                                   }`}
                                 >
-                                  {student.isPresent ? 'Aprovado' : 'Em andamento'}
+                                  {student.isFrequente ? 'Aprovado' : 'Em andamento'}
                                 </span>
                               )}
                             </td>
@@ -2235,9 +2190,9 @@ const handleSaveEditEnrollment = async () => {
                                     ].filter(Boolean).length} de 3 acessos
                                   </span>
                                   <span className="text-xs text-slate-500">
-                                    {student.isPresent 
-                                      ? '3 acessos completos' 
-                                      : 'Necessário 3 acessos'}
+                                    {student.isFrequente 
+                                      ? 'Frequência marcada como válida' 
+                                      : 'Frequência ainda não marcada'}
                                   </span>
                                 </div>
                               )}
@@ -3278,6 +3233,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
   // Estados para controle dos dados
   const [accessData, setAccessData] = useState<Record<string, any>>({});
   const [frequenciaStatus, setFrequenciaStatus] = useState<Record<string, boolean>>({});
+  const [conclusaoStatus, setConclusaoStatus] = useState<Record<string, boolean>>({});
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [cycleStartDate, setCycleStartDate] = useState<string>('');
   const [cycleEndDate, setCycleEndDate] = useState<string>('');
@@ -3325,11 +3281,13 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     if (!students || students.length === 0) {
       setAccessData({});
       setFrequenciaStatus({});
+      setConclusaoStatus({});
       return;
     }
 
     const initialAccess: Record<string, any> = {};
     const initialFrequencia: Record<string, boolean> = {};
+    const initialConclusao: Record<string, boolean> = {};
     
     students.forEach((student: any) => {
       // Inicializar datas de acesso
@@ -3347,10 +3305,12 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       
       // ✅ CORREÇÃO: Usar isFrequente do banco
       initialFrequencia[student.student_id] = student.isFrequente === true;
+      initialConclusao[student.student_id] = student.isCompleted === true;
     });
     
     setAccessData(initialAccess);
     setFrequenciaStatus(initialFrequencia);
+    setConclusaoStatus(initialConclusao);
     
   }, [students]);
 
@@ -3396,6 +3356,13 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
     }));
   };
 
+  const toggleConclusao = (studentId: string) => {
+    setConclusaoStatus(prev => ({
+      ...prev,
+      [studentId]: !prev[studentId]
+    }));
+  };
+
   // ===========================================
   // FUNÇÃO: Salvar APENAS acessos (NUNCA altera frequência)
   // ===========================================
@@ -3426,13 +3393,14 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       // Buscar status atual para PRESERVAR
       const { data: currentData } = await supabase
         .from('ead_access')
-        .select('is_frequente')
+        .select('is_frequente, completed')
         .eq('class_id', classData.id)
         .eq('student_id', studentId)
         .maybeSingle();
 
       // ✅ GARANTIA: Preservar o status atual
       const isFrequenteAtual = currentData?.is_frequente ?? false;
+      const isCompletedAtual = currentData?.completed ?? false;
 
       // Converter datas para ISO
       const accessDataISO = {
@@ -3452,6 +3420,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             access_date_2: accessDataISO.access_date_2,
             access_date_3: accessDataISO.access_date_3,
             is_frequente: isFrequenteAtual,
+            completed: isCompletedAtual,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'class_id,student_id' }
@@ -3482,7 +3451,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
       // Buscar acessos atuais para PRESERVAR
       const { data: currentAccess } = await supabase
         .from('ead_access')
-        .select('access_date_1, access_date_2, access_date_3')
+        .select('access_date_1, access_date_2, access_date_3, completed')
         .eq('class_id', classData.id)
         .eq('student_id', studentId)
         .maybeSingle();
@@ -3492,7 +3461,8 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
         access_date_1: currentAccess?.access_date_1 || null,
         access_date_2: currentAccess?.access_date_2 || null,
         access_date_3: currentAccess?.access_date_3 || null,
-      };
+      }; 
+      const completedAtual = currentAccess?.completed ?? false;
 
       // Salvar no banco
       const { error } = await supabase
@@ -3505,6 +3475,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             access_date_2: accessDataISO.access_date_2,
             access_date_3: accessDataISO.access_date_3,
             is_frequente: isFrequente,
+            completed: completedAtual,
             updated_at: new Date().toISOString(),
           },
           { onConflict: 'class_id,student_id' }
@@ -3517,6 +3488,42 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
 
     } catch (error: any) {
       console.error('❌ Erro ao salvar frequência:', error);
+      alert(`Erro: ${error.message}`);
+    } finally {
+      setLoading(prev => ({ ...prev, [studentId]: false }));
+    }
+  };
+
+  const handleSaveConclusao = async (studentId: string) => {
+    setLoading(prev => ({ ...prev, [studentId]: true }));
+
+    try {
+      const { data: currentAccess } = await supabase
+        .from('ead_access')
+        .select('access_date_1, access_date_2, access_date_3, is_frequente')
+        .eq('class_id', classData.id)
+        .eq('student_id', studentId)
+        .maybeSingle();
+
+      const { error } = await supabase
+        .from('ead_access')
+        .upsert({
+          class_id: classData.id,
+          student_id: studentId,
+          access_date_1: currentAccess?.access_date_1 || null,
+          access_date_2: currentAccess?.access_date_2 || null,
+          access_date_3: currentAccess?.access_date_3 || null,
+          is_frequente: currentAccess?.is_frequente ?? false,
+          completed: conclusaoStatus[studentId] ?? false,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'class_id,student_id' });
+
+      if (error) throw error;
+
+      alert(conclusaoStatus[studentId] ? 'Aluno marcado como concluído!' : 'Conclusão do aluno removida.');
+      await onUpdate();
+    } catch (error: any) {
+      console.error('Erro ao salvar conclusão:', error);
       alert(`Erro: ${error.message}`);
     } finally {
       setLoading(prev => ({ ...prev, [studentId]: false }));
@@ -3618,6 +3625,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
             <tbody className="divide-y divide-slate-200">
               {filteredStudents.map((student: any) => {
                 const isFrequente = frequenciaStatus[student.student_id] || false;
+                const isConcluido = conclusaoStatus[student.student_id] || false;
                 const isLoading = loading[student.student_id] || false;
 
                 return (
@@ -3663,6 +3671,18 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                           {isFrequente ? 'Frequente' : 'Não frequente'}
                         </span>
                       </label>
+                      <label className="flex items-center space-x-2 mt-3">
+                        <input
+                          type="checkbox"
+                          checked={isConcluido}
+                          onChange={() => toggleConclusao(student.student_id)}
+                          disabled={!isCycleActive || isLoading}
+                          className="w-4 h-4 text-green-600 rounded"
+                        />
+                        <span className="text-sm">
+                          {isConcluido ? 'Concluído' : 'Não concluído'}
+                        </span>
+                      </label>
                     </td>
                     
                     {/* Botões de ação */}
@@ -3690,6 +3710,17 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
                         >
                           {isLoading ? '...' : 'Salvar Frequência'}
                         </button>
+                        <button
+                          onClick={() => handleSaveConclusao(student.student_id)}
+                          disabled={!isCycleActive || isLoading}
+                          className={`px-3 py-1 text-white rounded text-sm ${
+                            isCycleActive && !isLoading
+                              ? 'bg-amber-600 hover:bg-amber-700'
+                              : 'bg-slate-400 cursor-not-allowed'
+                          }`}
+                        >
+                          {isLoading ? '...' : 'Salvar Conclusão'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -3714,6 +3745,7 @@ function EADAccessManagement({ classData, students, onUpdate }: any) {
           <div className="flex justify-between text-sm">
             <span>Total: {filteredStudents.length}</span>
             <span>Frequentes: {Object.values(frequenciaStatus).filter(Boolean).length}</span>
+            <span>Concluídos: {Object.values(conclusaoStatus).filter(Boolean).length}</span>
             <span>Não frequentes: {Object.values(frequenciaStatus).filter(v => !v).length}</span>
           </div>
         </div>

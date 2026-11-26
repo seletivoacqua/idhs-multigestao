@@ -9,10 +9,7 @@ import logoImg from '../../assets/Gemini_Generated_Image_dimyf6dimyf6dimy-remove
 import SyntheticReportModal from './SyntheticReportModal';
 import {
   formatDateToDisplay,
-  extractDatePart,
-  isDateGreaterOrEqual,
-  compareDates,
-  isDateInRange
+  extractDatePart
 } from '../../utils/dateUtils';
 
 interface Unit {
@@ -69,7 +66,6 @@ export function ReportsTab() {
   const [reportData, setReportData] = useState<ReportData[]>([]);
   const [filteredReportData, setFilteredReportData] = useState<ReportData[]>([]);
   const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(50);
@@ -211,7 +207,8 @@ export function ReportsTab() {
     }
     if (filters.completed !== 'all') {
       filtered = filtered.filter(item =>
-        filters.completed === 'sim' ? item.completed : !item.completed
+        item.modality.includes('EAD') &&
+        (filters.completed === 'sim' ? item.completed : !item.completed)
       );
     }
     if (filters.startDate || filters.endDate) {
@@ -256,7 +253,6 @@ const generateReport = async () => {
         name,
         modality,
         total_classes,
-        completed,
         cycle_id,
         courses ( name, modality ),
         cycles ( id, name, start_date, end_date, status )
@@ -450,6 +446,7 @@ const generateReport = async () => {
         let situacao: 'FREQUENTE' | 'INCOMPLETO' | 'AUSENTE' = 'INCOMPLETO';
         let totalAccesses = 0;
         let isFrequente = false;
+        let completed = false;
 
         if (cls.modality === 'VIDEOCONFERENCIA') {
           const key = `${cls.id}-${enrollment.student_id}`;
@@ -474,6 +471,7 @@ const generateReport = async () => {
         } else {
           const accessData = eadMap[`${cls.id}-${enrollment.student_id}`];
           isFrequente = accessData?.is_frequente === true;
+          completed = accessData?.completed === true;
           const allAccesses = [accessData?.access_date_1, accessData?.access_date_2, accessData?.access_date_3];
           const validAccesses = allAccesses.filter(d => d !== null) as string[];
           totalAccesses = validAccesses.length;
@@ -495,8 +493,8 @@ const generateReport = async () => {
           studentCpf: student?.cpf || '',
           className: cls.name,
           classId: cls.id,
-          cycleName: cls.cycles?.name || 'Sem ciclo',
-          cycleId: cls.cycles?.id || '',
+          cycleName: (cls.cycles as any)?.name || (cls.cycles as any)?.[0]?.name || 'Sem ciclo',
+          cycleId: (cls.cycles as any)?.id || (cls.cycles as any)?.[0]?.id || '',
           modality: cls.modality === 'VIDEOCONFERENCIA' ? 'Videoconferência' : 'EAD 24h',
           classesAttended,
           totalClassesConsidered: totalAulasRealizadas,
@@ -508,7 +506,7 @@ const generateReport = async () => {
           isFrequente: cls.modality === 'EAD' ? isFrequente : undefined,
           enrollmentDate: enrollmentDate || undefined,
           enrollmentType,
-          completed: cls.completed,
+          completed,
         });
       }
     }
@@ -1286,7 +1284,7 @@ const generateReport = async () => {
               ))}
 
               {/* Linha de "nenhum dado encontrado" */}
-              {displayData.length === 0 && !loading && !initialLoading && (
+              {displayData.length === 0 && !loading && (
                 <tr>
                   <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center">
