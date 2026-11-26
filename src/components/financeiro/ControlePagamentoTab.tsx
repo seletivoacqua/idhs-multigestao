@@ -26,6 +26,7 @@ interface Invoice {
   payment_status: 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO';
   payment_date?: string | null;
   paid_value?: number | null;
+  scheduled_value?: number | null;
   data_prevista?: string | null;
   document_url?: string | null;
   document_name?: string | null;
@@ -313,6 +314,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     payment_status: 'EM ABERTO' as 'PAGO' | 'EM ABERTO' | 'AGENDADO' | 'ATRASADO',
     payment_date: '',
     paid_value: '',
+    scheduled_value: '',
     data_prevista: '',
     estado: 'MA',
   });
@@ -514,7 +516,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     const totalAgendado = filteredInvoices
       .filter(inv => inv.payment_status === 'AGENDADO')
-      .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+      .reduce((sum, inv) => sum + Number(inv.scheduled_value ?? inv.net_value), 0);
 
     const totalAtrasado = filteredInvoices
       .filter(inv => inv.payment_status === 'ATRASADO')
@@ -534,7 +536,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     const totalAgendado = invoices
       .filter(inv => inv.payment_status === 'AGENDADO')
-      .reduce((sum, inv) => sum + Number(inv.net_value), 0);
+      .reduce((sum, inv) => sum + Number(inv.scheduled_value ?? inv.net_value), 0);
 
     const totalAtrasado = invoices
       .filter(inv => inv.payment_status === 'ATRASADO')
@@ -622,6 +624,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
     const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
+    const newScheduledValue = formData.scheduled_value ? parseFloat(formData.scheduled_value) : null;
     const finalCashFlowAmount = formData.payment_status === 'PAGO' 
       ? (newPaidValue || parseFloat(formData.net_value))
       : null;
@@ -669,6 +672,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: newPaidValue,
+          scheduled_value: newScheduledValue,
           data_prevista: dataPrevistaISO,
           estado: formData.estado,
           updated_at: new Date().toISOString(),
@@ -708,6 +712,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: newPaidValue,
+          scheduled_value: newScheduledValue,
           data_prevista: dataPrevistaISO,
           estado: formData.estado,
         },
@@ -782,6 +787,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       payment_status: 'EM ABERTO',
       payment_date: '',
       paid_value: '',
+      scheduled_value: '',
       data_prevista: '',
       estado: 'MA',
     });
@@ -803,6 +809,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
       payment_status: invoice.payment_status,
       payment_date: invoice.payment_date?.split('T')[0] || '',
       paid_value: invoice.paid_value?.toString() || '',
+      scheduled_value: invoice.scheduled_value?.toString() || '',
       data_prevista: invoice.data_prevista?.split('T')[0] || '',
       estado: invoice.estado || 'MA',
     });
@@ -1293,6 +1300,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Data Pgto</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor NF</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor Pago</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Valor Agend.</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Documento</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600 uppercase">Ações</th>
@@ -1372,6 +1380,10 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                         <span className="text-green-600">
                           {formatCurrency(invoice.paid_value)}
                         </span>
+                      ) : invoice.payment_status === 'AGENDADO' ? (
+                        <span className="text-blue-600">
+                          {formatCurrency(invoice.scheduled_value)}
+                        </span>
                       ) : (
                         <span className="text-slate-400">-</span>
                       )}
@@ -1420,7 +1432,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
               })}
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={15} className="px-4 py-8 text-center text-slate-500">
                     Nenhuma nota fiscal encontrada
                   </td>
                 </tr>
@@ -1616,6 +1628,31 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                         step="0.01"
                         value={formData.paid_value}
                         onChange={(e) => setFormData({ ...formData, paid_value: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {formData.payment_status === 'AGENDADO' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Data Prevista</label>
+                      <input
+                        type="date"
+                        value={formData.data_prevista}
+                        onChange={(e) => setFormData({ ...formData, data_prevista: e.target.value })}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Valor Agendado</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={formData.scheduled_value}
+                        onChange={(e) => setFormData({ ...formData, scheduled_value: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       />
                     </div>

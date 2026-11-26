@@ -24,6 +24,7 @@ interface Invoice {
   payment_status: 'PAGO' | 'EM ABERTO' | 'ATRASADO' | 'AGENDADO';
   payment_date?: string;
   paid_value?: number;
+  scheduled_value?: number;
   data_prevista?: string;
   estado?: string;
   document_url?: string;
@@ -216,6 +217,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         ...invoice,
         net_value: Number(invoice.net_value),
         paid_value: invoice.paid_value ? Number(invoice.paid_value) : undefined,
+        scheduled_value: invoice.scheduled_value !== null && invoice.scheduled_value !== undefined
+          ? Number(invoice.scheduled_value)
+          : undefined,
       })) || [];
 
       setInvoices(processedData);
@@ -398,8 +402,8 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
       // ── Colunas da tabela (agora com Data de Pagamento e Valor Líquido Pago)
       const tableWidth = pageWidth - margin * 2;
       const colWidths: Record<string, number> = {
-        item: 10, unidade: 44, nf: 22, emissao: 20, vencimento: 20,
-        pagamento: 20, valor: 24, valorPago: 26, status: 22, estado: 12,
+        item: 10, unidade: 42, nf: 20, emissao: 18, vencimento: 18,
+        pagamento: 18, valor: 22, valorPago: 24, valorAgendado: 24, status: 20, estado: 10,
       };
       const gap = 1;
       const totalW = Object.values(colWidths).reduce((s, w) => s + w, 0);
@@ -421,7 +425,8 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
           { k: 'item', l: 'ITEM' }, { k: 'unidade', l: 'UNIDADE' }, { k: 'nf', l: 'NF' },
           { k: 'emissao', l: 'EMISSÃO' }, { k: 'vencimento', l: 'VENCIMENTO' },
           { k: 'pagamento', l: 'DATA PGTO' }, { k: 'valor', l: 'VALOR LÍQUIDO' },
-          { k: 'valorPago', l: 'VALOR PAGO' }, { k: 'status', l: 'STATUS' }, { k: 'estado', l: 'UF' },
+          { k: 'valorPago', l: 'VALOR PAGO' }, { k: 'valorAgendado', l: 'VALOR AGEND.' },
+          { k: 'status', l: 'STATUS' }, { k: 'estado', l: 'UF' },
         ];
 
         doc.setFontSize(5.8);
@@ -518,6 +523,18 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         );
         doc.setFont(undefined, 'normal');
 
+        // VALOR AGENDADO
+        const valorAgendado = invoice.payment_status === 'AGENDADO'
+          ? (invoice.scheduled_value ?? invoice.net_value)
+          : null;
+        doc.setTextColor(...(valorAgendado !== null ? [37, 99, 235] : [148, 163, 184]));
+        doc.setFont(undefined, 'bold');
+        doc.text(
+          valorAgendado !== null ? formatCurrencyBR(valorAgendado) : '—',
+          colPos.valorAgendado + colWidths.valorAgendado - 2, yPos + 4.4, { align: 'right' }
+        );
+        doc.setFont(undefined, 'normal');
+
         doc.setTextColor(...statusColor(invoice.payment_status));
         doc.setFont(undefined, 'bold');
         doc.text(invoice.payment_status, colPos.status + 1.5, yPos + 4.4);
@@ -584,6 +601,9 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
           'Data Pagamento': formatDisplayDate(invoice.payment_date),
           'Valor Líquido': invoice.net_value,
           'Valor Líquido Pago': valorPago !== null ? valorPago : '-',
+          'Valor Agendado': invoice.payment_status === 'AGENDADO'
+            ? (invoice.scheduled_value ?? invoice.net_value)
+            : '-',
           Status: invoice.payment_status,
           Estado: invoice.estado || '-',
         };
@@ -637,6 +657,7 @@ export function ControlePagamentoReport({ onClose }: ControlePagamentoReportProp
         { wch: 12 }, // Data Pagamento
         { wch: 15 }, // Valor Líquido
         { wch: 17 }, // Valor Líquido Pago
+        { wch: 15 }, // Valor Agendado
         { wch: 12 }, // Status
         { wch: 8 },  // Estado
       ];
