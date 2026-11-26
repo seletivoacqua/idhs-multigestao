@@ -158,6 +158,19 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     }).format(value);
   }, []);
 
+  const parseMoneyValue = useCallback((value: string): number | null => {
+    const trimmedValue = value.trim();
+    if (!trimmedValue) return null;
+
+    const normalizedValue = trimmedValue.includes(',')
+      ? trimmedValue.replace(/\\./g, '').replace(',', '.')
+      : trimmedValue;
+    const parsedValue = Number(normalizedValue);
+
+    if (!Number.isFinite(parsedValue)) return null;
+    return Math.round((parsedValue + Number.EPSILON) * 100) / 100;
+  }, []);
+
   const createISODate = useCallback((dateString: string): string | null => {
     if (!dateString) return null;
     const [year, month, day] = dateString.split('-').map(Number);
@@ -623,10 +636,17 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     const paymentDateISO = formData.payment_date ? createISODate(formData.payment_date) : null;
     const dataPrevistaISO = formData.data_prevista ? createISODate(formData.data_prevista) : null;
 
-    const newPaidValue = formData.paid_value ? parseFloat(formData.paid_value) : null;
-    const newScheduledValue = formData.scheduled_value ? parseFloat(formData.scheduled_value) : null;
-    const finalCashFlowAmount = formData.payment_status === 'PAGO' 
-      ? (newPaidValue || parseFloat(formData.net_value))
+    const netValue = parseMoneyValue(formData.net_value);
+    const newPaidValue = parseMoneyValue(formData.paid_value);
+    const newScheduledValue = parseMoneyValue(formData.scheduled_value);
+
+    if (netValue === null) {
+      alert('Informe um valor líquido válido.');
+      return;
+    }
+
+    const finalCashFlowAmount = formData.payment_status === 'PAGO'
+      ? (newPaidValue ?? netValue)
       : null;
 
     if (editingInvoice) {
@@ -668,7 +688,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           invoice_number: formData.invoice_number,
           issue_date: issueDateISO,
           due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
+          net_value: netValue,
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: newPaidValue,
@@ -681,7 +701,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
       if (error) {
         console.error('Error updating invoice:', error);
-        alert('Erro ao atualizar nota fiscal');
+        alert(`Erro ao atualizar nota fiscal: ${error.message}`);
         return;
       }
     } else {
@@ -708,7 +728,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
           invoice_number: formData.invoice_number,
           issue_date: issueDateISO,
           due_date: dueDateISO,
-          net_value: parseFloat(formData.net_value),
+          net_value: netValue,
           payment_status: formData.payment_status,
           payment_date: paymentDateISO,
           paid_value: newPaidValue,
@@ -720,7 +740,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
       if (error) {
         console.error('Error adding invoice:', error);
-        alert('Erro ao adicionar nota fiscal');
+        alert(`Erro ao adicionar nota fiscal: ${error.message}`);
         return;
       }
 
@@ -767,7 +787,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
 
     resetForm();
     await refreshInvoices();
-  }, [user, editingInvoice, formData, units, createISODate, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
+  }, [user, editingInvoice, formData, units, createISODate, parseMoneyValue, uploadDocument, createCashFlowTransaction, onInvoicePaid, refreshInvoices]);
 
   const resetForm = useCallback(() => {
     setShowAddModal(false);
@@ -1586,8 +1606,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Valor Líquido</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={formData.net_value}
                     onChange={(e) => setFormData({ ...formData, net_value: e.target.value })}
                     required
@@ -1624,8 +1644,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">Valor Pago</label>
                       <input
-                        type="number"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         value={formData.paid_value}
                         onChange={(e) => setFormData({ ...formData, paid_value: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -1649,8 +1669,8 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                     <div>
                       <label className="block text-sm font-medium text-slate-700 mb-2">Valor Agendado</label>
                       <input
-                        type="number"
-                        step="0.01"
+                        type="text"
+                        inputMode="decimal"
                         value={formData.scheduled_value}
                         onChange={(e) => setFormData({ ...formData, scheduled_value: e.target.value })}
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
