@@ -163,7 +163,7 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
     if (!trimmedValue) return null;
 
     const normalizedValue = trimmedValue.includes(',')
-      ? trimmedValue.replace(/\\./g, '').replace(',', '.')
+      ? trimmedValue.replace(/\./g, '').replace(',', '.')
       : trimmedValue;
     const parsedValue = Number(normalizedValue);
 
@@ -1400,7 +1400,12 @@ export function ControlePagamentoTab({ onInvoicePaid }: ControlePagamentoTabProp
                         <span className="text-green-600">
                           {formatCurrency(invoice.paid_value)}
                         </span>
-                      ) : invoice.payment_status === 'AGENDADO' ? (
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700 font-medium">
+                      {invoice.payment_status === 'AGENDADO' ? (
                         <span className="text-blue-600">
                           {formatCurrency(invoice.scheduled_value)}
                         </span>
